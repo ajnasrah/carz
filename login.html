@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carz Inc - Training Login</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .login-container {
+            background: #1e2a3a;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo h1 {
+            color: #e94560;
+            font-size: 2.5em;
+            letter-spacing: 3px;
+        }
+
+        .logo p {
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            color: #ccc;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #2a3a4a;
+            border-radius: 8px;
+            background: #0f1923;
+            color: #fff;
+            font-size: 1.1em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: linear-gradient(135deg, #e94560, #d63850);
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.4);
+        }
+
+        .admin-link {
+            text-align: center;
+            margin-top: 25px;
+        }
+
+        .admin-link a {
+            color: #666;
+            font-size: 0.85em;
+            text-decoration: none;
+        }
+
+        .admin-link a:hover {
+            color: #e94560;
+        }
+
+        .info-text {
+            text-align: center;
+            color: #666;
+            font-size: 0.85em;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <h1>CARZ INC</h1>
+            <p>Training Academy</p>
+        </div>
+
+        <form id="login-form">
+            <div class="form-group">
+                <label>Enter Your Name</label>
+                <input type="text" id="username" required placeholder="e.g. John Smith" autocomplete="off">
+            </div>
+            <button type="submit" class="btn">Start Training</button>
+        </form>
+
+        <p class="info-text">Your progress will be saved automatically</p>
+
+        <div class="admin-link">
+            <a href="admin.html">Admin Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        // Check if already logged in
+        const currentUser = localStorage.getItem('carzCurrentUser');
+        if (currentUser) {
+            window.location.href = 'index.html';
+        }
+
+        document.getElementById('login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value.trim();
+
+            if (username) {
+                // Save current user
+                localStorage.setItem('carzCurrentUser', username);
+
+                // Get or create user data
+                let allUsers = JSON.parse(localStorage.getItem('carzAllUsers') || '{}');
+
+                if (!allUsers[username]) {
+                    // New user
+                    allUsers[username] = {
+                        name: username,
+                        startedAt: new Date().toISOString(),
+                        lastActive: new Date().toISOString(),
+                        progress: 0,
+                        currentModule: 'Module 1',
+                        completedLessons: [],
+                        completedQuizzes: [],
+                        quizScores: {}
+                    };
+                } else {
+                    // Returning user
+                    allUsers[username].lastActive = new Date().toISOString();
+                }
+
+                localStorage.setItem('carzAllUsers', JSON.stringify(allUsers));
+
+                // Go to course
+                window.location.href = 'index.html';
+            }
+        });
+    </script>
+</body>
+</html>

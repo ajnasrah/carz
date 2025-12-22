@@ -1,8 +1,15 @@
 // Carz Inc Training Course Application
 // Main application logic
 
+// Check if user is logged in
+const currentUser = localStorage.getItem('carzCurrentUser');
+if (!currentUser) {
+    window.location.href = 'login.html';
+}
+
 class TrainingApp {
     constructor() {
+        this.currentUser = currentUser;
         this.currentModule = null;
         this.currentLesson = null;
         this.currentQuiz = null;
@@ -14,11 +21,42 @@ class TrainingApp {
         this.renderNavigation();
         this.showWelcome();
         this.updateProgressBar();
+        this.addUserInfo();
+    }
+
+    addUserInfo() {
+        // Add user info and logout to sidebar
+        const logo = document.querySelector('.logo');
+        if (logo && this.currentUser) {
+            const userInfo = document.createElement('div');
+            userInfo.className = 'user-info';
+            userInfo.innerHTML = `
+                <p style="color: #4ade80; margin-top: 10px; font-size: 0.9em;">Welcome, ${this.currentUser}</p>
+                <button onclick="app.logout()" style="background: none; border: 1px solid #666; color: #888; padding: 5px 15px; border-radius: 5px; cursor: pointer; margin-top: 8px; font-size: 0.8em;">Logout</button>
+            `;
+            logo.appendChild(userInfo);
+        }
+    }
+
+    logout() {
+        localStorage.removeItem('carzCurrentUser');
+        window.location.href = 'login.html';
     }
 
     loadProgress() {
-        const saved = localStorage.getItem('carzIncTrainingProgress');
-        return saved ? JSON.parse(saved) : {
+        // Load from user-specific data
+        const allUsers = JSON.parse(localStorage.getItem('carzAllUsers') || '{}');
+        const userData = allUsers[this.currentUser];
+
+        if (userData && userData.completedLessons) {
+            return {
+                completedLessons: userData.completedLessons || [],
+                completedQuizzes: userData.completedQuizzes || [],
+                quizScores: userData.quizScores || {}
+            };
+        }
+
+        return {
             completedLessons: [],
             completedQuizzes: [],
             quizScores: {}
@@ -26,7 +64,27 @@ class TrainingApp {
     }
 
     saveProgress() {
-        localStorage.setItem('carzIncTrainingProgress', JSON.stringify(this.progress));
+        // Save to user-specific data
+        const allUsers = JSON.parse(localStorage.getItem('carzAllUsers') || '{}');
+
+        if (!allUsers[this.currentUser]) {
+            allUsers[this.currentUser] = {
+                name: this.currentUser,
+                startedAt: new Date().toISOString(),
+                lastActive: new Date().toISOString()
+            };
+        }
+
+        const progressPercent = Math.round((this.getCompletedItems() / this.getTotalItems()) * 100);
+
+        allUsers[this.currentUser].completedLessons = this.progress.completedLessons;
+        allUsers[this.currentUser].completedQuizzes = this.progress.completedQuizzes;
+        allUsers[this.currentUser].quizScores = this.progress.quizScores;
+        allUsers[this.currentUser].progress = progressPercent;
+        allUsers[this.currentUser].currentModule = this.currentModule ? this.currentModule.title : 'Module 1';
+        allUsers[this.currentUser].lastActive = new Date().toISOString();
+
+        localStorage.setItem('carzAllUsers', JSON.stringify(allUsers));
         this.updateProgressBar();
     }
 
