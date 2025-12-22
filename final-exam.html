@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carz Inc - Final Exam</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: #e94560;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+
+        .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            padding: 10px 20px;
+            background: #333;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .exam-intro {
+            background: #16213e;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border-left: 4px solid #e94560;
+        }
+
+        .exam-intro h2 {
+            color: #e94560;
+            margin-bottom: 15px;
+        }
+
+        .exam-intro ul {
+            margin-left: 20px;
+        }
+
+        .exam-intro li {
+            margin-bottom: 8px;
+        }
+
+        .question-card {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 25px;
+            border-left: 4px solid #333;
+        }
+
+        .question-card.answered-correct {
+            border-left-color: #4ade80;
+        }
+
+        .question-card.answered-wrong {
+            border-left-color: #e94560;
+        }
+
+        .question-number {
+            color: #888;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .question-text {
+            font-size: 1.2em;
+            color: #fff;
+            margin-bottom: 20px;
+        }
+
+        .vehicle-data {
+            background: #0f1629;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .vehicle-data h4 {
+            color: #4ade80;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .vehicle-data table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .vehicle-data td {
+            padding: 8px 0;
+            border-bottom: 1px solid #222;
+        }
+
+        .vehicle-data td:first-child {
+            color: #888;
+            width: 40%;
+        }
+
+        .vehicle-data td:last-child {
+            color: #fff;
+            font-weight: 500;
+        }
+
+        .highlight-red {
+            color: #e94560 !important;
+            font-weight: bold;
+        }
+
+        .highlight-yellow {
+            color: #facc15 !important;
+            font-weight: bold;
+        }
+
+        .highlight-green {
+            color: #4ade80 !important;
+            font-weight: bold;
+        }
+
+        .pdf-link {
+            display: inline-block;
+            background: #333;
+            color: #4ade80;
+            padding: 8px 15px;
+            border-radius: 5px;
+            text-decoration: none;
+            margin: 5px 5px 5px 0;
+            font-size: 0.9em;
+        }
+
+        .pdf-link:hover {
+            background: #444;
+        }
+
+        .options {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .option {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            background: #0f1629;
+            border: 2px solid #333;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .option:hover {
+            border-color: #4ade80;
+            background: rgba(74, 222, 128, 0.1);
+        }
+
+        .option.selected {
+            border-color: #4ade80;
+            background: rgba(74, 222, 128, 0.1);
+        }
+
+        .option.correct {
+            border-color: #4ade80;
+            background: rgba(74, 222, 128, 0.2);
+        }
+
+        .option.incorrect {
+            border-color: #e94560;
+            background: rgba(233, 69, 96, 0.2);
+        }
+
+        .option input {
+            margin-right: 15px;
+            transform: scale(1.3);
+        }
+
+        .option-text {
+            flex: 1;
+        }
+
+        .explanation {
+            display: none;
+            margin-top: 15px;
+            padding: 15px;
+            background: #0a1a0a;
+            border-radius: 8px;
+            border-left: 4px solid #4ade80;
+        }
+
+        .explanation.show {
+            display: block;
+        }
+
+        .explanation h4 {
+            color: #4ade80;
+            margin-bottom: 10px;
+        }
+
+        .submit-btn {
+            display: block;
+            width: 100%;
+            padding: 20px;
+            background: linear-gradient(135deg, #e94560, #d63850);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.2em;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 30px;
+        }
+
+        .submit-btn:hover {
+            background: linear-gradient(135deg, #d63850, #c52840);
+        }
+
+        .submit-btn:disabled {
+            background: #333;
+            cursor: not-allowed;
+        }
+
+        .results {
+            display: none;
+            background: #16213e;
+            padding: 30px;
+            border-radius: 10px;
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        .results.show {
+            display: block;
+        }
+
+        .results h2 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .results.passed h2 {
+            color: #4ade80;
+        }
+
+        .results.failed h2 {
+            color: #e94560;
+        }
+
+        .score {
+            font-size: 4em;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .results.passed .score {
+            color: #4ade80;
+        }
+
+        .results.failed .score {
+            color: #e94560;
+        }
+
+        .calculation-box {
+            background: #0a1a0a;
+            border: 2px solid #4ade80;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-family: monospace;
+            text-align: left;
+        }
+
+        .arrow-callout {
+            display: inline-block;
+            background: #e94560;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 0.85em;
+            margin: 2px;
+        }
+
+        @media (max-width: 768px) {
+            .back-button {
+                position: relative;
+                display: block;
+                margin-bottom: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a href="index.html" class="back-button">← Back to Course</a>
+
+    <div class="container">
+        <h1>FINAL EXAM</h1>
+        <p class="subtitle">Test Your Skills with Real Vehicle Examples</p>
+
+        <div class="exam-intro">
+            <h2>Exam Instructions</h2>
+            <ul>
+                <li>This exam uses <strong>real vehicle examples</strong> from actual OVE listings</li>
+                <li>You need <strong>80% (8/10 correct)</strong> to pass</li>
+                <li>Use the PDF links to view actual listings, CRs, and book values</li>
+                <li>Apply the formula: <strong>Max Bid = Book Value - $3,000 - Rehab - History Deductions</strong></li>
+                <li>Take your time - this is exactly what you'll do on auction day</li>
+            </ul>
+        </div>
+
+        <form id="exam-form">
+            <!-- Question 1 -->
+            <div class="question-card" data-question="0">
+                <div class="question-number">Question 1 of 10</div>
+                <div class="question-text">2022 Ram 1500 Rebel Crew Cab 4WD - What is the MAX BID?</div>
+
+                <div class="vehicle-data">
+                    <h4>Vehicle Information (VIN: 1C6SRFLT1NN120589)</h4>
+                    <table>
+                        <tr><td>Mileage:</td><td>61,215</td></tr>
+                        <tr><td>CR Grade:</td><td class="highlight-yellow">2.9 (Below Average)</td></tr>
+                        <tr><td>MMR Adjusted:</td><td class="highlight-green">$33,200</td></tr>
+                        <tr><td>History:</td><td class="highlight-green">0 accidents, 1 owner</td></tr>
+                        <tr><td>Condition:</td><td class="highlight-yellow">16 exterior issues (dents, scratches, worn tires)</td></tr>
+                        <tr><td>Buy Now:</td><td>$33,000</td></tr>
+                    </table>
+                    <div style="margin-top: 15px;">
+                        <a href="examples/ram2 /OVE.com - Search Results.pdf" class="pdf-link" target="_blank">View OVE Listing</a>
+                    </div>
+                </div>
+
+                <div class="calculation-box">
+                    <strong>Apply the formula:</strong><br>
+                    Target Sales Price (at 4.0): $33,200<br>
+                    - $3,000 (spread)<br>
+                    - $1,500 (rehab for CR 2.9 ~1 grade below 4.0)<br>
+                    = ???
+                </div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q0" value="0"><span class="option-text">$28,700</span></label>
+                    <label class="option"><input type="radio" name="q0" value="1"><span class="option-text">$30,200</span></label>
+                    <label class="option"><input type="radio" name="q0" value="2"><span class="option-text">$27,200</span></label>
+                    <label class="option"><input type="radio" name="q0" value="3"><span class="option-text">$29,500</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: $28,700</h4>
+                    <p>$33,200 (Target Sales Price at 4.0) - $3,000 (spread) - $1,500 (rehab for CR 2.9) = <strong>$28,700</strong></p>
+                    <p style="margin-top: 10px;">CR 2.9 is about 1 grade below 4.0 = ~$1,500 in total added costs. Buy Now at $33,000 is OVER our max bid - PASS!</p>
+                </div>
+            </div>
+
+            <!-- Question 2 -->
+            <div class="question-card" data-question="1">
+                <div class="question-number">Question 2 of 10</div>
+                <div class="question-text">2016 GMC Sierra 1500 SLT Crew Cab - Should you buy at $13,500?</div>
+
+                <div class="vehicle-data">
+                    <h4>Vehicle Information (VIN: 3GTU1NER6GG352962)</h4>
+                    <table>
+                        <tr><td>CR Grade:</td><td class="highlight-green">3.9 (Above Average)</td></tr>
+                        <tr><td>Mileage:</td><td>102,887</td></tr>
+                        <tr><td>Black Book Avg:</td><td>$16,275</td></tr>
+                        <tr><td>J.D. Power Trade-In Avg:</td><td>$21,300</td></tr>
+                        <tr><td>MMR Adjusted:</td><td>$16,550</td></tr>
+                        <tr><td>History:</td><td class="highlight-green">0 accidents, 1 owner</td></tr>
+                        <tr><td>Drivetrain:</td><td class="highlight-red">2WD (NOT 4WD!)</td></tr>
+                        <tr><td>Estimated Rehab:</td><td>$500</td></tr>
+                        <tr><td>Buy Now Price:</td><td>$13,500</td></tr>
+                    </table>
+                    <div style="margin-top: 15px;">
+                        <a href="examples/sierra 2/OVE.com - Search Results.pdf" class="pdf-link" target="_blank">View OVE Listing</a>
+                        <a href="examples/sierra 2/3GTU1NER6GG352962.pdf" class="pdf-link" target="_blank">View Autoniq</a>
+                    </div>
+                </div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q1" value="0"><span class="option-text">Yes - it's under max bid, price conservatively for quick sale</span></label>
+                    <label class="option"><input type="radio" name="q1" value="1"><span class="option-text">No - never buy 2WD trucks</span></label>
+                    <label class="option"><input type="radio" name="q1" value="2"><span class="option-text">No - it's over max bid</span></label>
+                    <label class="option"><input type="radio" name="q1" value="3"><span class="option-text">Need more information</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: Yes - it's under max bid</h4>
+                    <p><strong>Target Sales Price Calculation:</strong></p>
+                    <p>($16,550 + $21,300 + $16,275) ÷ 3 = <strong>$18,042</strong></p>
+                    <p>Max Bid = $18,042 - $3,000 - $500 = <strong>$14,542</strong></p>
+                    <p style="margin-top: 10px;">Buy Now at $13,500 is <strong>$1,042 UNDER</strong> max bid - BUY IT!</p>
+                    <p style="margin-top: 10px; color: #facc15;"><strong>2WD Note:</strong> We don't automatically pass on 2WD. Just make sure Target Sales Price is conservative and appealing for a quick sale.</p>
+                </div>
+            </div>
+
+            <!-- Question 3 -->
+            <div class="question-card" data-question="2">
+                <div class="question-number">Question 3 of 10</div>
+                <div class="question-text">2016 Silverado 1500 LTZ Z71 Crew Cab 4WD - CR says "TRANSMISSION PROBLEM". What do you do?</div>
+
+                <div class="vehicle-data">
+                    <h4>Vehicle Information (VIN: 3GCUKSEC7GG349687)</h4>
+                    <table>
+                        <tr><td>CR Grade:</td><td>3.3</td></tr>
+                        <tr><td>Mileage:</td><td>100,953</td></tr>
+                        <tr><td>Black Book History Adj Avg:</td><td>$16,850</td></tr>
+                        <tr><td>J.D. Power Trade-In Avg:</td><td>$20,250</td></tr>
+                        <tr><td>MMR Adjusted:</td><td>$23,000</td></tr>
+                        <tr><td>History:</td><td class="highlight-yellow">Accident reported, 5 owners</td></tr>
+                        <tr><td>Announcement:</td><td class="highlight-red">SELLER GUARANTEE TRANSMISSION PROBLEM</td></tr>
+                        <tr><td>Buy Now Price:</td><td>$17,200</td></tr>
+                    </table>
+                    <div style="margin-top: 15px;">
+                        <a href="examples/silverado 1/OVE.com - Search Results.pdf" class="pdf-link" target="_blank">View OVE Listing</a>
+                        <a href="examples/silverado 1/3GCUKSEC7GG349687.pdf" class="pdf-link" target="_blank">View Autoniq</a>
+                    </div>
+                </div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q2" value="0"><span class="option-text">Buy it - LTZ Z71 is premium trim</span></label>
+                    <label class="option"><input type="radio" name="q2" value="1"><span class="option-text">Buy it - MMR says $23,000</span></label>
+                    <label class="option"><input type="radio" name="q2" value="2"><span class="option-text">Pass - max bid is only ~$10,050, Buy Now is way too high</span></label>
+                    <label class="option"><input type="radio" name="q2" value="3"><span class="option-text">Bid $15,000</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: Pass - max bid is ~$10,050</h4>
+                    <p>Transmission repair: ~$3,000-4,000 (check Car-Part.com!)<br>
+                    Use BB History Adjusted: $16,850 (already accounts for 5 owners + accident)</p>
+                    <p>$16,850 - $3,000 (spread) - $3,800 (trans repair + detail) = <strong>$10,050 max bid</strong></p>
+                    <p>Buy Now at $17,200 is $7,150 OVER our max. Hard pass.</p>
+                    <p style="margin-top: 10px;"><strong>Don't be fooled by MMR!</strong> MMR doesn't account for the transmission problem.</p>
+                </div>
+            </div>
+
+            <!-- Question 4 -->
+            <div class="question-card" data-question="3">
+                <div class="question-number">Question 4 of 10</div>
+                <div class="question-text">What does "RWD" mean on a truck listing?</div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q3" value="0"><span class="option-text">Right Wheel Drive - steers from the right side</span></label>
+                    <label class="option"><input type="radio" name="q3" value="1"><span class="option-text">Rear Wheel Drive - same as 2WD, NOT 4x4</span></label>
+                    <label class="option"><input type="radio" name="q3" value="2"><span class="option-text">Rugged Wheel Drive - off-road package</span></label>
+                    <label class="option"><input type="radio" name="q3" value="3"><span class="option-text">Regular Wheel Drive - standard configuration</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: Rear Wheel Drive - same as 2WD</h4>
+                    <p><span class="arrow-callout">RWD = 2WD = LOW DEMAND = COLD INVENTORY</span></p>
+                    <p>Book values already adjust for 2WD vs 4WD. The real problem is <strong>DEMAND</strong>:</p>
+                    <ul style="margin: 10px 0; padding-left: 20px;">
+                        <li>2WD trucks sit on the lot 60-90 days vs 25-35 for 4WD</li>
+                        <li>Longer time = more floor plan fees eating your profit</li>
+                        <li><strong>We target HIGH DEMAND (4WD)</strong> - don't stretch on cold inventory</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Question 5 -->
+            <div class="question-card" data-question="4">
+                <div class="question-number">Question 5 of 10</div>
+                <div class="question-text">2019 Equinox LT AWD - Grade 2.0 with smoke odor, airbag light. It SOLD for $8,400. Was this a good deal?</div>
+
+                <div class="vehicle-data">
+                    <h4>Vehicle Information (VIN: 3GNAXKEV1KS502261)</h4>
+                    <table>
+                        <tr><td>CR Grade:</td><td class="highlight-yellow">2.0 (Below Average/Rough)</td></tr>
+                        <tr><td>Mileage:</td><td>73,317</td></tr>
+                        <tr><td>Black Book Average:</td><td>$10,675</td></tr>
+                        <tr><td>Black Book ROUGH:</td><td>$9,250</td></tr>
+                        <tr><td>J.D. Power Trade-In Avg:</td><td>$11,000</td></tr>
+                        <tr><td>History:</td><td class="highlight-green">0 accidents, 2 owners</td></tr>
+                        <tr><td>CR Notes:</td><td class="highlight-red">Smoke odor, airbag light, needs tires</td></tr>
+                        <tr><td>Estimated Rehab:</td><td>$2,200</td></tr>
+                        <tr><td>Sold Price:</td><td>$8,400</td></tr>
+                    </table>
+                    <div style="margin-top: 15px;">
+                        <a href="examples/equinox/OVE.com - Search Results.pdf" class="pdf-link" target="_blank">View OVE Listing</a>
+                        <a href="examples/equinox/3GNAXKEV1KS502261.pdf" class="pdf-link" target="_blank">View Autoniq</a>
+                    </div>
+                </div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q4" value="0"><span class="option-text">Yes - clean history, good mileage</span></label>
+                    <label class="option"><input type="radio" name="q4" value="1"><span class="option-text">Yes - under MMR value</span></label>
+                    <label class="option"><input type="radio" name="q4" value="2"><span class="option-text">No - max bid was only $4,050, someone overpaid by $4,350</span></label>
+                    <label class="option"><input type="radio" name="q4" value="3"><span class="option-text">Can't tell without more info</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: No - max bid was only $4,050</h4>
+                    <p>For Grade 2.0, use the ROUGH value, not Average!</p>
+                    <p>$9,250 (Rough) - $3,000 (spread) - $2,200 (rehab) = <strong>$4,050 max bid</strong></p>
+                    <p>Sold at $8,400 means someone overpaid by $4,350. Their loss.</p>
+                </div>
+            </div>
+
+            <!-- Question 6 -->
+            <div class="question-card" data-question="5">
+                <div class="question-number">Question 6 of 10</div>
+                <div class="question-text">What is the Carz Inc MINIMUM spread required between book value and purchase price?</div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q5" value="0"><span class="option-text">$1,000</span></label>
+                    <label class="option"><input type="radio" name="q5" value="1"><span class="option-text">$2,000</span></label>
+                    <label class="option"><input type="radio" name="q5" value="2"><span class="option-text">$3,000</span></label>
+                    <label class="option"><input type="radio" name="q5" value="3"><span class="option-text">$5,000</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: $3,000</h4>
+                    <p>$3,000 minimum spread = ~$1,900 fees + ~$1,000 profit target</p>
+                    <p>This is BEFORE rehab costs. Rehab is deducted separately.</p>
+                </div>
+            </div>
+
+            <!-- Question 7 -->
+            <div class="question-card" data-question="6">
+                <div class="question-number">Question 7 of 10</div>
+                <div class="question-text">What is the Carz Inc TARGET for maximum rehab costs?</div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q6" value="0"><span class="option-text">$1,000</span></label>
+                    <label class="option"><input type="radio" name="q6" value="1"><span class="option-text">$2,000</span></label>
+                    <label class="option"><input type="radio" name="q6" value="2"><span class="option-text">$3,000</span></label>
+                    <label class="option"><input type="radio" name="q6" value="3"><span class="option-text">$5,000</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: $3,000</h4>
+                    <p>Vehicles with rehab under $3,000 have higher profit margins and fewer surprises.</p>
+                    <p>Our data shows: rehab over $5,000 = 20% lower profit on average.</p>
+                </div>
+            </div>
+
+            <!-- Question 8 -->
+            <div class="question-card" data-question="7">
+                <div class="question-number">Question 8 of 10</div>
+                <div class="question-text">Floor plan fees accumulate over time. If a truck sits for 90 days instead of 30, how much EXTRA do you pay?</div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q7" value="0"><span class="option-text">$100</span></label>
+                    <label class="option"><input type="radio" name="q7" value="1"><span class="option-text">$200</span></label>
+                    <label class="option"><input type="radio" name="q7" value="2"><span class="option-text">$400</span></label>
+                    <label class="option"><input type="radio" name="q7" value="3"><span class="option-text">$600</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: $400</h4>
+                    <p>30 days = $200 floor plan<br>90 days = $600 floor plan<br>Extra cost = <strong>$400</strong></p>
+                    <p>This is why fast-selling configurations (4WD, crew cab) matter!</p>
+                </div>
+            </div>
+
+            <!-- Question 9 -->
+            <div class="question-card" data-question="8">
+                <div class="question-number">Question 9 of 10</div>
+                <div class="question-text">You're looking at a vehicle with FRAME DAMAGE noted in the history. What should you do?</div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q8" value="0"><span class="option-text">Calculate extra deduction and bid lower</span></label>
+                    <label class="option"><input type="radio" name="q8" value="1"><span class="option-text">Check if it was repaired</span></label>
+                    <label class="option"><input type="radio" name="q8" value="2"><span class="option-text">DO NOT BUY - frame damage is a deal killer</span></label>
+                    <label class="option"><input type="radio" name="q8" value="3"><span class="option-text">Only buy if price is 50% off</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: DO NOT BUY</h4>
+                    <p>Frame damage = structural integrity compromised = liability</p>
+                    <p>Same goes for: FLOOD damage, SALVAGE title, FIRE damage</p>
+                    <p>No discount makes these worth the risk.</p>
+                </div>
+            </div>
+
+            <!-- Question 10 -->
+            <div class="question-card" data-question="9">
+                <div class="question-number">Question 10 of 10</div>
+                <div class="question-text">2022 Ram 1500 Rebel Crew Cab 4WD - Buy Now $33,000. Your decision?</div>
+
+                <div class="vehicle-data">
+                    <h4>Vehicle Information (VIN: 1C6SRFLT1NN120589)</h4>
+                    <table>
+                        <tr><td>CR Grade:</td><td class="highlight-yellow">2.9</td></tr>
+                        <tr><td>Mileage:</td><td>61,215</td></tr>
+                        <tr><td>Black Book Avg:</td><td class="highlight-green">$35,750</td></tr>
+                        <tr><td>J.D. Power Trade-In Avg:</td><td>$37,800</td></tr>
+                        <tr><td>MMR Adjusted:</td><td>$36,600</td></tr>
+                        <tr><td>History:</td><td class="highlight-green">0 accidents, 1 owner</td></tr>
+                        <tr><td>Drivetrain:</td><td class="highlight-green">4WD</td></tr>
+                        <tr><td>Estimated Rehab:</td><td>$1,500</td></tr>
+                        <tr><td>Buy Now Price:</td><td>$33,000</td></tr>
+                    </table>
+                    <div style="margin-top: 15px;">
+                        <a href="examples/ram 3/OVE.com - Search Results.pdf" class="pdf-link" target="_blank">View OVE Listing</a>
+                        <a href="examples/ram 3/1C6SRFLT1NN120589.pdf" class="pdf-link" target="_blank">View Autoniq</a>
+                    </div>
+                </div>
+
+                <div class="options">
+                    <label class="option"><input type="radio" name="q9" value="0"><span class="option-text">Pass - Grade 2.9 is too rough</span></label>
+                    <label class="option"><input type="radio" name="q9" value="1"><span class="option-text">BUY IT - under max bid of $31,250</span></label>
+                    <label class="option"><input type="radio" name="q9" value="2"><span class="option-text">Pass - Buy Now is over our max bid</span></label>
+                    <label class="option"><input type="radio" name="q9" value="3"><span class="option-text">Need more information</span></label>
+                </div>
+
+                <div class="explanation">
+                    <h4>Correct Answer: Pass - Buy Now is over our max bid</h4>
+                    <p>$35,750 - $3,000 (spread) - $1,500 (rehab) = <strong>$31,250 max bid</strong></p>
+                    <p>Buy Now at $33,000 is $1,750 OVER our max bid = <strong>PASS</strong></p>
+                    <p>Even though it's a 1-owner 4WD with clean history, the numbers don't work. Discipline wins!</p>
+                </div>
+            </div>
+
+            <button type="submit" class="submit-btn" id="submit-btn">Submit Exam</button>
+        </form>
+
+        <div class="results" id="results">
+            <h2 id="results-title"></h2>
+            <div class="score" id="score-display"></div>
+            <p id="results-message"></p>
+            <a href="index.html" class="back-button" style="position: relative; display: inline-block; margin-top: 20px;">Return to Course</a>
+        </div>
+    </div>
+
+    <script>
+        const correctAnswers = [0, 0, 2, 1, 2, 2, 2, 2, 2, 2];
+
+        document.getElementById('exam-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            let score = 0;
+            const questions = document.querySelectorAll('.question-card');
+
+            questions.forEach((card, index) => {
+                const selected = document.querySelector(`input[name="q${index}"]:checked`);
+                const explanation = card.querySelector('.explanation');
+                const options = card.querySelectorAll('.option');
+
+                if (selected) {
+                    const answer = parseInt(selected.value);
+                    if (answer === correctAnswers[index]) {
+                        score++;
+                        card.classList.add('answered-correct');
+                        options[answer].classList.add('correct');
+                    } else {
+                        card.classList.add('answered-wrong');
+                        options[answer].classList.add('incorrect');
+                        options[correctAnswers[index]].classList.add('correct');
+                    }
+                }
+
+                explanation.classList.add('show');
+            });
+
+            // Disable all inputs
+            document.querySelectorAll('input[type="radio"]').forEach(input => {
+                input.disabled = true;
+            });
+
+            // Hide submit button
+            document.getElementById('submit-btn').style.display = 'none';
+
+            // Show results
+            const results = document.getElementById('results');
+            const percentage = (score / 10) * 100;
+            const passed = percentage >= 80;
+
+            results.classList.add(passed ? 'passed' : 'failed');
+            document.getElementById('results-title').textContent = passed ? 'CONGRATULATIONS!' : 'Keep Studying';
+            document.getElementById('score-display').textContent = `${score}/10 (${percentage}%)`;
+            document.getElementById('results-message').textContent = passed
+                ? 'You passed the final exam! You\'re ready to start buying.'
+                : 'You need 80% to pass. Review the lessons and try again.';
+            results.classList.add('show');
+
+            // Scroll to top
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        // Add click handler for options
+        document.querySelectorAll('.option').forEach(option => {
+            option.addEventListener('click', function() {
+                const name = this.querySelector('input').name;
+                document.querySelectorAll(`[name="${name}"]`).forEach(input => {
+                    input.closest('.option').classList.remove('selected');
+                });
+                this.classList.add('selected');
+            });
+        });
+    </script>
+</body>
+</html>
