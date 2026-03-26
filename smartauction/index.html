@@ -77,6 +77,14 @@
     .empty { text-align: center; color: #aaa; padding: 40px; font-size: 14px; }
     .search-box { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; width: 220px; }
 
+    .paste-section { margin-bottom: 20px; }
+    .paste-card { background: #fff; border-radius: 10px; padding: 16px; border: 1px solid #ddd; }
+    .paste-card textarea { width: 100%; border: 1px solid #ddd; border-radius: 6px; padding: 8px; font-size: 12px; font-family: monospace; resize: vertical; margin-top: 6px; }
+    .paste-card .label { font-weight: 600; font-size: 13px; }
+    .paste-card .hint { font-size: 11px; color: #888; margin-top: 2px; }
+    .sold-preview-item { display: inline-block; font-size: 11px; font-family: monospace; background: #ffebee; color: #c62828; padding: 2px 6px; border-radius: 3px; margin: 2px; }
+    .nosale-preview-item { display: inline-block; font-size: 11px; font-family: monospace; background: #f5f5f5; color: #999; padding: 2px 6px; border-radius: 3px; margin: 2px; text-decoration: line-through; }
+
     .copy-vins-btn { font-size: 11px; padding: 2px 10px; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; margin-left: 4px; }
     .copy-vins-btn:hover { background: #1565c0; }
     .hidden-vins { position: absolute; left: -9999px; }
@@ -120,6 +128,21 @@
         <div class="hint">Export Results from SA</div>
         <div class="count" id="saCount"></div>
         <div class="age" id="saAge"></div>
+      </div>
+    </div>
+
+    <!-- Auction Sales / Extra Sold VINs -->
+    <div class="paste-section">
+      <div class="paste-card">
+        <div class="label">Auction Sales / Extra Sold VINs</div>
+        <div class="hint">Paste from UAX/Manheim seller detail PDFs. Only confirmed sales (with Sale Amt > $0 and a buyer) are extracted. No Sale / IF items are skipped.</div>
+        <textarea id="extraSoldPaste" rows="4" placeholder="Open PDF → Select All → Copy → Paste here"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-sm" style="background:#1976d2;" id="parseExtraSoldBtn">Parse &amp; Preview</button>
+          <button class="btn btn-red btn-sm" id="addExtraSoldBtn" disabled>Confirm &amp; Add to Sold</button>
+          <span id="extraSoldStatus" style="font-size:11px;color:#888;"></span>
+        </div>
+        <div id="extraSoldPreview" style="display:none;margin-top:8px;"></div>
       </div>
     </div>
 
@@ -599,8 +622,134 @@
 
     function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+    // ── Auction Sale Report Parser ──
+    let parsedExtraSold = [];
+
+    document.getElementById('parseExtraSoldBtn').addEventListener('click', parseExtraSold);
+    document.getElementById('addExtraSoldBtn').addEventListener('click', confirmExtraSold);
+
+    function parseExtraSold() {
+      const text = document.getElementById('extraSoldPaste').value;
+      const preview = document.getElementById('extraSoldPreview');
+      const status = document.getElementById('extraSoldStatus');
+      const confirmBtn = document.getElementById('addExtraSoldBtn');
+
+      if (!text.trim()) { status.textContent = 'Paste something first'; return; }
+
+      // Find all 17-char VINs in the text
+      const allVins = [...new Set((text.match(/\b[A-HJ-NPR-Z0-9]{17}\b/gi) || []).map(v => v.toUpperCase()))];
+
+      if (allVins.length === 0) {
+        // Maybe they pasted just VIN6s or partial VINs
+        const vin6s = [...new Set((text.match(/\b[A-Z0-9]{5,7}\b/gi) || []).map(v => v.toUpperCase()))];
+        if (vin6s.length > 0) {
+          parsedExtraSold = vin6s.map(v => ({ vin: v, vin6: v, status: 'sold', source: 'manual' }));
+          preview.style.display = 'block';
+          preview.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px;">Found ${vin6s.length} VIN6s (manual entry):</div>` +
+            vin6s.map(v => `<span class="sold-preview-item">${v}</span>`).join('');
+          confirmBtn.disabled = false;
+          status.textContent = `${vin6s.length} VINs ready to add`;
+          return;
+        }
+        status.textContent = 'No VINs found in pasted text';
+        preview.style.display = 'none';
+        confirmBtn.disabled = true;
+        return;
+      }
+
+      // For auction PDFs: check each VIN for "Sale Amt" with real $ amount nearby
+      // Split text into vehicle blocks (each block starts with a VIN)
+      const confirmed = [];
+      const noSale = [];
+
+      for (const vin of allVins) {
+        const vinIdx = text.toUpperCase().indexOf(vin);
+        // Get ~500 chars after VIN to check for sale info
+        const block = text.substring(vinIdx, vinIdx + 600).toUpperCase();
+
+        const hasSaleAmt = block.match(/SALE\s*AMT[:\s]*\$([\d,]+\.?\d*)/);
+        const hasBuyer = block.includes('BUYER:') && !block.match(/BUYER:\s*\n/);
+        const hasNoSale = block.includes('NO SALE') || block.includes('IF BID') || block.includes('IF SALE');
+        const saleAmount = hasSaleAmt ? parseFloat(hasSaleAmt[1].replace(/,/g, '')) : 0;
+
+        if (hasNoSale || saleAmount === 0) {
+          noSale.push(vin);
+        } else if (hasSaleAmt && saleAmount > 0) {
+          confirmed.push({ vin, vin6: vin.slice(-6), amount: hasSaleAmt[1], source: 'auction' });
+        } else {
+          // No sale info found but VIN exists — include as sold (loose)
+          confirmed.push({ vin, vin6: vin.slice(-6), amount: '?', source: 'auction' });
+        }
+      }
+
+      parsedExtraSold = confirmed;
+      preview.style.display = 'block';
+
+      let html = '';
+      if (confirmed.length > 0) {
+        html += `<div style="font-size:12px;font-weight:600;color:#c62828;margin-bottom:4px;">Confirmed Sales (${confirmed.length}):</div>`;
+        html += confirmed.map(v => `<span class="sold-preview-item">${v.vin.slice(-6)} — $${v.amount}</span>`).join('');
+      }
+      if (noSale.length > 0) {
+        html += `<div style="font-size:12px;font-weight:600;color:#999;margin-top:6px;margin-bottom:4px;">Skipped — No Sale / IF (${noSale.length}):</div>`;
+        html += noSale.map(v => `<span class="nosale-preview-item">${v.slice(-6)}</span>`).join('');
+      }
+      preview.innerHTML = html;
+
+      confirmBtn.disabled = confirmed.length === 0;
+      status.textContent = `${confirmed.length} sold, ${noSale.length} skipped`;
+    }
+
+    function confirmExtraSold() {
+      if (parsedExtraSold.length === 0) return;
+      const status = document.getElementById('extraSoldStatus');
+      const confirmBtn = document.getElementById('addExtraSoldBtn');
+
+      // Load existing extra sold and merge
+      let extraSold = loadData('carzinc_extra_sold');
+      const existingVin6s = new Set(extraSold.map(v => v.vin6));
+      let added = 0;
+      for (const v of parsedExtraSold) {
+        if (!existingVin6s.has(v.vin6)) {
+          extraSold.push(v);
+          existingVin6s.add(v.vin6);
+          added++;
+        }
+      }
+      saveData('carzinc_extra_sold', 'carzinc_extra_sold_date', extraSold);
+
+      // Also add to the in-memory sold set for immediate cross-check
+      // Create fake sold rows that vin6From() can read
+      for (const v of parsedExtraSold) {
+        sold.push({ 'Last 6 VIN': v.vin6, 'Vehicle VIN': v.vin, 'Stock #': 'AUCTION-' + v.vin6 });
+      }
+
+      status.textContent = `Added ${added} new (${extraSold.length} total auction sales)`;
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Added!';
+      setTimeout(() => { confirmBtn.textContent = 'Confirm & Add to Sold'; }, 2000);
+
+      // Clear textarea
+      document.getElementById('extraSoldPaste').value = '';
+      document.getElementById('extraSoldPreview').style.display = 'none';
+      parsedExtraSold = [];
+    }
+
     // ── Boot ──
+    // Load extra sold from storage and merge into sold array
+    function loadExtraSold() {
+      const extra = loadData('carzinc_extra_sold');
+      if (extra.length > 0) {
+        for (const v of extra) {
+          sold.push({ 'Last 6 VIN': v.vin6, 'Vehicle VIN': v.vin || '', 'Stock #': 'AUCTION-' + v.vin6 });
+        }
+        const ts = localStorage.getItem('carzinc_extra_sold_date');
+        document.getElementById('extraSoldStatus').textContent = `${extra.length} auction sales saved (${formatAge(ts)})`;
+      }
+    }
+
     init();
+    loadExtraSold();
   })();
   </script>
 </body>
