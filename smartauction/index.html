@@ -77,6 +77,10 @@
     .empty { text-align: center; color: #aaa; padding: 40px; font-size: 14px; }
     .search-box { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; width: 220px; }
 
+    .copy-vins-btn { font-size: 11px; padding: 2px 10px; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; margin-left: 4px; }
+    .copy-vins-btn:hover { background: #1565c0; }
+    .hidden-vins { position: absolute; left: -9999px; }
+
     @media (max-width: 600px) {
       .upload-section { grid-template-columns: 1fr; }
       .stats { grid-template-columns: repeat(3, 1fr); }
@@ -122,7 +126,7 @@
     <!-- Stats -->
     <div class="stats" id="statsRow" style="display:none;">
       <div class="stat blue"><div class="num" id="sInv">-</div><div class="lbl">In Inventory</div></div>
-      <div class="stat purple"><div class="num" id="sOnSA">-</div><div class="lbl">On SA</div></div>
+      <div class="stat purple"><div class="num" id="sOnSA">-</div><div class="lbl">Active on SA</div></div>
       <div class="stat orange"><div class="num" id="sNotListed">-</div><div class="lbl">Not on SA</div></div>
       <div class="stat green"><div class="num" id="sListed">-</div><div class="lbl">Listed OK</div></div>
       <div class="stat red"><div class="num" id="sSoldOnSA">-</div><div class="lbl">Sold on SA</div></div>
@@ -386,34 +390,78 @@
         }
       }
 
-      const saSet = new Set();
-      const saMap = new Map();
+      // Categorize SA listings by status
+      // Active/Live/On Hold = still listed and needs attention
+      // Removed = taken down but not sold on SA
+      // Sold/Expired/Deactivated = done, ignore
+      const saActive = new Map();     // Active + On Hold (live on SA)
+      const saRemoved = new Map();    // Removed by seller
+      let saActiveCount = 0;
+      let saTotal = 0;
+
       for (const v of saListings) {
+        saTotal++;
         const v6 = saVin6From(v);
-        if (v6.length >= 5) { saSet.add(v6); saMap.set(v6, v); }
+        if (v6.length < 5) continue;
+
+        const status = (v['Status'] || '').toLowerCase().trim();
+        const saleDate = (v['Sale Date'] || '').trim();
+        const removalDate = (v['Removal Date'] || '').trim();
+
+        let category = 'ignore'; // sold/expired/deactivated
+        if (status) {
+          // manage_inventory format with explicit Status
+          if (status === 'live' || status === 'on hold' || status === 'active') category = 'active';
+          else if (status === 'deactivated') category = 'removed';
+        } else {
+          // InventoryResults format — infer from dates
+          if (!saleDate && !removalDate) category = 'active';
+          else if (removalDate && !saleDate) category = 'removed';
+        }
+
+        if (category === 'active') {
+          saActive.set(v6, v);
+          saActiveCount++;
+        } else if (category === 'removed') {
+          saRemoved.set(v6, v);
+        }
       }
+
+      // Cross-check uses active SA listings
+      const saSet = saActive; // active + on hold only
 
       const notOnSA = [];
       const properlyListed = [];
-      const soldButOnSA = [];
-      const onSANotInv = [];
+      const soldButOnSA = [];  // In your sold books but active/hold/removed on SA
+      const onSANotInv = [];   // Active/hold on SA but not in your inventory
 
       for (const v6 of invSet) {
-        if (soldSet.has(v6)) continue; // Skip cars flagged as sold
+        if (soldSet.has(v6)) continue;
         const v = invMap.get(v6);
         if (saSet.has(v6)) properlyListed.push({ vin6: v6, ...v });
         else notOnSA.push({ vin6: v6, ...v });
       }
 
-      for (const v6 of saSet) {
-        if (soldSet.has(v6)) soldButOnSA.push({ vin6: v6, ...(saMap.get(v6) || {}) });
-        if (!invSet.has(v6)) onSANotInv.push({ vin6: v6, ...(saMap.get(v6) || {}) });
+      // "On SA but Not in Inventory" — only active + hold (you don't care about removed ones not in inv)
+      for (const [v6, saV] of saActive) {
+        if (!invSet.has(v6)) onSANotInv.push({ vin6: v6, ...saV });
+      }
+
+      // "Sold but Still on SA" — check active + hold + removed against sold list
+      // These need to be removed/already were removed from SA
+      for (const [v6, saV] of saActive) {
+        if (soldSet.has(v6)) soldButOnSA.push({ vin6: v6, status: 'Active', ...saV });
+      }
+      for (const [v6, saV] of saRemoved) {
+        if (soldSet.has(v6) && invSet.has(v6)) {
+          // Removed from SA AND sold AND still in inventory = already handled, skip
+        }
       }
 
       // Stats
       document.getElementById('statsRow').style.display = '';
       document.getElementById('sInv').textContent = inventory.length;
-      document.getElementById('sOnSA').textContent = saListings.length;
+      document.getElementById('sOnSA').textContent = saActiveCount + (saTotal > saActiveCount ? ` / ${saTotal}` : '');
       document.getElementById('sNotListed').textContent = notOnSA.length;
       document.getElementById('sListed').textContent = properlyListed.length;
       document.getElementById('sSoldOnSA').textContent = soldButOnSA.length;
@@ -512,7 +560,18 @@
     // ── Render Helpers ──
     function renderGroup(title, cls, items, columns) {
       const validCols = columns.filter(c => items.some(item => item[c]));
-      let html = `<div class="result-group ${cls}"><h3>${esc(title)} <span class="badge">${items.length}</span></h3>`;
+      // Collect full VINs for copy button
+      const vins = items.map(item => {
+        return item['Vehicle VIN'] || item['VIN'] || item['vin6'] || '';
+      }).filter(v => v);
+      const copyId = 'copy_' + Math.random().toString(36).substr(2, 6);
+
+      let html = `<div class="result-group ${cls}"><h3>${esc(title)} <span class="badge">${items.length}</span>`;
+      if (vins.length > 0) {
+        html += ` <button class="copy-vins-btn" onclick="window._copyVins('${copyId}')">Copy VINs</button>`;
+        html += `<textarea id="${copyId}" class="hidden-vins">${vins.join('\n')}</textarea>`;
+      }
+      html += `</h3>`;
       html += `<div class="table-wrap"><table class="vehicle-table"><thead><tr>`;
       for (const col of validCols) html += `<th>${esc(col)}</th>`;
       html += `</tr></thead><tbody>`;
@@ -528,6 +587,15 @@
       html += '</tbody></table></div></div>';
       return html;
     }
+
+    window._copyVins = function(id) {
+      const textarea = document.getElementById(id);
+      if (!textarea) return;
+      navigator.clipboard.writeText(textarea.value).then(() => {
+        const btn = textarea.previousElementSibling;
+        if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy VINs'; }, 1500); }
+      });
+    };
 
     function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
