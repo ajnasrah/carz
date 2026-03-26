@@ -345,6 +345,16 @@
 
     // ── Load Queue from local server (if running) ──
     async function loadQueueFromServer() {
+      // Skip localhost fetch if on HTTPS (GitHub Pages) — browsers block mixed content
+      if (location.protocol === 'https:') {
+        if (queueData.length > 0) {
+          const ts = localStorage.getItem(STORAGE_KEYS.queueDate);
+          document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (cached ${formatAge(ts)})`;
+        } else {
+          document.getElementById('queueStatus').textContent = 'Queue only available on localhost (open http://localhost:7749)';
+        }
+        return;
+      }
       try {
         const res = await fetch('http://localhost:7749/queue/all', { signal: AbortSignal.timeout(2000) });
         const data = await res.json();
@@ -359,7 +369,7 @@
           const ts = localStorage.getItem(STORAGE_KEYS.queueDate);
           document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (cached ${formatAge(ts)})`;
         } else {
-          document.getElementById('queueStatus').textContent = 'Server offline — no queue data';
+          document.getElementById('queueStatus').textContent = 'Server offline — start with: python3 imessage_server.py';
         }
       }
     }
