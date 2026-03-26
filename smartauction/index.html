@@ -99,7 +99,7 @@
       <div class="upload-card" id="invCard">
         <input type="file" id="invInput" accept=".csv,.xlsx,.xls" />
         <div class="label">Inventory (Frazer)</div>
-        <div class="hint">INVENTORY.CSV</div>
+        <div class="hint">INVENTORY.CSV or .XLSX</div>
         <div class="count" id="invCount"></div>
         <div class="age" id="invAge"></div>
       </div>
@@ -155,6 +155,7 @@
 
   </div>
 
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.mini.min.js"></script>
   <script>
   (function() {
     'use strict';
@@ -177,7 +178,19 @@
       queueDate: 'carzinc_queue_date',
     };
 
-    // ── CSV Parser ──
+    // ── File Parser (CSV + XLSX) ──
+    async function parseFile(file) {
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv')) {
+        return parseCSV(await file.text());
+      }
+      // XLSX
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      return XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    }
+
     function parseCSV(text) {
       const lines = text.split('\n').filter(l => l.trim());
       if (lines.length < 2) return [];
@@ -273,24 +286,21 @@
 
     // ── File Uploads ──
     document.getElementById('invInput').addEventListener('change', async (e) => {
-      const text = await e.target.files[0].text();
-      inventory = parseCSV(text);
+      inventory = await parseFile(e.target.files[0]);
       saveData(STORAGE_KEYS.inv, STORAGE_KEYS.invDate, inventory);
       updateCard('inv', inventory.length, STORAGE_KEYS.invDate);
       updateCrossCheckBtn();
     });
 
     document.getElementById('soldInput').addEventListener('change', async (e) => {
-      const text = await e.target.files[0].text();
-      sold = parseCSV(text);
+      sold = await parseFile(e.target.files[0]);
       saveData(STORAGE_KEYS.sold, STORAGE_KEYS.soldDate, sold);
       updateCard('sold', sold.length, STORAGE_KEYS.soldDate);
       updateCrossCheckBtn();
     });
 
     document.getElementById('saInput').addEventListener('change', async (e) => {
-      const text = await e.target.files[0].text();
-      saListings = parseCSV(text);
+      saListings = await parseFile(e.target.files[0]);
       saveData(STORAGE_KEYS.sa, STORAGE_KEYS.saDate, saListings);
       updateCard('sa', saListings.length, STORAGE_KEYS.saDate);
       updateCrossCheckBtn();
@@ -343,15 +353,37 @@
     function runCrossCheck() {
       const invMap = new Map();
       const invSet = new Set();
+      const invStockByVin6 = new Map();
       for (const v of inventory) {
         const v6 = vin6From(v);
-        if (v6.length >= 5) { invSet.add(v6); invMap.set(v6, v); }
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) { invSet.add(v6); invMap.set(v6, v); invStockByVin6.set(v6, stock); }
       }
 
-      const soldSet = new Set();
+      // Sold: only count as "sold" if NOT currently in inventory with same stock#
+      // Handles arbitrations — car sold, returned, re-stocked with new stock#
+      const soldStockSet = new Set();
+      const soldVin6All = new Set();
       for (const v of sold) {
         const v6 = vin6From(v);
-        if (v6.length >= 5) soldSet.add(v6);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) soldVin6All.add(v6);
+        if (stock) soldStockSet.add(stock);
+      }
+      const soldSet = new Set();
+      for (const v6 of soldVin6All) {
+        if (!invSet.has(v6)) {
+          // Not in current inventory — definitively sold
+          soldSet.add(v6);
+        } else {
+          // In both — check stock#. If current inventory stock# is also in sold,
+          // it means THIS specific deal was sold (not just a previous one with same VIN)
+          const currentStock = invStockByVin6.get(v6);
+          if (currentStock && soldStockSet.has(currentStock)) {
+            soldSet.add(v6); // Current stock# was sold — flag it
+          }
+          // Otherwise: old deal with same VIN was sold, new stock# is live — don't flag
+        }
       }
 
       const saSet = new Set();
@@ -367,6 +399,7 @@
       const onSANotInv = [];
 
       for (const v6 of invSet) {
+        if (soldSet.has(v6)) continue; // Skip cars flagged as sold
         const v = invMap.get(v6);
         if (saSet.has(v6)) properlyListed.push({ vin6: v6, ...v });
         else notOnSA.push({ vin6: v6, ...v });
@@ -418,16 +451,35 @@
     document.getElementById('cleanQueueBtn').addEventListener('click', cleanQueue);
 
     function cleanQueue() {
-      const soldSet = new Set();
-      for (const v of sold) {
-        const v6 = vin6From(v);
-        if (v6.length >= 5) soldSet.add(v6);
-      }
-
+      // Build inventory and sold lookups with stock# tiebreaker
       const invSet = new Set();
+      const invStockByVin6 = new Map();
       for (const v of inventory) {
         const v6 = vin6From(v);
-        if (v6.length >= 5) invSet.add(v6);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) { invSet.add(v6); invStockByVin6.set(v6, stock); }
+      }
+
+      const soldVin6All = new Set();
+      const soldStockSet = new Set();
+      for (const v of sold) {
+        const v6 = vin6From(v);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) soldVin6All.add(v6);
+        if (stock) soldStockSet.add(stock);
+      }
+
+      // Same logic: if VIN6 in both, compare stock#
+      const soldSet = new Set();
+      for (const v6 of soldVin6All) {
+        if (!invSet.has(v6)) {
+          soldSet.add(v6);
+        } else {
+          const currentStock = invStockByVin6.get(v6);
+          if (currentStock && soldStockSet.has(currentStock)) {
+            soldSet.add(v6);
+          }
+        }
       }
 
       const live = [];
