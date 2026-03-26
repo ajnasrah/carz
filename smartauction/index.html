@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carz Inc - SmartAuction Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #333; }
+
+    .header { background: #1a1a2e; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header .subtitle { font-size: 12px; color: #aaa; }
+    .header .last-updated { font-size: 11px; color: #666; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin-bottom: 20px; border-radius: 8px; overflow: hidden; border: 1px solid #ddd; }
+    .tab { flex: 1; padding: 12px; text-align: center; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff; color: #666; border: none; transition: all 0.15s; }
+    .tab.active { background: #1976d2; color: #fff; }
+    .tab:hover:not(.active) { background: #f0f0f0; }
+
+    /* Upload Section */
+    .upload-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .upload-card { background: #fff; border-radius: 10px; padding: 16px; border: 2px dashed #ddd; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
+    .upload-card:hover { border-color: #1976d2; background: #f8fbff; }
+    .upload-card.loaded { border-color: #4caf50; border-style: solid; background: #f9fdf6; }
+    .upload-card input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .upload-card .label { font-weight: 600; font-size: 13px; color: #333; }
+    .upload-card .hint { font-size: 11px; color: #888; margin-top: 2px; }
+    .upload-card .count { font-size: 16px; font-weight: 700; color: #388e3c; margin-top: 6px; }
+    .upload-card .age { font-size: 10px; color: #999; }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
+    .stat { background: #fff; border-radius: 10px; padding: 14px; text-align: center; }
+    .stat .num { font-size: 26px; font-weight: 800; line-height: 1.2; }
+    .stat .lbl { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+    .stat.blue .num { color: #1976d2; }
+    .stat.green .num { color: #388e3c; }
+    .stat.red .num { color: #c62828; }
+    .stat.orange .num { color: #f57c00; }
+    .stat.purple .num { color: #7b1fa2; }
+    .stat.gray .num { color: #666; }
+
+    .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-blue { background: #1976d2; }
+    .btn-orange { background: #f57c00; }
+    .btn-red { background: #c62828; }
+    .btn-sm { padding: 6px 12px; font-size: 11px; }
+
+    .actions { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+
+    /* Results */
+    .result-group { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .result-group h3 { font-size: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+    .result-group.urgent h3 { color: #c62828; } .result-group.urgent .badge { background: #ffebee; color: #c62828; }
+    .result-group.warn h3 { color: #f57c00; } .result-group.warn .badge { background: #fff3e0; color: #f57c00; }
+    .result-group.ok h3 { color: #388e3c; } .result-group.ok .badge { background: #e8f5e9; color: #388e3c; }
+    .result-group.info h3 { color: #1976d2; } .result-group.info .badge { background: #e3f2fd; color: #1976d2; }
+    .result-group.gray h3 { color: #666; } .result-group.gray .badge { background: #f5f5f5; color: #666; }
+
+    .vehicle-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .vehicle-table th { text-align: left; padding: 8px 10px; background: #f9f9f9; font-weight: 600; color: #555; border-bottom: 2px solid #eee; position: sticky; top: 0; }
+    .vehicle-table td { padding: 6px 10px; border-bottom: 1px solid #f0f0f0; }
+    .vehicle-table tr:hover { background: #f8fbff; }
+    .vehicle-table .vin { font-family: monospace; font-size: 11px; color: #555; }
+    .table-wrap { max-height: 400px; overflow-y: auto; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .empty { text-align: center; color: #aaa; padding: 40px; font-size: 14px; }
+    .search-box { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; width: 220px; }
+
+    @media (max-width: 600px) {
+      .upload-section { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: repeat(3, 1fr); }
+      .search-box { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>SmartAuction Dashboard</h1>
+      <div class="subtitle">Carz Inc Listing Pipeline</div>
+    </div>
+    <div class="last-updated" id="lastUpdated"></div>
+  </div>
+
+  <div class="container">
+    <!-- Uploads -->
+    <div class="upload-section">
+      <div class="upload-card" id="invCard">
+        <input type="file" id="invInput" accept=".csv,.xlsx,.xls" />
+        <div class="label">Inventory (Frazer)</div>
+        <div class="hint">INVENTORY.CSV</div>
+        <div class="count" id="invCount"></div>
+        <div class="age" id="invAge"></div>
+      </div>
+      <div class="upload-card" id="soldCard">
+        <input type="file" id="soldInput" accept=".csv,.xlsx,.xls" />
+        <div class="label">Sold (Frazer)</div>
+        <div class="hint">SOLD.CSV</div>
+        <div class="count" id="soldCount"></div>
+        <div class="age" id="soldAge"></div>
+      </div>
+      <div class="upload-card" id="saCard">
+        <input type="file" id="saInput" accept=".csv,.xlsx,.xls" />
+        <div class="label">SmartAuction Export</div>
+        <div class="hint">Export Results from SA</div>
+        <div class="count" id="saCount"></div>
+        <div class="age" id="saAge"></div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats" id="statsRow" style="display:none;">
+      <div class="stat blue"><div class="num" id="sInv">-</div><div class="lbl">In Inventory</div></div>
+      <div class="stat purple"><div class="num" id="sOnSA">-</div><div class="lbl">On SA</div></div>
+      <div class="stat orange"><div class="num" id="sNotListed">-</div><div class="lbl">Not on SA</div></div>
+      <div class="stat green"><div class="num" id="sListed">-</div><div class="lbl">Listed OK</div></div>
+      <div class="stat red"><div class="num" id="sSoldOnSA">-</div><div class="lbl">Sold on SA</div></div>
+      <div class="stat gray"><div class="num" id="sUnknown">-</div><div class="lbl">Unknown</div></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="crosscheck">Cross-Check</button>
+      <button class="tab" data-tab="queue">Queue (Scraped)</button>
+    </div>
+
+    <!-- Cross-Check Tab -->
+    <div class="tab-content active" id="tab-crosscheck">
+      <div class="actions">
+        <button class="btn btn-orange" id="crossCheckBtn" disabled>Run Cross-Check</button>
+        <input type="text" class="search-box" id="searchBox" placeholder="Search VIN, make, model..." />
+      </div>
+      <div id="results"></div>
+    </div>
+
+    <!-- Queue Tab -->
+    <div class="tab-content" id="tab-queue">
+      <div class="actions">
+        <button class="btn btn-blue" id="cleanQueueBtn" disabled>Clean Queue (remove sold)</button>
+        <span id="queueStatus" style="font-size:12px;color:#888;"></span>
+      </div>
+      <div id="queueResults"></div>
+    </div>
+
+  </div>
+
+  <script>
+  (function() {
+    'use strict';
+
+    // ── State ──
+    let inventory = [];
+    let sold = [];
+    let saListings = [];
+    let queueData = [];
+    let lastResults = null;
+
+    const STORAGE_KEYS = {
+      inv: 'carzinc_inventory',
+      invDate: 'carzinc_inventory_date',
+      sold: 'carzinc_sold',
+      soldDate: 'carzinc_sold_date',
+      sa: 'carzinc_sa',
+      saDate: 'carzinc_sa_date',
+      queue: 'carzinc_queue',
+      queueDate: 'carzinc_queue_date',
+    };
+
+    // ── CSV Parser ──
+    function parseCSV(text) {
+      const lines = text.split('\n').filter(l => l.trim());
+      if (lines.length < 2) return [];
+      const headers = parseCSVLine(lines[0]);
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = parseCSVLine(lines[i]);
+        if (values.length < 3) continue;
+        const row = {};
+        headers.forEach((h, idx) => { row[h.trim()] = (values[idx] || '').trim(); });
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function parseCSVLine(line) {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+          else inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+          result.push(current); current = '';
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current);
+      return result;
+    }
+
+    // ── Persistence ──
+    function saveData(key, dateKey, data) {
+      try {
+        localStorage.setItem(key, JSON.stringify(data));
+        localStorage.setItem(dateKey, Date.now().toString());
+      } catch (e) {
+        console.warn('Storage full, clearing old data');
+        localStorage.removeItem(STORAGE_KEYS.sold); // sold is biggest, clear first
+        try { localStorage.setItem(key, JSON.stringify(data)); localStorage.setItem(dateKey, Date.now().toString()); } catch {}
+      }
+    }
+
+    function loadData(key) {
+      try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; }
+    }
+
+    function formatAge(ts) {
+      if (!ts) return '';
+      const mins = Math.floor((Date.now() - parseInt(ts)) / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return `${Math.floor(hrs / 24)}d ago`;
+    }
+
+    // ── Init: restore saved data ──
+    function init() {
+      inventory = loadData(STORAGE_KEYS.inv);
+      sold = loadData(STORAGE_KEYS.sold);
+      saListings = loadData(STORAGE_KEYS.sa);
+      queueData = loadData(STORAGE_KEYS.queue);
+
+      updateCard('inv', inventory.length, STORAGE_KEYS.invDate);
+      updateCard('sold', sold.length, STORAGE_KEYS.soldDate);
+      updateCard('sa', saListings.length, STORAGE_KEYS.saDate);
+      updateCrossCheckBtn();
+
+      // Try loading queue from local server
+      loadQueueFromServer();
+    }
+
+    function updateCard(prefix, count, dateKey) {
+      const countEl = document.getElementById(prefix + 'Count');
+      const ageEl = document.getElementById(prefix + 'Age');
+      const card = document.getElementById(prefix + 'Card');
+      const ts = localStorage.getItem(dateKey);
+      if (count > 0) {
+        countEl.textContent = `${count} vehicles`;
+        ageEl.textContent = `Uploaded ${formatAge(ts)}`;
+        card.classList.add('loaded');
+      }
+    }
+
+    function updateCrossCheckBtn() {
+      document.getElementById('crossCheckBtn').disabled = (inventory.length === 0);
+      document.getElementById('cleanQueueBtn').disabled = (queueData.length === 0);
+    }
+
+    // ── File Uploads ──
+    document.getElementById('invInput').addEventListener('change', async (e) => {
+      const text = await e.target.files[0].text();
+      inventory = parseCSV(text);
+      saveData(STORAGE_KEYS.inv, STORAGE_KEYS.invDate, inventory);
+      updateCard('inv', inventory.length, STORAGE_KEYS.invDate);
+      updateCrossCheckBtn();
+    });
+
+    document.getElementById('soldInput').addEventListener('change', async (e) => {
+      const text = await e.target.files[0].text();
+      sold = parseCSV(text);
+      saveData(STORAGE_KEYS.sold, STORAGE_KEYS.soldDate, sold);
+      updateCard('sold', sold.length, STORAGE_KEYS.soldDate);
+      updateCrossCheckBtn();
+    });
+
+    document.getElementById('saInput').addEventListener('change', async (e) => {
+      const text = await e.target.files[0].text();
+      saListings = parseCSV(text);
+      saveData(STORAGE_KEYS.sa, STORAGE_KEYS.saDate, saListings);
+      updateCard('sa', saListings.length, STORAGE_KEYS.saDate);
+      updateCrossCheckBtn();
+    });
+
+    // ── Tabs ──
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ── Load Queue from local server (if running) ──
+    async function loadQueueFromServer() {
+      try {
+        const res = await fetch('http://localhost:7749/queue/all', { signal: AbortSignal.timeout(2000) });
+        const data = await res.json();
+        if (data.vehicles && data.vehicles.length > 0) {
+          queueData = data.vehicles;
+          saveData(STORAGE_KEYS.queue, STORAGE_KEYS.queueDate, queueData);
+          updateCrossCheckBtn();
+          document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (live from server)`;
+        }
+      } catch {
+        if (queueData.length > 0) {
+          const ts = localStorage.getItem(STORAGE_KEYS.queueDate);
+          document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (cached ${formatAge(ts)})`;
+        } else {
+          document.getElementById('queueStatus').textContent = 'Server offline — no queue data';
+        }
+      }
+    }
+
+    // ── Cross-Check ──
+    document.getElementById('crossCheckBtn').addEventListener('click', runCrossCheck);
+    document.getElementById('searchBox').addEventListener('input', applySearch);
+
+    function vin6From(row) {
+      return (row['Last 6 VIN'] || row['Vehicle VIN']?.slice(-6) || row['VIN']?.slice(-6) || row['vin6'] || '').toUpperCase();
+    }
+
+    function saVin6From(row) {
+      const vin = row['VIN'] || row['Vehicle VIN'] || row['Vin'] || row['Full VIN'] || '';
+      return vin.length >= 6 ? vin.slice(-6).toUpperCase() : '';
+    }
+
+    function runCrossCheck() {
+      const invMap = new Map();
+      const invSet = new Set();
+      for (const v of inventory) {
+        const v6 = vin6From(v);
+        if (v6.length >= 5) { invSet.add(v6); invMap.set(v6, v); }
+      }
+
+      const soldSet = new Set();
+      for (const v of sold) {
+        const v6 = vin6From(v);
+        if (v6.length >= 5) soldSet.add(v6);
+      }
+
+      const saSet = new Set();
+      const saMap = new Map();
+      for (const v of saListings) {
+        const v6 = saVin6From(v);
+        if (v6.length >= 5) { saSet.add(v6); saMap.set(v6, v); }
+      }
+
+      const notOnSA = [];
+      const properlyListed = [];
+      const soldButOnSA = [];
+      const onSANotInv = [];
+
+      for (const v6 of invSet) {
+        const v = invMap.get(v6);
+        if (saSet.has(v6)) properlyListed.push({ vin6: v6, ...v });
+        else notOnSA.push({ vin6: v6, ...v });
+      }
+
+      for (const v6 of saSet) {
+        if (soldSet.has(v6)) soldButOnSA.push({ vin6: v6, ...(saMap.get(v6) || {}) });
+        if (!invSet.has(v6)) onSANotInv.push({ vin6: v6, ...(saMap.get(v6) || {}) });
+      }
+
+      // Stats
+      document.getElementById('statsRow').style.display = '';
+      document.getElementById('sInv').textContent = inventory.length;
+      document.getElementById('sOnSA').textContent = saListings.length;
+      document.getElementById('sNotListed').textContent = notOnSA.length;
+      document.getElementById('sListed').textContent = properlyListed.length;
+      document.getElementById('sSoldOnSA').textContent = soldButOnSA.length;
+      document.getElementById('sUnknown').textContent = onSANotInv.length;
+
+      lastResults = { notOnSA, soldButOnSA, onSANotInv, properlyListed };
+      renderResults(lastResults);
+    }
+
+    function renderResults(r, filter = '') {
+      const f = filter.toUpperCase();
+      const filterItems = (items) => f ? items.filter(v => JSON.stringify(v).toUpperCase().includes(f)) : items;
+
+      const div = document.getElementById('results');
+      div.innerHTML = '';
+
+      const invCols = ['Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage', 'Days on lot', 'Buyer'];
+      const saCols = ['vin6', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'VIN'];
+
+      if (r.notOnSA.length) div.innerHTML += renderGroup('Not Listed on SmartAuction', 'urgent', filterItems(r.notOnSA), invCols);
+      if (r.soldButOnSA.length) div.innerHTML += renderGroup('Sold but Still on SA (remove these)', 'warn', filterItems(r.soldButOnSA), saCols);
+      if (r.onSANotInv.length) div.innerHTML += renderGroup('On SA but Not in Inventory', 'info', filterItems(r.onSANotInv), saCols);
+      if (r.properlyListed.length) div.innerHTML += renderGroup('Properly Listed', 'ok', filterItems(r.properlyListed), invCols);
+
+      if (saListings.length === 0) {
+        div.innerHTML += `<div class="result-group info"><h3>Upload SA Export for full cross-check</h3><p style="font-size:12px;color:#888;">SmartAuction > Manage Inventory > Export Results > Upload here</p></div>`;
+      }
+    }
+
+    function applySearch() {
+      if (lastResults) renderResults(lastResults, document.getElementById('searchBox').value);
+    }
+
+    // ── Queue Clean ──
+    document.getElementById('cleanQueueBtn').addEventListener('click', cleanQueue);
+
+    function cleanQueue() {
+      const soldSet = new Set();
+      for (const v of sold) {
+        const v6 = vin6From(v);
+        if (v6.length >= 5) soldSet.add(v6);
+      }
+
+      const invSet = new Set();
+      for (const v of inventory) {
+        const v6 = vin6From(v);
+        if (v6.length >= 5) invSet.add(v6);
+      }
+
+      const live = [];
+      const isSold = [];
+      const unknown = [];
+
+      for (const v of queueData) {
+        const v6 = (v.vin6 || '').toUpperCase();
+        if (soldSet.has(v6)) {
+          isSold.push(v);
+        } else if (invSet.has(v6)) {
+          live.push(v);
+        } else {
+          unknown.push(v);
+        }
+      }
+
+      const div = document.getElementById('queueResults');
+      div.innerHTML = '';
+
+      const qCols = ['vin6', 'miles', 'condition', 'tire_condition', 'notes', 'photo_count'];
+
+      if (live.length) div.innerHTML += renderGroup(`Still in Inventory (keep)`, 'ok', live, qCols);
+      if (isSold.length) div.innerHTML += renderGroup(`Sold (remove from queue)`, 'warn', isSold, qCols);
+      if (unknown.length) div.innerHTML += renderGroup(`Not Found in Inventory or Sold (investigate)`, 'gray', unknown, qCols);
+
+      document.getElementById('queueStatus').textContent = `${queueData.length} total: ${live.length} live, ${isSold.length} sold, ${unknown.length} unknown`;
+    }
+
+    // ── Render Helpers ──
+    function renderGroup(title, cls, items, columns) {
+      const validCols = columns.filter(c => items.some(item => item[c]));
+      let html = `<div class="result-group ${cls}"><h3>${esc(title)} <span class="badge">${items.length}</span></h3>`;
+      html += `<div class="table-wrap"><table class="vehicle-table"><thead><tr>`;
+      for (const col of validCols) html += `<th>${esc(col)}</th>`;
+      html += `</tr></thead><tbody>`;
+      for (const item of items) {
+        html += '<tr>';
+        for (const col of validCols) {
+          const val = item[col] || '';
+          const cls = (col.includes('VIN') || col === 'vin6') ? 'vin' : '';
+          html += `<td class="${cls}">${esc(String(val))}</td>`;
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table></div></div>';
+      return html;
+    }
+
+    function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ── Boot ──
+    init();
+  })();
+  </script>
+</body>
+</html>
