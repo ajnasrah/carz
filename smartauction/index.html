@@ -424,12 +424,15 @@
       }
 
       // Categorize SA listings by status
-      // Active/Live/On Hold = still listed and needs attention
-      // Removed = taken down but not sold on SA
-      // Sold/Expired/Deactivated = done, ignore
-      const saActive = new Map();     // Active + On Hold (live on SA)
-      const saRemoved = new Map();    // Removed by seller
-      let saActiveCount = 0;
+      // Live = currently in auction (has Days Remaining, no Hold Date)
+      // On Hold = pulled from auction by seller
+      // Removed = taken down permanently
+      // Sold/Expired = done, ignore
+      const saLive = new Map();      // Actually in live auction
+      const saOnHold = new Map();    // On hold (seller pulled)
+      const saRemoved = new Map();   // Removed by seller
+      let saLiveCount = 0;
+      let saHoldCount = 0;
       let saTotal = 0;
 
       for (const v of saListings) {
@@ -440,28 +443,37 @@
         const status = (v['Status'] || '').toLowerCase().trim();
         const saleDate = (v['Sale Date'] || '').trim();
         const removalDate = (v['Removal Date'] || '').trim();
+        const holdDate = (v['Hold Date'] || '').trim();
+        const daysRemaining = (v['Days Remaining'] || '').trim();
 
-        let category = 'ignore'; // sold/expired/deactivated
+        let category = 'ignore';
         if (status) {
           // manage_inventory format with explicit Status
-          if (status === 'live' || status === 'on hold' || status === 'active') category = 'active';
+          if (status === 'live' || status === 'active') category = 'live';
+          else if (status === 'on hold') category = 'hold';
           else if (status === 'deactivated') category = 'removed';
         } else {
           // InventoryResults format — infer from dates
-          if (!saleDate && !removalDate) category = 'active';
-          else if (removalDate && !saleDate) category = 'removed';
+          if (saleDate) { category = 'ignore'; }
+          else if (removalDate) { category = 'removed'; }
+          else if (holdDate) { category = 'hold'; }
+          else { category = 'live'; }
         }
 
-        if (category === 'active') {
-          saActive.set(v6, v);
-          saActiveCount++;
+        if (category === 'live') {
+          saLive.set(v6, { ...v, _saStatus: 'Live' });
+          saLiveCount++;
+        } else if (category === 'hold') {
+          saOnHold.set(v6, { ...v, _saStatus: 'On Hold' });
+          saHoldCount++;
         } else if (category === 'removed') {
           saRemoved.set(v6, v);
         }
       }
 
-      // Cross-check uses active SA listings
-      const saSet = saActive; // active + on hold only
+      // "Active on SA" = live + on hold (both need attention)
+      const saActive = new Map([...saLive, ...saOnHold]);
+      const saSet = saActive;
 
       const notOnSA = [];
       const properlyListed = [];
@@ -471,8 +483,12 @@
       for (const v6 of invSet) {
         if (soldSet.has(v6)) continue;
         const v = invMap.get(v6);
-        if (saSet.has(v6)) properlyListed.push({ vin6: v6, ...v });
-        else notOnSA.push({ vin6: v6, ...v });
+        if (saSet.has(v6)) {
+          const saV = saSet.get(v6) || {};
+          properlyListed.push({ vin6: v6, 'SA Status': saV._saStatus || 'Active', ...v });
+        } else {
+          notOnSA.push({ vin6: v6, ...v });
+        }
       }
 
       // "On SA but Not in Inventory" — only active + hold (you don't care about removed ones not in inv)
@@ -494,7 +510,7 @@
       // Stats
       document.getElementById('statsRow').style.display = '';
       document.getElementById('sInv').textContent = inventory.length;
-      document.getElementById('sOnSA').textContent = saActiveCount + (saTotal > saActiveCount ? ` / ${saTotal}` : '');
+      document.getElementById('sOnSA').textContent = `${saLiveCount} live, ${saHoldCount} hold`;
       document.getElementById('sNotListed').textContent = notOnSA.length;
       document.getElementById('sListed').textContent = properlyListed.length;
       document.getElementById('sSoldOnSA').textContent = soldButOnSA.length;
@@ -512,12 +528,13 @@
       div.innerHTML = '';
 
       const invCols = ['Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage', 'Days on lot', 'Buyer'];
+      const listedCols = ['SA Status', 'Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage'];
       const saCols = ['vin6', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'VIN'];
 
       if (r.notOnSA.length) div.innerHTML += renderGroup('Not Listed on SmartAuction', 'urgent', filterItems(r.notOnSA), invCols);
       if (r.soldButOnSA.length) div.innerHTML += renderGroup('Sold but Still on SA (remove these)', 'warn', filterItems(r.soldButOnSA), saCols);
       if (r.onSANotInv.length) div.innerHTML += renderGroup('On SA but Not in Inventory', 'info', filterItems(r.onSANotInv), saCols);
-      if (r.properlyListed.length) div.innerHTML += renderGroup('Properly Listed', 'ok', filterItems(r.properlyListed), invCols);
+      if (r.properlyListed.length) div.innerHTML += renderGroup('Properly Listed', 'ok', filterItems(r.properlyListed), listedCols);
 
       if (saListings.length === 0) {
         div.innerHTML += `<div class="result-group info"><h3>Upload SA Export for full cross-check</h3><p style="font-size:12px;color:#888;">SmartAuction > Manage Inventory > Export Results > Upload here</p></div>`;
