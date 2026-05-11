@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "SmartAuction Auto-Fill",
+  "version": "1.1",
+  "description": "Auto-fill for SmartAuction vehicle entry and DirectInspect forms",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "downloads"
+  ],
+  "host_permissions": [
+    "*://*.smartauctionlogin.com/*",
+    "*://*.smartauction.com/*",
+    "*://*.directinspect.com/*",
+    "https://*.logic.azure.com/*",
+    "https://*.supabase.co/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.smartauctionlogin.com/*", "*://*.smartauction.com/*"],
+      "js": ["lib/form-mapper.js", "lib/damage-mapper.js", "lib/inspection-transform.js", "content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.directinspect.com/*"],
+      "js": ["lib/form-mapper.js", "lib/damage-mapper.js", "content-viw.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carz Inc - Price Evaluator</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
+    <style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg: #f5f5f5;
+    --bg-white: #ffffff;
+    --border: #e0e0e0;
+    --text: #212121;
+    --text-dim: #757575;
+    --text-light: #9e9e9e;
+    --accent: #1976d2;
+    --accent-dark: #1565c0;
+    --orange: #f57c00;
+    --green: #2e7d32;
+    --red: #c62828;
+    --yellow: #f9a825;
+    --blue-bg: #e3f2fd;
+    --green-bg: #e8f5e9;
+    --red-bg: #fbe9e7;
+    --radius: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+}
+
+/* ===== TOP NAV ===== */
+.top-nav {
+    background: var(--accent);
+    color: white;
+    padding: 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.nav-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    gap: 12px;
+}
+
+.nav-brand {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    white-space: nowrap;
+}
+
+.nav-title {
+    font-size: 15px;
+    font-weight: 500;
+    flex: 1;
+    text-align: center;
+}
+
+.nav-btn {
+    background: rgba(255,255,255,0.15);
+    border: none;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+
+.nav-btn:hover { background: rgba(255,255,255,0.25); }
+
+/* ===== SEARCH BAR ===== */
+.search-bar {
+    background: white;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.search-bar input {
+    flex: 1;
+    border: 2px solid var(--border);
+    padding: 12px 14px;
+    font-size: 17px;
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    letter-spacing: 2px;
+    border-radius: var(--radius);
+    text-transform: uppercase;
+    color: var(--text);
+}
+
+.search-bar input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.search-bar input::placeholder {
+    color: var(--text-light);
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.btn-lookup {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 700;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.btn-lookup:hover { background: var(--accent-dark); }
+
+/* ===== QUICK PORTALS ===== */
+.portal-bar {
+    display: flex;
+    gap: 6px;
+    padding: 8px 16px;
+    background: white;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.portal-chip {
+    padding: 5px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.portal-chip:hover { background: var(--bg); color: var(--text); }
+.portal-chip.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* ===== MAIN CONTENT ===== */
+.main {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 12px;
+}
+
+/* ===== VEHICLE CARD ===== */
+.vehicle-card {
+    background: var(--bg-white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.vehicle-header {
+    display: flex;
+    gap: 14px;
+    padding: 16px;
+}
+
+.vehicle-photo {
+    width: 100px;
+    height: 75px;
+    background: var(--bg);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-light);
+    font-size: 32px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.vehicle-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.vehicle-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.vehicle-ymm {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 4px;
+}
+
+.vehicle-vin {
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+}
+
+.vehicle-vin .vin-highlight {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.vehicle-meta {
+    display: flex;
+    gap: 16px;
+    padding: 0 16px 12px;
+    flex-wrap: wrap;
+}
+
+.meta-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.meta-label {
+    font-size: 11px;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.meta-value {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* ===== INPUT ROW (mileage, color, etc) ===== */
+.input-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 0 16px 12px;
+}
+
+.input-field {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    color: var(--text);
+    background: white;
+}
+
+.input-field:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.input-field::placeholder {
+    color: var(--text-light);
+}
+
+/* ===== GRADE/LIST BUTTONS ===== */
+.grade-row {
+    display: flex;
+    gap: 6px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.grade-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: white;
+    color: var(--text);
+}
+
+.grade-btn:hover { border-color: var(--accent); }
+.grade-btn.selected { background: var(--accent); color: white; border-color: var(--accent); }
+
+.grade-btn.star { color: var(--yellow); }
+.grade-btn.no-go { color: var(--red); }
+
+.btn-add-list {
+    padding: 8px 20px;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    background: white;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: all 0.15s;
+}
+
+.btn-add-list:hover { border-color: var(--accent); color: var(--accent); }
+
+.btn-more {
+    padding: 8px 16px;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    background: white;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    margin-left: auto;
+    transition: all 0.15s;
+}
+
+.btn-more:hover { border-color: var(--text-dim); }
+
+/* ===== SIMILAR VEHICLES BAR ===== */
+.similar-bar {
+    background: var(--orange);
+    color: white;
+    text-align: center;
+    padding: 14px;
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+    box-shadow: var(--shadow);
+}
+
+.similar-bar:hover { background: #e65100; }
+
+/* ===== SECTION CARD ===== */
+.section-card {
+    background: var(--bg-white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.section-brand {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+.section-brand.bb {
+    background: #1a1a1a;
+    color: white;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    letter-spacing: 2px;
+}
+
+.section-brand.ac {
+    color: var(--accent);
+    font-size: 16px;
+}
+
+.section-brand.mmr {
+    color: var(--orange);
+}
+
+.section-brand.carfax {
+    font-size: 13px;
+    letter-spacing: 3px;
+    border: 2px solid var(--text);
+    padding: 2px 8px;
+    font-weight: 900;
+}
+
+.section-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-align: right;
+}
+
+.section-meta .state {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.section-body { padding: 0; }
+
+/* ===== OVE/AUCTION SECTION ===== */
+.auction-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 14px;
+}
+
+.auction-row:last-child { border-bottom: none; }
+
+.auction-label { color: var(--text-dim); }
+
+.auction-value {
+    font-weight: 600;
+    text-align: right;
+}
+
+.auction-value.price {
+    color: var(--green);
+    font-size: 16px;
+}
+
+.bid-btn {
+    display: block;
+    text-align: center;
+    padding: 12px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    border: 2px solid var(--border);
+    margin: 12px 16px;
+    border-radius: 6px;
+    background: white;
+    color: var(--text);
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.bid-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== AUTOCHECK SECTION ===== */
+.ac-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 14px;
+}
+
+.ac-row:last-child { border-bottom: none; }
+
+.ac-check {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.ac-check.pass { background: #c8e6c9; color: var(--green); }
+.ac-check.warn { background: #fff3e0; color: var(--orange); }
+.ac-check.fail { background: #ffcdd2; color: var(--red); }
+
+.ac-label { flex: 1; margin-left: 10px; }
+.ac-label.alert { color: var(--red); font-weight: 600; }
+
+.ac-value {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.ac-footer {
+    padding: 10px 16px;
+    font-size: 12px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+}
+
+.ac-footer a { color: var(--accent); text-decoration: none; }
+
+.btn-full-report {
+    display: block;
+    text-align: center;
+    padding: 12px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    border: 2px solid var(--border);
+    margin: 12px 16px;
+    border-radius: 6px;
+    background: white;
+    color: var(--text);
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.btn-full-report:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== BLACK BOOK VALUES ===== */
+.bb-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.bb-table th {
+    background: #fafafa;
+    padding: 8px 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    font-weight: 600;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.bb-table td {
+    padding: 10px 16px;
+    font-size: 14px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.bb-table tr:last-child td { border-bottom: none; }
+
+.bb-table .condition { font-weight: 600; }
+.bb-table .value { text-align: right; font-weight: 700; font-family: 'Courier New', monospace; }
+.bb-table .value.wholesale { color: var(--green); }
+.bb-table .value.retail { color: var(--accent); }
+
+/* ===== MMR VALUES ===== */
+.mmr-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    text-align: center;
+}
+
+.mmr-item {
+    padding: 16px 12px;
+    border-right: 1px solid #f0f0f0;
+}
+
+.mmr-item:last-child { border-right: none; }
+
+.mmr-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+
+.mmr-value {
+    font-size: 20px;
+    font-weight: 800;
+    font-family: 'Courier New', monospace;
+}
+
+.mmr-value.above { color: var(--green); }
+.mmr-value.avg { color: var(--orange); }
+.mmr-value.below { color: var(--red); }
+
+/* ===== CARFAX SECTION ===== */
+.carfax-body {
+    padding: 16px;
+    text-align: center;
+}
+
+.carfax-body p {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+
+.btn-carfax {
+    display: inline-block;
+    padding: 10px 24px;
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    background: white;
+    color: var(--text);
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.btn-carfax:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ===== NOTES SECTION ===== */
+.notes-area {
+    width: 100%;
+    border: none;
+    padding: 14px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 80px;
+    color: var(--text);
+}
+
+.notes-area:focus { outline: none; }
+
+.notes-area::placeholder { color: var(--text-light); }
+
+.notes-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-light);
+}
+
+.notes-footer button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* ===== HISTORY SECTION ===== */
+.history-section {
+    margin-top: 16px;
+}
+
+.history-header {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    padding: 0 4px;
+}
+
+.history-list {
+    background: var(--bg-white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.history-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.history-item:last-child { border-bottom: none; }
+.history-item:hover { background: #fafafa; }
+
+.history-vin {
+    font-family: 'Courier New', monospace;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+}
+
+.history-vehicle {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
+}
+
+.history-time {
+    font-size: 11px;
+    color: var(--text-light);
+}
+
+.history-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-light);
+    font-size: 13px;
+}
+
+/* ===== PLACEHOLDER STATE ===== */
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+.empty-state .icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+    opacity: 0.3;
+}
+
+.empty-state h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    color: var(--text);
+}
+
+.empty-state p {
+    font-size: 14px;
+    color: var(--text-dim);
+}
+
+/* ===== LOADING ===== */
+.loading-card {
+    background: var(--bg-white);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 40px;
+    text-align: center;
+    margin-bottom: 12px;
+}
+
+.spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto 12px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== TOAST ===== */
+.toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 2000;
+    animation: fadeUp 0.3s ease;
+    box-shadow: var(--shadow-lg);
+}
+
+.toast.success { background: var(--green); color: white; }
+.toast.error { background: var(--red); color: white; }
+.toast.info { background: var(--accent); color: white; }
+
+@keyframes fadeUp {
+    from { transform: translateX(-50%) translateY(10px); opacity: 0; }
+    to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+    .search-bar input { font-size: 15px; padding: 10px 12px; }
+    .btn-lookup { padding: 10px 16px; font-size: 14px; }
+    .mmr-grid { grid-template-columns: 1fr; }
+    .mmr-item { border-right: none; border-bottom: 1px solid #f0f0f0; padding: 12px; }
+    .mmr-item:last-child { border-bottom: none; }
+}
+
+/* ===== SETTINGS MODAL ===== */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal {
+    background: white;
+    border-radius: 12px;
+    width: 440px;
+    max-width: 92vw;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 { font-size: 17px; }
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 4px;
+}
+
+.modal-body { padding: 20px; }
+
+.field-group { margin-bottom: 20px; }
+.field-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.field-group input {
+    width: 100%;
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.field-group input:focus { outline: none; border-color: var(--accent); }
+
+.field-help {
+    font-size: 11px;
+    color: var(--text-light);
+    margin-top: 4px;
+}
+
+.btn-save-settings {
+    width: 100%;
+    padding: 12px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-save-settings:hover { background: var(--accent-dark); }
+    </style>
+</head>
+<body>
+
+<!-- Top Nav -->
+<nav class="top-nav">
+    <div class="nav-row">
+        <span class="nav-brand">CARZ INC</span>
+        <span class="nav-title">Price Evaluator</span>
+        <button class="nav-btn" onclick="openSettings()">Settings</button>
+    </div>
+</nav>
+
+<!-- Search Bar -->
+<div class="search-bar">
+    <input type="text" id="vin-input" placeholder="Enter VIN..." maxlength="17" autocomplete="off" spellcheck="false">
+    <button class="btn-lookup" onclick="lookupVIN()">LOOKUP</button>
+</div>
+
+<!-- Quick Portal Links -->
+<div class="portal-bar" id="portal-bar">
+    <a class="portal-chip" data-service="manheim" href="https://www.manheim.com" target="_blank">Manheim</a>
+    <a class="portal-chip" data-service="ove" href="https://www.ove.com" target="_blank">OVE</a>
+    <a class="portal-chip" data-service="mmr" href="https://mmr.manheim.com" target="_blank">MMR</a>
+    <a class="portal-chip" data-service="bb" href="https://www.blackbook.com" target="_blank">Black Book</a>
+    <a class="portal-chip" data-service="ac" href="https://www.autocheck.com" target="_blank">AutoCheck</a>
+    <a class="portal-chip" data-service="carfax" href="https://www.carfax.com" target="_blank">Carfax</a>
+    <a class="portal-chip" data-service="autoniq" href="https://www.autoniq.com" target="_blank">Autoniq</a>
+</div>
+
+<!-- Main Content -->
+<div class="main" id="main-content">
+    <!-- Empty state shown initially -->
+    <div class="empty-state" id="empty-state">
+        <div class="icon">&#128663;</div>
+        <h2>Enter a VIN to Start</h2>
+        <p>Get MMR values, Black Book, AutoCheck, and Carfax all in one view</p>
+    </div>
+
+    <!-- Results (hidden initially) -->
+    <div id="results" style="display:none">
+
+        <!-- Vehicle Card -->
+        <div class="vehicle-card" id="vehicle-card">
+            <div class="vehicle-header">
+                <div class="vehicle-photo" id="vehicle-photo">&#128663;</div>
+                <div class="vehicle-details">
+                    <div class="vehicle-ymm" id="vehicle-ymm">Loading...</div>
+                    <div class="vehicle-vin" id="vehicle-vin-display"></div>
+                </div>
+            </div>
+            <div class="vehicle-meta" id="vehicle-meta"></div>
+            <div class="input-row">
+                <input class="input-field" id="input-mileage" placeholder="Mileage" type="text">
+                <input class="input-field" id="input-color" placeholder="Color" type="text">
+            </div>
+            <div class="input-row">
+                <select class="input-field" id="input-interior">
+                    <option value="">Interior</option>
+                    <option>Clean</option>
+                    <option>Average</option>
+                    <option>Rough</option>
+                </select>
+                <select class="input-field" id="input-condition">
+                    <option value="">Condition</option>
+                    <option>1 - Extra Clean</option>
+                    <option>2 - Clean</option>
+                    <option>3 - Average</option>
+                    <option>4 - Rough</option>
+                    <option>5 - Damaged</option>
+                </select>
+            </div>
+            <!-- Notes -->
+            <textarea class="notes-area" id="vehicle-notes" placeholder="Add Notes"></textarea>
+            <div class="notes-footer">
+                <span id="notes-count">0/1024</span>
+                <button onclick="saveNotes()">Save</button>
+            </div>
+            <!-- Grade Row -->
+            <div class="grade-row">
+                <button class="grade-btn" onclick="setGrade(this,'A')">A</button>
+                <button class="grade-btn" onclick="setGrade(this,'B')">B</button>
+                <button class="grade-btn" onclick="setGrade(this,'C')">C</button>
+                <button class="grade-btn star" onclick="setGrade(this,'star')" title="Star">&#9733;</button>
+                <button class="grade-btn no-go" onclick="setGrade(this,'no')" title="No Go">&#8856;</button>
+                <button class="btn-add-list" onclick="addToList()">Add to List</button>
+                <button class="btn-more" onclick="copyAllData()">Copy</button>
+            </div>
+        </div>
+
+        <!-- Similar Vehicles -->
+        <div class="similar-bar" id="similar-bar" onclick="openSimilar()" style="display:none">
+            &#128663; Similar Vehicles at Auction
+        </div>
+
+        <!-- OVE / Auction Section -->
+        <div class="section-card" id="section-ove" style="display:none">
+            <div class="section-header">
+                <span class="section-brand" style="font-weight:900">OVE</span>
+                <a id="ove-view-cr" href="#" target="_blank" style="color:var(--accent);font-size:13px;font-weight:600;text-decoration:none">View CR</a>
+            </div>
+            <div class="section-body" id="ove-body"></div>
+        </div>
+
+        <!-- Carfax Section -->
+        <div class="section-card" id="section-carfax">
+            <div class="section-header">
+                <span class="section-brand carfax">CARFAX</span>
+            </div>
+            <div class="carfax-body">
+                <p>Log in with your Carfax credentials to view the report</p>
+                <a class="btn-carfax" id="carfax-link" href="#" target="_blank">Log in to CARFAX</a>
+            </div>
+        </div>
+
+        <!-- AutoCheck Section -->
+        <div class="section-card" id="section-autocheck">
+            <div class="section-header">
+                <span class="section-brand ac">AutoCheck</span>
+                <span style="font-size:12px;color:var(--text-dim)">by Experian</span>
+            </div>
+            <div class="section-body" id="ac-body">
+                <!-- Populated by JS -->
+            </div>
+            <a class="btn-full-report" id="ac-full-link" href="#" target="_blank">Full Report</a>
+        </div>
+
+        <!-- Black Book Section -->
+        <div class="section-card" id="section-blackbook">
+            <div class="section-header">
+                <span class="section-brand bb">BLACK BOOK</span>
+                <div class="section-meta">
+                    <div class="state" id="bb-state"></div>
+                    <div id="bb-updated"></div>
+                </div>
+            </div>
+            <div class="section-body" id="bb-body">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- MMR Section -->
+        <div class="section-card" id="section-mmr">
+            <div class="section-header">
+                <span class="section-brand mmr">Manheim MMR</span>
+                <a id="mmr-link" href="#" target="_blank" style="color:var(--accent);font-size:13px;font-weight:600;text-decoration:none">View on MMR</a>
+            </div>
+            <div class="section-body" id="mmr-body">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Lookups -->
+    <div class="history-section">
+        <div class="history-header">Recent Lookups</div>
+        <div class="history-list" id="lookup-history"></div>
+    </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal" style="display:none" onclick="if(event.target===this)closeSettings()">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Settings</h2>
+            <button class="modal-close" onclick="closeSettings()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+                Add API keys for inline data. Without keys, each section links to the portal.
+            </p>
+            <div class="field-group">
+                <label>Manheim MMR API Key</label>
+                <input type="password" id="key-mmr" placeholder="Cox Automotive API key">
+                <div class="field-help">Apply at Cox Automotive Developer Portal</div>
+            </div>
+            <div class="field-group">
+                <label>Black Book API Key</label>
+                <input type="password" id="key-bb" placeholder="Black Book API key">
+                <div class="field-help">Apply at Black Book partner portal</div>
+            </div>
+            <div class="field-group">
+                <label>AutoCheck API Key</label>
+                <input type="password" id="key-ac" placeholder="Experian AutoCheck API key">
+                <div class="field-help">Through your Experian Automotive dealer account</div>
+            </div>
+            <button class="btn-save-settings" onclick="saveSettings()">Save Settings</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ============================================================
+// CARZ INC - Price Evaluator (Autoniq-style)
+// ============================================================
+
+const NHTSA = 'https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVin';
+
+const PORTALS = {
+    mmr:    (vin) => `https://mmr.manheim.com/?vin=${vin}`,
+    manheim:(vin) => `https://www.manheim.com/members/searchresults.do?vin=${vin}`,
+    ove:    (vin) => `https://www.ove.com/search?q=${vin}`,
+    bb:     (vin) => `https://www.blackbook.com/vin-lookup/?vin=${vin}`,
+    ac:     (vin) => `https://www.autocheck.com/vehiclehistory/autocheck/en/search-by-vin?vin=${vin}`,
+    carfax: (vin) => `https://www.carfax.com/VehicleHistory/p/Report.cfx?vin=${vin}`,
+    autoniq:(vin) => `https://autoniq.com/app/evaluator/vin/${vin}`
+};
+
+let currentVIN = '';
+let currentInfo = {};
+let history = JSON.parse(localStorage.getItem('carz_history') || '[]');
+let notes = JSON.parse(localStorage.getItem('carz_notes') || '{}');
+let grades = JSON.parse(localStorage.getItem('carz_grades') || '{}');
+let vehicleList = JSON.parse(localStorage.getItem('carz_list') || '[]');
+let apiKeys = JSON.parse(localStorage.getItem('carz_api_keys') || '{}');
+
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+    renderHistory();
+    const inp = document.getElementById('vin-input');
+    inp.focus();
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') lookupVIN(); });
+    document.getElementById('vehicle-notes').addEventListener('input', function() {
+        document.getElementById('notes-count').textContent = this.value.length + '/1024';
+    });
+
+    // Ctrl/Cmd+K focus
+    document.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault(); inp.focus(); inp.select();
+        }
+        if (e.key === 'Escape') closeSettings();
+    });
+
+    // URL param support
+    const p = new URLSearchParams(window.location.search);
+    if (p.get('vin')) { inp.value = p.get('vin'); lookupVIN(); }
+});
+
+// ===== VALIDATION =====
+function isValidVIN(v) { return v && v.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/i.test(v); }
+
+// ===== MAIN LOOKUP =====
+async function lookupVIN() {
+    const inp = document.getElementById('vin-input');
+    const vin = inp.value.trim().toUpperCase();
+    if (!vin) { toast('Enter a VIN', 'error'); inp.focus(); return; }
+    if (!isValidVIN(vin)) { toast('Invalid VIN - 17 chars, no I/O/Q', 'error'); inp.focus(); return; }
+
+    currentVIN = vin;
+    inp.value = vin;
+
+    // Show results, hide empty state
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('results').style.display = 'block';
+
+    // Update portal links with VIN
+    updatePortalLinks(vin);
+
+    // Set Carfax & AutoCheck links
+    document.getElementById('carfax-link').href = PORTALS.carfax(vin);
+    document.getElementById('ac-full-link').href = PORTALS.ac(vin);
+    document.getElementById('mmr-link').href = PORTALS.mmr(vin);
+
+    // Show VIN
+    const vinFirst = vin.substring(0, 11);
+    const vinLast = vin.substring(11);
+    document.getElementById('vehicle-vin-display').innerHTML =
+        `${vinFirst}<span class="vin-highlight">${vinLast}</span>`;
+
+    // Load saved data
+    document.getElementById('vehicle-notes').value = notes[vin] || '';
+    document.getElementById('notes-count').textContent = (notes[vin] || '').length + '/1024';
+
+    // Restore grade
+    document.querySelectorAll('.grade-btn').forEach(b => b.classList.remove('selected'));
+    if (grades[vin]) {
+        document.querySelectorAll('.grade-btn').forEach(b => {
+            if (b.textContent.trim() === grades[vin] ||
+                (grades[vin] === 'star' && b.innerHTML.includes('9733')) ||
+                (grades[vin] === 'no' && b.innerHTML.includes('8856'))) {
+                b.classList.add('selected');
+            }
+        });
+    }
+
+    // Decode VIN (free NHTSA)
+    document.getElementById('vehicle-ymm').textContent = 'Loading...';
+    const info = await decodeVIN(vin);
+    currentInfo = info;
+
+    // Update vehicle card
+    if (info.year && info.make && info.model) {
+        document.getElementById('vehicle-ymm').textContent =
+            `${info.year} ${info.make} ${info.model} ${info.trim || ''} ${info.bodyClass || ''}`;
+    } else {
+        document.getElementById('vehicle-ymm').textContent = vin;
+    }
+
+    // Meta row
+    const meta = document.getElementById('vehicle-meta');
+    meta.innerHTML = [
+        info.driveType ? `<div class="meta-item"><span class="meta-label">Drive</span><span class="meta-value">${info.driveType}</span></div>` : '',
+        info.engineCylinders ? `<div class="meta-item"><span class="meta-label">Engine</span><span class="meta-value">${info.engineCylinders} Cyl ${info.engineDisplacement ? info.engineDisplacement + 'L' : ''}</span></div>` : '',
+        info.fuelType ? `<div class="meta-item"><span class="meta-label">Fuel</span><span class="meta-value">${info.fuelType}</span></div>` : '',
+        info.transmission ? `<div class="meta-item"><span class="meta-label">Trans</span><span class="meta-value">${info.transmission}</span></div>` : '',
+    ].join('');
+
+    // Populate AutoCheck placeholder
+    renderAutoCheckPlaceholder(vin);
+
+    // Populate Black Book placeholder
+    renderBlackBookPlaceholder(vin);
+
+    // Populate MMR placeholder
+    renderMMRPlaceholder(vin);
+
+    // Add to history
+    addHistory(vin, info);
+    toast(`Loaded ${vin}`, 'info');
+}
+
+// ===== NHTSA VIN DECODE =====
+async function decodeVIN(vin) {
+    try {
+        const r = await fetch(`${NHTSA}/${vin}?format=json`);
+        const d = await r.json();
+        const res = d.Results || [];
+        const g = (id) => { const i = res.find(x => x.VariableId === id); return i && i.Value && i.Value.trim() ? i.Value.trim() : ''; };
+        return {
+            year: g(29), make: g(26), model: g(28), trim: g(38),
+            bodyClass: g(5), driveType: g(15), engineCylinders: g(13),
+            engineDisplacement: g(11), fuelType: g(24), transmission: g(37),
+            doors: g(14), plantCountry: g(75)
+        };
+    } catch (e) { console.error(e); return {}; }
+}
+
+// ===== RENDER AUTOCHECK (portal mode - shows clickable checklist) =====
+function renderAutoCheckPlaceholder(vin) {
+    document.getElementById('ac-body').innerHTML = `
+        <div class="ac-row"><div class="ac-check warn">!</div><span class="ac-label alert">Reported Accidents</span><span class="ac-value" style="color:var(--orange)">&#9888;</span></div>
+        <div class="ac-row"><div class="ac-check pass">&#10003;</div><span class="ac-label">No Damage Reported</span><span class="ac-value" style="color:var(--green)">&#10003;</span></div>
+        <div class="ac-row"><div class="ac-check pass">&#10003;</div><span class="ac-label">Buyback Protection Qualified</span><span class="ac-value" style="color:var(--green)">&#10003;</span></div>
+        <div class="ac-row"><div class="ac-check pass">&#10003;</div><span class="ac-label">Major State Title Brand Check</span><span class="ac-value" style="color:var(--green)">&#10003;</span></div>
+        <div class="ac-row"><div class="ac-check pass">&#10003;</div><span class="ac-label">Odometer Check</span><span class="ac-value" style="color:var(--green)">&#10003;</span></div>
+        <div class="ac-row"><div class="ac-check pass">&#10003;</div><span class="ac-label">No Open Recall(s) Reported</span><span class="ac-value" style="color:var(--green)">&#10003;</span></div>
+        <div class="ac-row"><span class="ac-label" style="margin-left:32px">Calculated Owners</span><span class="ac-value">--</span></div>
+        <div class="ac-row"><span class="ac-label" style="margin-left:32px">Last Reported Mileage</span><span class="ac-value">--</span></div>
+        <div class="ac-footer">This is a placeholder. <a href="${PORTALS.ac(vin)}" target="_blank">Open AutoCheck for real data</a></div>
+    `;
+}
+
+// ===== RENDER BLACK BOOK (portal mode) =====
+function renderBlackBookPlaceholder(vin) {
+    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    document.getElementById('bb-state').textContent = '';
+    document.getElementById('bb-updated').textContent = `Updated: ${today}`;
+
+    document.getElementById('bb-body').innerHTML = `
+        <table class="bb-table">
+            <thead>
+                <tr><th>Condition</th><th style="text-align:right">Wholesale</th><th style="text-align:right">Retail</th></tr>
+            </thead>
+            <tbody>
+                <tr><td class="condition">Extra Clean</td><td class="value wholesale">--</td><td class="value retail">--</td></tr>
+                <tr><td class="condition">Clean</td><td class="value wholesale">--</td><td class="value retail">--</td></tr>
+                <tr><td class="condition">Average</td><td class="value wholesale">--</td><td class="value retail">--</td></tr>
+                <tr><td class="condition">Rough</td><td class="value wholesale">--</td><td class="value retail">--</td></tr>
+            </tbody>
+        </table>
+        <a class="btn-full-report" href="${PORTALS.bb(vin)}" target="_blank">Open Black Book</a>
+    `;
+}
+
+// ===== RENDER MMR (portal mode) =====
+function renderMMRPlaceholder(vin) {
+    document.getElementById('mmr-body').innerHTML = `
+        <div class="mmr-grid">
+            <div class="mmr-item">
+                <div class="mmr-label">Below Avg</div>
+                <div class="mmr-value below">--</div>
+            </div>
+            <div class="mmr-item">
+                <div class="mmr-label">Average</div>
+                <div class="mmr-value avg">--</div>
+            </div>
+            <div class="mmr-item">
+                <div class="mmr-label">Above Avg</div>
+                <div class="mmr-value above">--</div>
+            </div>
+        </div>
+        <a class="btn-full-report" href="${PORTALS.mmr(vin)}" target="_blank" style="margin-bottom:4px">Open MMR</a>
+    `;
+}
+
+// ===== UPDATE PORTAL BAR =====
+function updatePortalLinks(vin) {
+    document.querySelectorAll('.portal-chip').forEach(chip => {
+        const svc = chip.dataset.service;
+        if (svc && PORTALS[svc]) {
+            chip.href = PORTALS[svc](vin);
+        }
+    });
+}
+
+// ===== GRADES =====
+function setGrade(btn, grade) {
+    if (!currentVIN) return;
+    document.querySelectorAll('.grade-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    grades[currentVIN] = grade;
+    localStorage.setItem('carz_grades', JSON.stringify(grades));
+    toast(`Grade: ${grade.toUpperCase()}`, 'success');
+}
+
+// ===== LIST =====
+function addToList() {
+    if (!currentVIN) return;
+    const existing = vehicleList.find(v => v.vin === currentVIN);
+    if (existing) { toast('Already in list', 'info'); return; }
+
+    vehicleList.push({
+        vin: currentVIN,
+        vehicle: currentInfo.year ? `${currentInfo.year} ${currentInfo.make} ${currentInfo.model}` : currentVIN,
+        grade: grades[currentVIN] || '',
+        notes: notes[currentVIN] || '',
+        mileage: document.getElementById('input-mileage').value,
+        color: document.getElementById('input-color').value,
+        added: new Date().toISOString()
+    });
+    localStorage.setItem('carz_list', JSON.stringify(vehicleList));
+    toast('Added to list', 'success');
+}
+
+// ===== NOTES =====
+function saveNotes() {
+    if (!currentVIN) return;
+    notes[currentVIN] = document.getElementById('vehicle-notes').value;
+    localStorage.setItem('carz_notes', JSON.stringify(notes));
+    toast('Notes saved', 'success');
+}
+
+// ===== COPY =====
+function copyAllData() {
+    if (!currentVIN) return;
+    const ymm = document.getElementById('vehicle-ymm').textContent;
+    const n = document.getElementById('vehicle-notes').value;
+    const g = grades[currentVIN] || '';
+    const miles = document.getElementById('input-mileage').value;
+    const color = document.getElementById('input-color').value;
+
+    const txt = [
+        `VIN: ${currentVIN}`,
+        `Vehicle: ${ymm}`,
+        miles ? `Mileage: ${miles}` : '',
+        color ? `Color: ${color}` : '',
+        g ? `Grade: ${g.toUpperCase()}` : '',
+        n ? `Notes: ${n}` : '',
+        '',
+        `MMR: ${PORTALS.mmr(currentVIN)}`,
+        `Black Book: ${PORTALS.bb(currentVIN)}`,
+        `AutoCheck: ${PORTALS.ac(currentVIN)}`,
+        `Carfax: ${PORTALS.carfax(currentVIN)}`,
+        `Autoniq: ${PORTALS.autoniq(currentVIN)}`
+    ].filter(Boolean).join('\n');
+
+    navigator.clipboard.writeText(txt)
+        .then(() => toast('Copied', 'success'))
+        .catch(() => toast('Copy failed', 'error'));
+}
+
+// ===== SIMILAR =====
+function openSimilar() {
+    if (currentVIN) window.open(PORTALS.autoniq(currentVIN), '_blank');
+}
+
+// ===== HISTORY =====
+function addHistory(vin, info) {
+    history = history.filter(h => h.vin !== vin);
+    history.unshift({
+        vin,
+        vehicle: info.year ? `${info.year} ${info.make} ${info.model}` : '',
+        time: new Date().toISOString()
+    });
+    history = history.slice(0, 30);
+    localStorage.setItem('carz_history', JSON.stringify(history));
+    renderHistory();
+}
+
+function renderHistory() {
+    const c = document.getElementById('lookup-history');
+    if (!history.length) { c.innerHTML = '<div class="history-empty">No recent lookups</div>'; return; }
+    c.innerHTML = history.slice(0, 10).map(h => `
+        <div class="history-item" onclick="quickLookup('${h.vin}')">
+            <div>
+                <div class="history-vin">${h.vin}</div>
+                <div class="history-vehicle">${h.vehicle || ''}</div>
+            </div>
+            <span class="history-time">${timeAgo(h.time)}</span>
+        </div>`).join('');
+}
+
+function quickLookup(vin) {
+    document.getElementById('vin-input').value = vin;
+    lookupVIN();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ===== SETTINGS =====
+function openSettings() {
+    document.getElementById('key-mmr').value = apiKeys.mmr || '';
+    document.getElementById('key-bb').value = apiKeys.bb || '';
+    document.getElementById('key-ac').value = apiKeys.ac || '';
+    document.getElementById('settings-modal').style.display = 'flex';
+}
+
+function closeSettings() {
+    document.getElementById('settings-modal').style.display = 'none';
+}
+
+function saveSettings() {
+    apiKeys = {
+        mmr: document.getElementById('key-mmr').value.trim() || null,
+        bb: document.getElementById('key-bb').value.trim() || null,
+        ac: document.getElementById('key-ac').value.trim() || null
+    };
+    localStorage.setItem('carz_api_keys', JSON.stringify(apiKeys));
+    closeSettings();
+    toast('Settings saved', 'success');
+    if (currentVIN) lookupVIN();
+}
+
+// ===== UTILS =====
+function timeAgo(d) {
+    const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
+    if (m < 1) return 'now';
+    if (m < 60) return m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 24) return h + 'h';
+    return Math.floor(h / 24) + 'd';
+}
+
+function toast(msg, type = 'info') {
+    const old = document.querySelector('.toast');
+    if (old) old.remove();
+    const t = document.createElement('div');
+    t.className = `toast ${type}`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carz Inc - Vehicle Lookup</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="brand">
+                <h1>CARZ INC</h1>
+                <span class="tagline">Wholesale Lookup</span>
+            </div>
+            <div class="vin-search">
+                <input type="text" id="vin-input" placeholder="Enter VIN..." maxlength="17" autocomplete="off" spellcheck="false">
+                <button id="lookup-btn" onclick="lookupVIN()">LOOKUP</button>
+                <button id="clear-btn" onclick="clearAll()" title="Clear">CLEAR</button>
+            </div>
+            <button id="settings-btn" onclick="openSettings()" title="API Settings" style="background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;cursor:pointer;color:var(--text-dim);font-size:14px;">&#9881; Settings</button>
+            <div class="vin-info" id="vin-info"></div>
+        </header>
+
+        <!-- Service Panels -->
+        <div class="panels-container">
+            <!-- Manheim MMR Panel -->
+            <div class="panel" id="panel-mmr">
+                <div class="panel-header mmr">
+                    <div class="panel-title">
+                        <span class="panel-icon">M</span>
+                        <h2>Manheim MMR</h2>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-open" onclick="openInTab('mmr')" title="Open in new tab">&#8599;</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="mmr-body">
+                    <div class="panel-placeholder">
+                        <div class="placeholder-icon">M</div>
+                        <p>Manheim Market Report</p>
+                        <p class="sub">Enter a VIN to get wholesale market values</p>
+                        <div class="api-status" id="mmr-status">
+                            <span class="status-dot portal"></span>
+                            <span>Portal Link Mode</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Black Book Panel -->
+            <div class="panel" id="panel-bb">
+                <div class="panel-header bb">
+                    <div class="panel-title">
+                        <span class="panel-icon">BB</span>
+                        <h2>Black Book</h2>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-open" onclick="openInTab('bb')" title="Open in new tab">&#8599;</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="bb-body">
+                    <div class="panel-placeholder">
+                        <div class="placeholder-icon">BB</div>
+                        <p>Black Book Values</p>
+                        <p class="sub">Enter a VIN to get trade-in & retail values</p>
+                        <div class="api-status" id="bb-status">
+                            <span class="status-dot portal"></span>
+                            <span>Portal Link Mode</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AutoCheck Panel -->
+            <div class="panel" id="panel-ac">
+                <div class="panel-header ac">
+                    <div class="panel-title">
+                        <span class="panel-icon">AC</span>
+                        <h2>AutoCheck</h2>
+                    </div>
+                    <div class="panel-actions">
+                        <button class="btn-open" onclick="openInTab('ac')" title="Open in new tab">&#8599;</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="ac-body">
+                    <div class="panel-placeholder">
+                        <div class="placeholder-icon">AC</div>
+                        <p>AutoCheck Vehicle History</p>
+                        <p class="sub">Enter a VIN to get history report</p>
+                        <div class="api-status" id="ac-status">
+                            <span class="status-dot portal"></span>
+                            <span>Portal Link Mode</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vehicle History / Notes Section -->
+        <div class="bottom-section">
+            <div class="notes-panel">
+                <h3>Quick Notes</h3>
+                <textarea id="vehicle-notes" placeholder="Add notes about this vehicle..."></textarea>
+                <div class="notes-actions">
+                    <button onclick="saveNotes()">Save Notes</button>
+                    <button onclick="copyAllData()" class="btn-secondary">Copy Summary</button>
+                </div>
+            </div>
+            <div class="history-panel">
+                <h3>Recent Lookups</h3>
+                <div id="lookup-history"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settings-modal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>API Settings</h2>
+                <button onclick="closeSettings()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <h3>Manheim MMR API</h3>
+                    <label>API Key</label>
+                    <input type="password" id="mmr-api-key" placeholder="Enter MMR API key...">
+                    <p class="setting-help">Get API access at <a href="https://developer.coxautoinc.com" target="_blank">Cox Automotive Developer Portal</a></p>
+                </div>
+                <div class="setting-group">
+                    <h3>Black Book API</h3>
+                    <label>API Key</label>
+                    <input type="password" id="bb-api-key" placeholder="Enter Black Book API key...">
+                    <p class="setting-help">Apply for access at Black Book's partner portal</p>
+                </div>
+                <div class="setting-group">
+                    <h3>AutoCheck API</h3>
+                    <label>API Key</label>
+                    <input type="password" id="ac-api-key" placeholder="Enter AutoCheck API key...">
+                    <p class="setting-help">Available through your Experian Automotive dealer account</p>
+                </div>
+                <button class="btn-save" onclick="saveSettings()">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

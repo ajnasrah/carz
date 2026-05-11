@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create Extension Icons</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+    }
+    .instructions {
+      max-width: 600px;
+      margin: 0 auto 20px;
+      padding: 20px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .icon-container {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .icon-box {
+      text-align: center;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    canvas {
+      border: 1px solid #ddd;
+      margin: 10px 0;
+    }
+    button {
+      padding: 10px 20px;
+      background: #1976d2;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #1565c0;
+    }
+    h1 { color: #333; }
+    h3 { margin: 10px 0; color: #555; }
+  </style>
+</head>
+<body>
+  <div class="instructions">
+    <h1>Create Extension Icons</h1>
+    <p>Click the buttons below to download icon images for your extension.</p>
+    <p>Save them in the manheim-extension folder with the exact names shown.</p>
+  </div>
+
+  <div class="icon-container">
+    <div class="icon-box">
+      <h3>icon16.png</h3>
+      <canvas id="icon16" width="16" height="16"></canvas>
+      <br>
+      <button onclick="downloadIcon('icon16', 16)">Download 16x16</button>
+    </div>
+
+    <div class="icon-box">
+      <h3>icon48.png</h3>
+      <canvas id="icon48" width="48" height="48"></canvas>
+      <br>
+      <button onclick="downloadIcon('icon48', 48)">Download 48x48</button>
+    </div>
+
+    <div class="icon-box">
+      <h3>icon128.png</h3>
+      <canvas id="icon128" width="128" height="128"></canvas>
+      <br>
+      <button onclick="downloadIcon('icon128', 128)">Download 128x128</button>
+    </div>
+  </div>
+
+  <script>
+    function drawIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const ctx = canvas.getContext('2d');
+
+      // Background
+      ctx.fillStyle = '#1976d2';
+      ctx.fillRect(0, 0, size, size);
+
+      // Simple car icon
+      ctx.fillStyle = 'white';
+
+      const scale = size / 16;
+
+      // Car body
+      ctx.fillRect(3 * scale, 6 * scale, 10 * scale, 5 * scale);
+      ctx.fillRect(5 * scale, 4 * scale, 6 * scale, 3 * scale);
+
+      // Wheels
+      ctx.beginPath();
+      ctx.arc(5 * scale, 11 * scale, 1.5 * scale, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(11 * scale, 11 * scale, 1.5 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function downloadIcon(canvasId, size) {
+      const canvas = document.getElementById(canvasId);
+      const link = document.createElement('a');
+      link.download = `icon${size}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    // Draw all icons on page load
+    drawIcon('icon16', 16);
+    drawIcon('icon48', 48);
+    drawIcon('icon128', 128);
+  </script>
+</body>
+</html>

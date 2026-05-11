@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Manheim/OVE Scraper</h1>
+    <div id="status" class="status">Ready to scrape</div>
+    <button id="scrapeBtn" class="btn">Scrape This Page</button>
+
+    <div style="margin: 15px 0; text-align: center; color: #666; font-size: 12px;">
+      — OR —
+    </div>
+
+    <label for="pdfUpload" class="btn btn-secondary">
+      Upload PDF Condition Report
+    </label>
+    <input type="file" id="pdfUpload" accept=".pdf" style="display: none;">
+
+    <div id="results" class="results"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

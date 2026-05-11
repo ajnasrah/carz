@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Manheim/OVE Scraper",
+  "version": "1.0",
+  "description": "Extract vehicle details, images, and damage info from Manheim and OVE listings",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "downloads",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "*://*.manheim.com/*",
+    "*://*.ove.com/*",
+    "*://*.edgepipeline.com/*",
+    "*://*.crsimplified-ae.s3.amazonaws.com/*",
+    "*://*.cloudfront.net/*",
+    "*://*.akamaized.net/*",
+    "*://*.amazonaws.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.manheim.com/*", "*://*.ove.com/*", "*://*.edgepipeline.com/*", "*://*.crsimplified-ae.s3.amazonaws.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

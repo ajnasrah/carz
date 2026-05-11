@@ -1,0 +1,38 @@
+iMessage Scraper Server running on http://localhost:7749
+Output dir: /Users/abdullahabunasrah/Desktop/carz inc/scrapers/seller_group_output
+Queue: 5 queued, 28 listed, 39 sold (497 total)
+Auto-shutdown after 60 minutes of inactivity
+Press Ctrl+C to stop
+
+[scraper] POST /scrape HTTP/1.1
+[scraper] POST /scrape HTTP/1.1
+[scraper] POST /scrape HTTP/1.1
+[scraper] GET /queue/all HTTP/1.1
+[scraper] GET /vehicle/072427 HTTP/1.1
+[scraper] GET /vehicle/072427 HTTP/1.1
+[scraper] GET /vehicle/072427 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=0 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=5 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=10 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=15 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=20 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=25 HTTP/1.1
+[scraper] GET /vehicle/072427/photos?limit=5&offset=30 HTTP/1.1
+[scraper] GET /vehicle/072427/analysis HTTP/1.1
+[scraper] POST /open-folder/072427 HTTP/1.1
+[scraper] POST /queue/mark-listed/072427 HTTP/1.1
+[scraper] GET /queue/all HTTP/1.1
+[scraper] GET /queue/all HTTP/1.1
+[scraper] GET /vehicle/C43421 HTTP/1.1
+[scraper] GET /vehicle/C43421 HTTP/1.1
+[scraper] GET /vehicle/C43421 HTTP/1.1
+[scraper] GET /vehicle/C43421/photos?limit=5&offset=0 HTTP/1.1
+[scraper] GET /vehicle/C43421/photos?limit=5&offset=5 HTTP/1.1
+[scraper] GET /vehicle/C43421/photos?limit=5&offset=10 HTTP/1.1
+[scraper] GET /vehicle/C43421/photos?limit=5&offset=15 HTTP/1.1
+[scraper] GET /vehicle/C43421/photos?limit=5&offset=20 HTTP/1.1
+[scraper] GET /vehicle/C43421/photos?limit=5&offset=25 HTTP/1.1
+[scraper] GET /vehicle/C43421/analysis HTTP/1.1
+[scraper] POST /open-folder/C43421 HTTP/1.1
+[scraper] POST /queue/mark-listed/C43421 HTTP/1.1
+[scraper] POST /shutdown HTTP/1.1

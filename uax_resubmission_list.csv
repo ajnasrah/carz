@@ -1,0 +1,120 @@
+Stock Number,Year_presale,Make_presale,Model_presale,Mileage,Grade_presale,Run Number_presale,Lane_presale,Est_Price,Comp_Count,Match_Type,Priority,Recommended_Lane
+71492,2023,Ram,1500,87683,1.8,5-0032,5,31900,2,Make/Year Match,High,10
+71643,2024,Honda,HR-V,33452,3.3,10-0004,10,23200,1,Make/Year Match,High,10
+70074,2022,Ram,2500,47381,,5-0003,5,21800,1,Exact Match,High,10
+71566,2020,Chevrolet,Silverado 1500,50520,4.4,10-0012,10,21000,1,Exact Match,High,10
+71567,2024,Chevrolet,Silverado 1500,13938,4.8,10-0013,10,21000,3,Make/Year Match,High,10
+70608,2020,Chevrolet,Tahoe,119342,3.9,10-0020,10,20500,2,Exact Match,High,10
+54401,2023,Chevrolet,Malibu,68237,1.5,3-0064,3,18200,1,Exact Match,High,10
+71647,2020,Honda,Fit,52890,4.8,4-0017,4,17100,2,Make/Year Match,High,10
+69296,2020,Ford,F150,77565,4.5,5-0033,5,13600,2,Exact Match,High,2
+70372,2021,Dodge,Charger,107257,2.5,3-0052,3,12700,1,Make/Year Match,High,2
+71607,2021,Toyota,Avalon,56620,4.2,2-0053,2,11800,1,Make/Year Match,High,2
+64803,2021,Toyota,Venza,101606,4.5,3-0051,3,11800,1,Make/Year Match,High,2
+68190,2020,Jeep,Compass,176088,0.0,9-0518,9,10400,1,Exact Match,High,2
+68240,2020,Toyota,Corolla,130064,2.3,3-0010,3,10000,2,Make/Year Match,High,2
+69861,2020,Toyota,Tacoma,137091,4.1,3-0035,3,10000,2,Make/Year Match,High,2
+66409,2021,Jeep,Grand Cherokee L,116369,3.7,3-0053,3,10000,7,Make/Year Match,High,2
+70401,2015,Ram,1500,140239,1.3,4-0075,4,9800,1,Exact Match,High,2
+69863,2020,Jeep,Renegade,51538,3.5,10-0017,10,9400,8,Make/Year Match,High,2
+70236,2019,Dodge,Grand Caravan,171633,,1-0084,1,8500,1,Exact Match,High,2
+69941,2019,Land Rover,Range Rover Velar,88146,3.2,3-0048,3,8400,2,Make/Year Match,High,2
+71238,2014,Toyota,Corolla,181085,2.0,1-0085,1,8200,5,Make/Year Match,High,2
+71320,2014,Toyota,Tacoma,125110,2.6,2-0012,2,8200,5,Make/Year Match,High,2
+71097,2017,Cadillac,Escalade,177493,3.9,1-0024,1,8000,36,Grade Match,High,2
+71258,2012,Ford,F150,278782,1.9,1-0036,1,8000,1,Exact Match,High,2
+71137,2010,Ford,F150,233512,,9-0632,9,8000,1,Exact Match,High,2
+70248,2016,Honda,Accord,231735,2.5,4-0087,4,7900,3,Make/Year Match,High,3
+71613,2017,Cadillac,CTS,121433,3.7,4-0027,4,7850,38,Grade Match,High,3
+70380,2017,Mitsubishi,Outlander Sport,160950,3.7,5-0086,5,7850,38,Grade Match,High,3
+71075,2017,Toyota,Prius,140721,4.4,2-0071,2,7600,7,Make/Year Match,High,3
+69344,2017,Toyota,Camry,225864,2.2,3-0029,3,7600,1,Exact Match,High,3
+71593,2017,Toyota,Highlander,151689,4.0,4-0019,4,7600,7,Make/Year Match,High,3
+70416,2018,Chevrolet,Silverado 1500,1,3.7,2-0022,2,4900,23,Make/Year Match,High,4
+70454,2019,Hyundai,Kona,23302,4.8,3-0038,3,3400,5,Make/Year Match,High,4
+71467,2019,Ford,Edge,106569,3.7,2-0030,2,3200,17,Make/Year Match,High,4
+69972,2019,Hyundai,Elantra,61320,4.6,3-0042,3,2700,3,Exact Match,High,1
+70485,2018,Chevrolet,Equinox,92017,,5-0035,5,4900,3,Exact Match,Low,4
+65296,2017,GMC,Acadia,153565,,9-0617,9,4825,2,Exact Match,Low,4
+71663,2018,Nissan,Altima,122576,,2-0084,2,4800,3,Exact Match,Low,4
+71632,2019,Cadillac,Escalade,155071,2.5,1-0050,1,4600,32,Grade Match,Low,4
+71648,2011,Mercedes-Benz,S Class,80682,4.4,1-0055,1,4200,1,Make/Year Match,Low,4
+69804,2017,Jeep,Cherokee,142473,4.1,3-0058,3,4100,3,Exact Match,Low,4
+68767,2019,Kia,Soul,99999,1.5,9-0536,9,3700,6,Make/Year Match,Low,4
+70644,2013,Cadillac,SRX,217961,,1-0067,1,3600,1,Exact Match,Low,4
+70310,2017,Chevrolet,Impala,189906,2.5,5-0023,5,3200,1,Exact Match,Low,4
+71666,2015,Chevrolet,Impala,187325,,5-0050,5,3200,1,Exact Match,Low,4
+71468,2017,Volvo,XC90,102707,2.4,2-0026,2,3150,24,Grade Match,Low,4
+69239,2007,Lexus,RX 350,170117,2.2,5-0069,5,3150,22,Grade Match,Low,4
+67178,2017,Ford,Explorer,111441,2.5,3-0009,3,2875,20,Make/Year Match,Low,1
+71211,2010,Lexus,GS 450h,175171,2.0,1-0088,1,2850,26,Grade Match,Low,1
+71601,2019,Chevrolet,Equinox,104542,3.4,4-0025,4,2700,3,Exact Match,Low,1
+53675,2019,Hyundai,Elantra,79226,,5-0001,5,2700,3,Exact Match,Low,1
+71641,2006,BMW,X5,166690,,5-0053,5,2700,3,Year Match,Low,1
+71574,2009,Ford,F250SD,202538,,1-0046,1,2600,1,Exact Match,Low,1
+69420,2006,Ford,F150,118662,,2-0048,2,2600,3,Make/Year Match,Low,1
+69284,2016,Ford,Fusion,135059,0.0,9-0505,9,2600,5,Exact Match,Low,1
+70998,2015,Chevrolet,Suburban,231585,3.0,1-0009,1,2500,22,Make/Year Match,Low,1
+70457,2018,Ford,Escape,121944,1.3,9-0552,9,2500,3,Exact Match,Low,1
+71624,2007,Mercedes-Benz,E Class,179588,,5-0051,5,2300,8,Year Match,Low,1
+69242,2013,Ford,F150,125530,2.7,5-0070,5,2300,13,Make/Year Match,Low,1
+71573,2014,Kia,Forte,147118,,1-0044,1,2200,5,Make/Year Match,Low,1
+71212,2017,Kia,Optima,114253,3.6,5-0002,5,2200,9,Make/Year Match,Low,1
+71245,2014,Nissan,Pathfinder,140667,4.4,1-0068,1,2100,14,Make/Year Match,Low,1
+71531,2010,Toyota,Camry,120920,,2-0075,2,2100,13,Year Match,Low,1
+69216,2015,Nissan,Pathfinder,155478,3.3,4-0086,4,2100,16,Make/Year Match,Low,1
+71622,2008,Lincoln,Town Car,154210,,1-0041,1,2000,9,Year Match,Low,1
+69778,2014,Ford,Escape,119923,,1-0061,1,2000,13,Make/Year Match,Low,1
+70703,2015,Chrysler,Town & Country,143648,,1-0089,1,1750,1,Exact Match,Low,1
+71552,2014,INFINITI,QX80,271646,,2-0098,2,1700,62,Year Match,Low,1
+69969,2013,Subaru,XV Crosstrek,118529,2.0,3-0073,3,1700,1,Make/Year Match,Low,1
+71629,2013,Subaru,Impreza,119265,3.5,5-0052,5,1700,1,Make/Year Match,Low,1
+59508,2013,Nissan,Pathfinder,85846,,5-0087,5,1650,7,Make/Year Match,Low,1
+71505,2012,Mitsubishi,Galant,176335,,1-0083,1,1500,39,Year Match,Low,1
+69561,2015,Kia,Soul,120265,0.0,9-0502,9,1500,3,Exact Match,Low,1
+68029,2016,Hyundai,Santa Fe Sport,138125,3.6,5-0034,5,1475,2,Make/Year Match,Low,1
+71358,2013,Hyundai,Genesis Coupe,1,,9-0571,9,1475,4,Make/Year Match,Low,1
+71575,2011,Nissan,Maxima,169292,,1-0035,1,1450,3,Make/Year Match,Low,1
+69705,2015,Chevrolet,Equinox,169578,0.0,9-0515,9,1425,4,Exact Match,Low,1
+71619,2013,Ford,Fusion,86147,3.7,1-0048,1,1350,1,Exact Match,Low,1
+71217,2012,Jeep,Grand Cherokee,224010,3.7,5-0060,5,1200,2,Exact Match,Low,1
+71609,2009,Honda,Accord,171932,,2-0060,2,1150,1,Exact Match,Low,1
+70967,2015,Audi,Q5,131494,3.8,1-0066,1,1100,1,Exact Match,Low,1
+58293,2014,Dodge,Journey,153314,0.0,9-0510,9,825,6,Make/Year Match,Low,1
+68750,2017,Hyundai,Sonata,80464,1.3,3-0008,3,800,3,Make/Year Match,Low,1
+65929,2017,Hyundai,Elantra,83244,2.3,3-0074,3,800,3,Make/Year Match,Low,1
+70563,2015,Jeep,Compass,141263,1.9,4-0089,4,800,1,Exact Match,Low,1
+71247,2017,Nissan,Sentra,160035,2.6,4-0092,4,800,2,Exact Match,Low,1
+68410,2016,Chevrolet,Trax,35815,3.7,3-0063,3,750,1,Exact Match,Low,1
+71621,2011,Dodge,Grand Caravan,169889,,1-0040,1,650,3,Make/Year Match,Low,1
+68866,2015,Buick,Verano,148387,2.6,3-0025,3,550,2,Exact Match,Low,1
+70260,2016,Hyundai,Sonata,114651,1.6,3-0082,3,550,1,Exact Match,Low,1
+71651,2014,Hyundai,Sonata,1,,9-0592,9,550,1,Exact Match,Low,1
+69528,2014,Hyundai,Sonata,106154,,9-0625,9,550,1,Exact Match,Low,1
+69374,2009,Chevrolet,Corvette,154586,3.7,3-0015,3,500,1,Make/Year Match,Low,1
+69211,2015,Ford,Explorer,173115,1.9,3-0026,3,450,1,Exact Match,Low,1
+71605,2014,Volkswagen,Jetta,93488,3.6,2-0057,2,7400,37,Grade Match,Medium,3
+71352,2020,Nissan,Altima,119961,1.5,2-0042,2,7300,2,Exact Match,Medium,3
+71655,2019,GMC,Yukon,197776,,2-0033,2,7250,6,Make/Year Match,Medium,3
+71630,2019,Nissan,Altima,129171,2.5,1-0049,1,7200,4,Exact Match,Medium,3
+71469,2016,Toyota,Sienna,183896,,2-0029,2,7200,8,Make/Year Match,Medium,3
+71614,2015,Toyota,4Runner,182571,4.5,4-0026,4,7200,8,Make/Year Match,Medium,3
+68825,2019,Nissan,Altima,77770,3.9,5-0027,5,7200,4,Exact Match,Medium,3
+71493,2020,Ford,S/D C/C,155650,3.7,10-0003,10,7050,11,Make/Year Match,Medium,3
+71597,2020,Ford,T150 Vans,102509,3.9,4-0023,4,7050,11,Make/Year Match,Medium,3
+71563,2013,Acura,TL,126832,3.5,10-0015,10,7000,41,Grade Match,Medium,3
+71610,2013,Volkswagen,Jetta,79641,3.5,2-0061,2,7000,41,Grade Match,Medium,3
+70999,2012,Buick,LaCrosse,158974,,1-0002,1,6200,1,Exact Match,Medium,3
+71569,2024,Ford,Escape,33937,4.2,10-0011,10,6000,1,Exact Match,Medium,3
+71511,2011,Acura,MDX,132545,3.3,2-0047,2,6000,27,Grade Match,Medium,3
+68345,2018,Dodge,Grand Caravan,117964,2.8,3-0020,3,6000,3,Exact Match,Medium,3
+70318,2019,Ford,Fusion,98516,1.6,5-0021,5,5900,3,Exact Match,Medium,3
+70286,2020,Ford,Fusion,112106,,5-0036,5,5900,3,Exact Match,Medium,3
+70375,2008,Jeep,Wrangler,273066,2.6,1-0003,1,5800,1,Exact Match,Medium,3
+69189,2018,Ford,F150,125132,2.3,1-0087,1,5300,3,Exact Match,Medium,3
+70428,1999,Ecstasy,Trike,7349,3.0,5-0075,5,5300,32,Grade Match,Medium,3
+66026,2020,GMC,Sierra 1500,138937,3.6,1-0060,1,5250,4,Make/Year Match,Medium,3
+71210,2010,Cadillac,SRX,130411,2.7,5-0092,5,5150,32,Grade Match,Medium,3
+69382,2018,Chevrolet,Cruze,99865,2.4,3-0018,3,5100,1,Exact Match,Medium,3
+69285,2020,Nissan,Kicks,91983,0.0,9-0528,9,5100,9,Make/Year Match,Medium,3
+70295,2010,Toyota,RAV4,1,2.6,9-0624,9,5000,32,Grade Match,Medium,3

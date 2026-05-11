@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#0f172a"/>
+  <text x="256" y="200" font-family="system-ui,sans-serif" font-size="120" font-weight="900" fill="#10b981" text-anchor="middle">CARZ</text>
+  <text x="256" y="290" font-family="system-ui,sans-serif" font-size="48" font-weight="700" fill="#94a3b8" text-anchor="middle">INSPECT</text>
+  <rect x="136" y="320" width="240" height="4" rx="2" fill="#10b981" opacity="0.5"/>
+  <circle cx="186" cy="370" r="20" fill="none" stroke="#10b981" stroke-width="4"/>
+  <path d="M178 370 l5 5 l10-10" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="370" r="20" fill="none" stroke="#10b981" stroke-width="4"/>
+  <path d="M248 370 l5 5 l10-10" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="326" cy="370" r="20" fill="none" stroke="#64748b" stroke-width="4"/>
+</svg>

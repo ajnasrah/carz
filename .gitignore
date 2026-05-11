@@ -1,0 +1,8 @@
+carz-site/
+inspection-app/public/training/
+training-course/
+node_modules/
+.DS_Store
+*.log
+dist/
+.env.local

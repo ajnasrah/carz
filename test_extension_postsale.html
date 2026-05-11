@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test UAX Post-Sale Upload</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #00695c;
+            padding-bottom: 10px;
+        }
+        .instructions {
+            background: #e8f5e9;
+            border-left: 4px solid #2e7d32;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .step {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        .file-info {
+            background: #fff3e0;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        code {
+            background: #263238;
+            color: #aed581;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        .success {
+            color: #2e7d32;
+            font-weight: bold;
+        }
+        .warning {
+            color: #ef6c00;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚗 UAX Post-Sale Upload in Chrome Extension</h1>
+        
+        <div class="instructions">
+            <h2>✅ Extension Updated Successfully!</h2>
+            <p>Your Chrome extension now has a <span class="success">UAX Post-Sale</span> upload button that will:</p>
+            <ul>
+                <li>Parse post-sale CSV files from UAX</li>
+                <li>Show total revenue and sale statistics</li>
+                <li>Highlight IF bids requiring your decision</li>
+                <li>Display top sales for quick review</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <h3>📋 How to Use:</h3>
+            <ol>
+                <li><strong>Open Chrome Extension:</strong> Click the SmartAuction Auto-Fill extension icon</li>
+                <li><strong>Go to Queue Tab:</strong> Click "Queue" mode</li>
+                <li><strong>Find List Uploader:</strong> Click on "📋 List Uploader" to expand it</li>
+                <li><strong>Upload Post-Sale:</strong> Click the red <code>UAX Post-Sale</code> button</li>
+                <li><strong>Select CSV File:</strong> Choose your UAX post-sale CSV file</li>
+                <li><strong>Review Results:</strong> 
+                    <ul>
+                        <li>Total revenue in green</li>
+                        <li>IF bids in orange (need your decision)</li>
+                        <li>Top sales in the bottom section</li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+
+        <div class="file-info">
+            <h3>📁 Your Post-Sale File:</h3>
+            <p><code>/Users/abdullahabunasrah/Downloads/edgepipeline_postsale_uaxmemphis-all_20260429.csv</code></p>
+            <p class="success">Contains: 300 vehicles | $1,741,250 total revenue</p>
+            <p class="warning">⚠️ 76 IF bids under $1,500 need decisions</p>
+        </div>
+
+        <div class="step">
+            <h3>🎯 What You'll See:</h3>
+            <ul>
+                <li><strong>Summary Stats:</strong> Total revenue, vehicles sold, IF bid count</li>
+                <li><strong>IF Bid Alert:</strong> Orange box listing vehicles under $1,500 needing accept/reject decision</li>
+                <li><strong>Top Sales:</strong> Your best performing vehicles from the auction</li>
+                <li><strong>Action Required:</strong> Clear instructions on which vehicles need phone calls to UAX</li>
+            </ul>
+        </div>
+
+        <div class="instructions" style="background: #ffebee; border-color: #c62828;">
+            <h3>⚠️ Important Notes:</h3>
+            <ul>
+                <li>IF bids expire quickly - make decisions same day</li>
+                <li>The extension shows only YOUR vehicles when matched against inventory</li>
+                <li>Vehicles under $500 are typically automatic rejects</li>
+                <li>Grade 3.5+ vehicles with low bids should be reconsidered</li>
+            </ul>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: #e0f2f1; border-radius: 4px; text-align: center;">
+            <h3 class="success">✨ Extension Ready to Use!</h3>
+            <p>Just refresh your Chrome extension (right-click icon → "Reload") and the UAX Post-Sale button will appear.</p>
+        </div>
+    </div>
+</body>
+</html>
