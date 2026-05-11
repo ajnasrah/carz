@@ -173,14 +173,11 @@ export default function Inventory() {
   const LOCATION_FILTERS = [
     "__loc_M__",
     "__loc_J__",
-    "__loc_Z__",
-    "__loc_Z_no_disp__",
+    "__loc_transit__",
     "__loc_A__",
-    "__dispatched__",
     "uax",
     "daa",
     "adesa",
-    "in_transit",
     "body_shop",
     "mechanic_section",
     "front",
@@ -189,18 +186,21 @@ export default function Inventory() {
   const LOCATION_LABELS = {
     __loc_M__: "Memphis",
     __loc_J__: "Jackson",
-    __loc_Z__: "Transport",
-    __loc_Z_no_disp__: "Waiting for Transport (needs dispatch)",
+    __loc_transit__: "In Transit",
     __loc_A__: "Auction",
-    __dispatched__: "Being Transported",
     uax: "UAX",
     daa: "DAA",
     adesa: "ADESA",
-    in_transit: "Being Transported",
+    in_transit: "In Transit",
     // Chat-sourced destinations (CARZ INC, Body shop, Mechanics, Seller Group)
-    body_shop: "Body Shop",
-    mechanic_section: "Mechanic Section",
-    front: "Front",
+    body_shop: "Jorge's Shop",
+    mechanic_section: "Jorge's Shop",
+    jorge: "Jorge's Shop",
+    front: "Memphis - Front Lot",
+    seller_group: "Memphis - Front Lot",
+    carz_inc: "Memphis - Front Lot",
+    gravel_front: "Memphis - Front Lot",
+    gravel_front_lot: "Memphis - Front Lot",
     jackson: "Jackson",
     pro_auto: "Pro Auto",
     summit_tire: "Summit Tire",
@@ -230,8 +230,13 @@ export default function Inventory() {
     __dispatched__: "bg-yellow-500",
     __jackson__: "bg-sky-500",
     body_shop: "bg-rose-500",
-    mechanic_section: "bg-indigo-500",
+    mechanic_section: "bg-rose-500",
+    jorge: "bg-rose-500",
     front: "bg-emerald-500",
+    seller_group: "bg-emerald-500",
+    carz_inc: "bg-emerald-500",
+    gravel_front: "bg-emerald-500",
+    gravel_front_lot: "bg-emerald-500",
     jackson: "bg-sky-500",
     pro_auto: "bg-cyan-500",
     summit_tire: "bg-amber-500",
@@ -241,7 +246,7 @@ export default function Inventory() {
   const LOCATION_CODE_MAP = {
     M: "Memphis",
     J: "Jackson",
-    Z: "Waiting for Transport",  // Z means waiting for transport/pickup
+    Z: "Needs Transport",  // Z means needs transport/pickup
     X: "Arbitration",  // X means arbitration
     A: "Auction",
   };
@@ -403,7 +408,6 @@ export default function Inventory() {
       "adesa",
       "in_transit",
       "body_shop",
-      "mechanic_section",
       "pro_auto",
       "summit_tire",
       "tri_state",
@@ -448,16 +452,23 @@ export default function Inventory() {
         locMap.get(editingRow.stock_number)?.physical_location || null;
       const prevSource =
         locMap.get(editingRow.stock_number)?.physical_source || null;
-      const { error } = await supabase.from("vehicle_locations").upsert(
+      console.log('Saving location update:', {
+        stock: editingRow.stock_number,
+        location: finalLoc,
+        vin: editingRow.vehicle_vin,
+        previous: prevLoc
+      });
+      
+      const { data, error } = await supabase.from("vehicle_locations").upsert(
         {
-          stock_number: editingRow.stock_number,
-          vin: editingRow.vehicle_vin || "",
+          stock_number: String(editingRow.stock_number).trim(),
+          vin: editingRow.vehicle_vin || editingRow.last_6_vin || "",
           physical_location: finalLoc,
           physical_source: "manual",
           location_updated_at: nowIso,
           updated_at: nowIso,
           notes: {
-            selected: editLocation, // dropdown value incl. '__other__'
+            selected: editLocation,
             raw_input: editLocation === "__other__" ? editCustom.trim() : null,
             previous_location: prevLoc,
             previous_source: prevSource,
@@ -465,8 +476,19 @@ export default function Inventory() {
           },
         },
         { onConflict: "stock_number" },
-      );
-      if (error) throw error;
+      ).select();
+      
+      if (error) {
+        console.error('Location save error:', error);
+        alert(`Failed to save location: ${error.message}`);
+        throw error;
+      }
+      console.log('Location saved successfully:', data);
+      
+      // Verify the save worked
+      if (!data || data.length === 0) {
+        console.warn('No data returned from upsert');
+      }
       // Update local state so the card refreshes immediately
       const nextLoc = {
         ...(locMap.get(editingRow.stock_number) || {}),
@@ -491,10 +513,10 @@ export default function Inventory() {
       
       // For Missing filter, reload data to ensure proper filtering
       if (sectionFilter === "__never__") {
-        // Small delay to ensure database write completes
+        // Reload data from database to get updated state
         setTimeout(() => {
-          window.location.reload();
-        }, 500);
+          load(); // Reload data instead of full page refresh
+        }, 1000);
       }
     } catch (err) {
       alert("Save failed: " + (err.message || String(err)));
@@ -734,17 +756,16 @@ export default function Inventory() {
                 const fixed = [
                   { key: "__loc_M__", label: "Memphis" },
                   { key: "__loc_J__", label: "Jackson" },
-                  { key: "__loc_Z__", label: "Waiting for Transport" },
-                  { key: "__dispatched__", label: "Being Transported" },
+                  { key: "__loc_transit__", label: "In Transit" },
                 ].map((p) => ({
                   ...p,
                   count: rows.filter((r) => {
                     const c = costMap.get(r.stock_number) || {};
-                    if (p.key === "__dispatched__")
+                    if (p.key === "__loc_transit__")
                       return (
+                        c.location_code === "Z" ||
                         c.location_code === "X" ||
-                        locMap.get(r.stock_number)?.physical_location ===
-                          "in_transit"
+                        locMap.get(r.stock_number)?.physical_location === "in_transit"
                       );
                     const code = p.key.slice(6, -2);
                     return c.location_code === code;
@@ -784,7 +805,7 @@ export default function Inventory() {
                         active={sectionFilter === "__other_small__"}
                         onClick={() => setSectionFilter("__other_small__")}
                       >
-                        Other ({otherCount})
+                        Small Lots ({otherCount})
                       </Pill>
                     )}
                   </div>
@@ -995,7 +1016,7 @@ export default function Inventory() {
                                 and the user knows to manually verify. */}
                         {isDispatched ? (
                           <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-yellow-500 text-slate-900">
-                            DISPATCHED
+                            IN TRANSIT
                           </span>
                         ) : locBadge ? (
                           <span
@@ -1143,9 +1164,8 @@ export default function Inventory() {
             >
               <option value="">— pick one —</option>
               <optgroup label="Memphis">
-                <option value="front">Front</option>
-                <option value="mechanic_section">Mechanic</option>
-                <option value="body_shop">Body Shop</option>
+                <option value="front">Front Lot</option>
+                <option value="body_shop">Jorge's Shop</option>
               </optgroup>
               <optgroup label="Jackson">
                 <option value="jackson">Jackson</option>
@@ -1154,7 +1174,7 @@ export default function Inventory() {
                 <option value="uax">UAX</option>
                 <option value="daa">DAA</option>
                 <option value="adesa">ADESA</option>
-                <option value="in_transit">Being Transported</option>
+                <option value="in_transit">In Transit</option>
               </optgroup>
               <optgroup label="External Shop">
                 <option value="pro_auto">Pro Auto</option>

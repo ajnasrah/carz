@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight } from 'lucide-react'
+import { ArrowLeft, RefreshCw, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X } from 'lucide-react'
 import {
   BarChart, Bar, Line, ComposedChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend,
@@ -25,6 +25,16 @@ export default function SoldReports() {
   const [modelSort, setModelSort] = useState('avgProfit')
   const [expandedModel, setExpandedModel] = useState(null)
   const [lastRefreshed, setLastRefreshed] = useState(null)
+  
+  // Filter states
+  const [filterMake, setFilterMake] = useState('')
+  const [filterModel, setFilterModel] = useState('')
+  const [filterBuyer, setFilterBuyer] = useState('')
+  const [filterVendor, setFilterVendor] = useState('')
+  const [availableMakes, setAvailableMakes] = useState([])
+  const [availableModels, setAvailableModels] = useState([])
+  const [availableBuyers, setAvailableBuyers] = useState([])
+  const [availableVendors, setAvailableVendors] = useState([])
 
   // Initial load + auto-refresh every 5 minutes so the dashboard stays fresh
   // when frazer-ingest pushes new sold data behind the scenes.
@@ -40,6 +50,23 @@ export default function SoldReports() {
         setAllRows(rows)
         setBuyerRows(bRows)
         setLastRefreshed(new Date())
+        
+        // Extract unique values for filters - note sold_clean uses 'make' not 'vehicle_make'
+        const uniqueMakes = [...new Set(rows.map(r => r.make || r.vehicle_make).filter(Boolean))].sort()
+        const uniqueBuyers = [...new Set(bRows.map(r => r.buyer).filter(Boolean))].sort()
+        const uniqueVendors = [...new Set(bRows.map(r => r.vendor).filter(Boolean))].sort()
+        
+        console.log('Filter data loaded:', {
+          makes: uniqueMakes.length,
+          buyers: uniqueBuyers.length,
+          vendors: uniqueVendors.length,
+          totalRows: rows.length,
+          buyerRows: bRows.length
+        })
+        
+        setAvailableMakes(uniqueMakes)
+        setAvailableBuyers(uniqueBuyers)
+        setAvailableVendors(uniqueVendors)
       } catch (err) {
         if (cancelled) return
         console.error('SoldReports load failed', err)
@@ -54,8 +81,45 @@ export default function SoldReports() {
       clearInterval(interval)
     }
   }, [])
+  
+  // Update available models when make changes
+  useEffect(() => {
+    if (filterMake) {
+      const models = [...new Set(allRows.filter(r => (r.make || r.vehicle_make) === filterMake).map(r => r.model || r.vehicle_model).filter(Boolean))].sort()
+      setAvailableModels(models)
+    } else {
+      setAvailableModels([])
+      setFilterModel('')
+    }
+  }, [filterMake, allRows])
 
-  const filtered = useMemo(() => filterByPeriod(allRows, periodKey), [allRows, periodKey])
+  const filtered = useMemo(() => {
+    let result = filterByPeriod(allRows, periodKey)
+    
+    // Apply make filter (sold_clean uses 'make' not 'vehicle_make')
+    if (filterMake) {
+      result = result.filter(r => (r.make || r.vehicle_make) === filterMake)
+    }
+    
+    // Apply model filter (sold_clean uses 'model' not 'vehicle_model')
+    if (filterModel) {
+      result = result.filter(r => (r.model || r.vehicle_model) === filterModel)
+    }
+    
+    // Apply buyer filter
+    if (filterBuyer) {
+      const buyerStocks = new Set(buyerRows.filter(r => r.buyer === filterBuyer).map(r => r.stock_number))
+      result = result.filter(r => buyerStocks.has(r.stock_number))
+    }
+    
+    // Apply vendor filter
+    if (filterVendor) {
+      const vendorStocks = new Set(buyerRows.filter(r => r.vendor === filterVendor).map(r => r.stock_number))
+      result = result.filter(r => vendorStocks.has(r.stock_number))
+    }
+    
+    return result
+  }, [allRows, periodKey, filterMake, filterModel, filterBuyer, filterVendor, buyerRows])
   const stats = useMemo(() => summarize(filtered), [filtered])
   const monthly = useMemo(() => groupByMonth(filtered), [filtered])
   const daysBands = useMemo(() => groupByDaysOnLot(filtered), [filtered])
@@ -155,6 +219,103 @@ export default function SoldReports() {
   return (
     <div className="page pb-12">
       <Header navigate={navigate} />
+
+      {/* Filter Panel */}
+      <div className="bg-slate-800 rounded-lg p-3 mb-4">
+        <div className="flex items-center gap-2 mb-3">
+          <Filter className="text-emerald-400" size={16} />
+          <span className="text-xs font-semibold text-slate-300">Filters</span>
+          {(filterMake || filterModel || filterBuyer || filterVendor) && (
+            <button
+              onClick={() => {
+                setFilterMake('')
+                setFilterModel('')
+                setFilterBuyer('')
+                setFilterVendor('')
+              }}
+              className="ml-auto px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+            >
+              Clear All
+            </button>
+          )}
+        </div>
+        
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={filterMake}
+            onChange={(e) => {
+              setFilterMake(e.target.value)
+              setFilterModel('')
+            }}
+            className="px-2 py-1.5 bg-slate-700 text-white rounded text-xs border border-slate-600 focus:border-emerald-400 focus:outline-none"
+          >
+            <option value="">All Makes {availableMakes.length > 0 ? `(${availableMakes.length})` : ''}</option>
+            {availableMakes.map(make => (
+              <option key={make} value={make}>{make}</option>
+            ))}
+          </select>
+          
+          <select
+            value={filterModel}
+            onChange={(e) => setFilterModel(e.target.value)}
+            disabled={!filterMake}
+            className="px-2 py-1.5 bg-slate-700 text-white rounded text-xs border border-slate-600 focus:border-emerald-400 focus:outline-none disabled:opacity-50"
+          >
+            <option value="">All Models</option>
+            {availableModels.map(model => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
+          
+          <select
+            value={filterBuyer}
+            onChange={(e) => setFilterBuyer(e.target.value)}
+            className="px-2 py-1.5 bg-slate-700 text-white rounded text-xs border border-slate-600 focus:border-emerald-400 focus:outline-none"
+          >
+            <option value="">All Buyers</option>
+            {availableBuyers.map(buyer => (
+              <option key={buyer} value={buyer}>{buyer}</option>
+            ))}
+          </select>
+          
+          <select
+            value={filterVendor}
+            onChange={(e) => setFilterVendor(e.target.value)}
+            className="px-2 py-1.5 bg-slate-700 text-white rounded text-xs border border-slate-600 focus:border-emerald-400 focus:outline-none"
+          >
+            <option value="">All Vendors</option>
+            {availableVendors.map(vendor => (
+              <option key={vendor} value={vendor}>{vendor}</option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Active filters display */}
+        {(filterMake || filterModel || filterBuyer || filterVendor) && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {filterMake && (
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">
+                {filterMake}
+              </span>
+            )}
+            {filterModel && (
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">
+                {filterModel}
+              </span>
+            )}
+            {filterBuyer && (
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">
+                Buyer: {filterBuyer}
+              </span>
+            )}
+            {filterVendor && (
+              <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">
+                Vendor: {filterVendor}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Period selector */}
       <div className="flex gap-2 mb-4 overflow-x-auto -mx-4 px-4 pb-1">

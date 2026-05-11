@@ -197,7 +197,7 @@ export default function VinCheck() {
               <Row label="Vendor" value={c.vendor || '—'} />
               {c.location_code && (
                 <Row label="Location" value={
-                  { M: 'Memphis', J: 'Jackson', Z: 'Transport', X: 'Dispatched', A: 'Auction' }[c.location_code] || c.location_code
+                  { M: 'Memphis', J: 'Jackson', Z: 'In Transport', X: 'In Transport', A: 'Auction' }[c.location_code] || c.location_code
                 } />
               )}
             </div>
