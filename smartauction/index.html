@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Carz Inc - SmartAuction Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #333; }
+
+    .header { background: #1a1a2e; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { font-size: 20px; font-weight: 700; }
+    .header .subtitle { font-size: 12px; color: #aaa; }
+    .header .last-updated { font-size: 11px; color: #666; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin-bottom: 20px; border-radius: 8px; overflow: hidden; border: 1px solid #ddd; }
+    .tab { flex: 1; padding: 12px; text-align: center; font-size: 13px; font-weight: 600; cursor: pointer; background: #fff; color: #666; border: none; transition: all 0.15s; }
+    .tab.active { background: #1976d2; color: #fff; }
+    .tab:hover:not(.active) { background: #f0f0f0; }
+
+    /* Upload Section */
+    .upload-section { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .upload-card { background: #fff; border-radius: 10px; padding: 16px; border: 2px dashed #ddd; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
+    .upload-card:hover { border-color: #1976d2; background: #f8fbff; }
+    .upload-card.loaded { border-color: #4caf50; border-style: solid; background: #f9fdf6; }
+    .upload-card input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .upload-card .label { font-weight: 600; font-size: 13px; color: #333; }
+    .upload-card .hint { font-size: 11px; color: #888; margin-top: 2px; }
+    .upload-card .count { font-size: 16px; font-weight: 700; color: #388e3c; margin-top: 6px; }
+    .upload-card .age { font-size: 10px; color: #999; }
+
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
+    .stat { background: #fff; border-radius: 10px; padding: 14px; text-align: center; }
+    .stat .num { font-size: 26px; font-weight: 800; line-height: 1.2; }
+    .stat .lbl { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+    .stat.blue .num { color: #1976d2; }
+    .stat.green .num { color: #388e3c; }
+    .stat.red .num { color: #c62828; }
+    .stat.orange .num { color: #f57c00; }
+    .stat.purple .num { color: #7b1fa2; }
+    .stat.gray .num { color: #666; }
+
+    .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; color: #fff; transition: opacity 0.2s; }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-blue { background: #1976d2; }
+    .btn-orange { background: #f57c00; }
+    .btn-red { background: #c62828; }
+    .btn-sm { padding: 6px 12px; font-size: 11px; }
+
+    .actions { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+
+    /* Results */
+    .result-group { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .result-group h3 { font-size: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+    .result-group.urgent h3 { color: #c62828; } .result-group.urgent .badge { background: #ffebee; color: #c62828; }
+    .result-group.warn h3 { color: #f57c00; } .result-group.warn .badge { background: #fff3e0; color: #f57c00; }
+    .result-group.ok h3 { color: #388e3c; } .result-group.ok .badge { background: #e8f5e9; color: #388e3c; }
+    .result-group.info h3 { color: #1976d2; } .result-group.info .badge { background: #e3f2fd; color: #1976d2; }
+    .result-group.gray h3 { color: #666; } .result-group.gray .badge { background: #f5f5f5; color: #666; }
+
+    .vehicle-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .vehicle-table th { text-align: left; padding: 8px 10px; background: #f9f9f9; font-weight: 600; color: #555; border-bottom: 2px solid #eee; position: sticky; top: 0; }
+    .vehicle-table td { padding: 6px 10px; border-bottom: 1px solid #f0f0f0; }
+    .vehicle-table tr:hover { background: #f8fbff; }
+    .vehicle-table .vin { font-family: monospace; font-size: 11px; color: #555; }
+    .table-wrap { max-height: 400px; overflow-y: auto; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .empty { text-align: center; color: #aaa; padding: 40px; font-size: 14px; }
+    .search-box { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; width: 220px; }
+
+    .paste-section { margin-bottom: 20px; }
+    .paste-card { background: #fff; border-radius: 10px; padding: 16px; border: 1px solid #ddd; }
+    .paste-card textarea { width: 100%; border: 1px solid #ddd; border-radius: 6px; padding: 8px; font-size: 12px; font-family: monospace; resize: vertical; margin-top: 6px; }
+    .paste-card .label { font-weight: 600; font-size: 13px; }
+    .paste-card .hint { font-size: 11px; color: #888; margin-top: 2px; }
+    .sold-preview-item { display: inline-block; font-size: 11px; font-family: monospace; background: #ffebee; color: #c62828; padding: 2px 6px; border-radius: 3px; margin: 2px; }
+    .nosale-preview-item { display: inline-block; font-size: 11px; font-family: monospace; background: #f5f5f5; color: #999; padding: 2px 6px; border-radius: 3px; margin: 2px; text-decoration: line-through; }
+
+    .copy-vins-btn { font-size: 11px; padding: 2px 10px; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; margin-left: 4px; }
+    .copy-vins-btn:hover { background: #1565c0; }
+    .hidden-vins { position: absolute; left: -9999px; }
+
+    @media (max-width: 600px) {
+      .upload-section { grid-template-columns: 1fr; }
+      .stats { grid-template-columns: repeat(3, 1fr); }
+      .search-box { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>SmartAuction Dashboard</h1>
+      <div class="subtitle">Carz Inc Listing Pipeline</div>
+    </div>
+    <div class="last-updated" id="lastUpdated"></div>
+  </div>
+
+  <div class="container">
+    <!-- Uploads -->
+    <div class="upload-section">
+      <div class="upload-card" id="invCard">
+        <input type="file" id="invInput" accept=".csv,.xlsx,.xls" />
+        <div class="label">Inventory (Frazer)</div>
+        <div class="hint">INVENTORY.CSV or .XLSX</div>
+        <div class="count" id="invCount"></div>
+        <div class="age" id="invAge"></div>
+      </div>
+      <div class="upload-card" id="soldCard">
+        <input type="file" id="soldInput" accept=".csv,.xlsx,.xls" />
+        <div class="label">Sold (Frazer)</div>
+        <div class="hint">SOLD.CSV</div>
+        <div class="count" id="soldCount"></div>
+        <div class="age" id="soldAge"></div>
+      </div>
+      <div class="upload-card" id="saCard">
+        <input type="file" id="saInput" accept=".csv,.xlsx,.xls" />
+        <div class="label">SmartAuction Export</div>
+        <div class="hint">Export Results from SA</div>
+        <div class="count" id="saCount"></div>
+        <div class="age" id="saAge"></div>
+      </div>
+    </div>
+
+    <!-- Auction Sales / Extra Sold VINs -->
+    <div class="paste-section">
+      <div class="paste-card">
+        <div class="label">Auction Sales / Extra Sold VINs</div>
+        <div class="hint">Paste from UAX/Manheim seller detail PDFs. Only confirmed sales (with Sale Amt > $0 and a buyer) are extracted. No Sale / IF items are skipped.</div>
+        <textarea id="extraSoldPaste" rows="4" placeholder="Open PDF → Select All → Copy → Paste here"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-sm" style="background:#1976d2;" id="parseExtraSoldBtn">Parse &amp; Preview</button>
+          <button class="btn btn-red btn-sm" id="addExtraSoldBtn" disabled>Confirm &amp; Add to Sold</button>
+          <span id="extraSoldStatus" style="font-size:11px;color:#888;"></span>
+        </div>
+        <div id="extraSoldPreview" style="display:none;margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats" id="statsRow" style="display:none;">
+      <div class="stat blue"><div class="num" id="sInv">-</div><div class="lbl">In Inventory</div></div>
+      <div class="stat purple"><div class="num" id="sOnSA">-</div><div class="lbl">Active on SA</div></div>
+      <div class="stat orange"><div class="num" id="sNotListed">-</div><div class="lbl">Not on SA</div></div>
+      <div class="stat green"><div class="num" id="sListed">-</div><div class="lbl">Listed OK</div></div>
+      <div class="stat red"><div class="num" id="sSoldOnSA">-</div><div class="lbl">Sold on SA</div></div>
+      <div class="stat gray"><div class="num" id="sUnknown">-</div><div class="lbl">Unknown</div></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="crosscheck">Cross-Check</button>
+      <button class="tab" data-tab="queue">Queue (Scraped)</button>
+    </div>
+
+    <!-- Cross-Check Tab -->
+    <div class="tab-content active" id="tab-crosscheck">
+      <div class="actions">
+        <button class="btn btn-orange" id="crossCheckBtn" disabled>Run Cross-Check</button>
+        <input type="text" class="search-box" id="searchBox" placeholder="Search VIN, make, model..." />
+      </div>
+      <div id="results"></div>
+    </div>
+
+    <!-- Queue Tab -->
+    <div class="tab-content" id="tab-queue">
+      <div class="actions">
+        <button class="btn btn-blue" id="cleanQueueBtn" disabled>Clean Queue (remove sold)</button>
+        <span id="queueStatus" style="font-size:12px;color:#888;"></span>
+      </div>
+      <div id="queueResults"></div>
+    </div>
+
+  </div>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.mini.min.js"></script>
+  <script>
+  (function() {
+    'use strict';
+
+    // ── State ──
+    let inventory = [];
+    let sold = [];
+    let saListings = [];
+    let queueData = [];
+    let lastResults = null;
+
+    const STORAGE_KEYS = {
+      inv: 'carzinc_inventory',
+      invDate: 'carzinc_inventory_date',
+      sold: 'carzinc_sold',
+      soldDate: 'carzinc_sold_date',
+      sa: 'carzinc_sa',
+      saDate: 'carzinc_sa_date',
+      queue: 'carzinc_queue',
+      queueDate: 'carzinc_queue_date',
+    };
+
+    // ── File Parser (CSV + XLSX) ──
+    async function parseFile(file) {
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv')) {
+        return parseCSV(await file.text());
+      }
+      // XLSX
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      return XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    }
+
+    function parseCSV(text) {
+      const lines = text.split('\n').filter(l => l.trim());
+      if (lines.length < 2) return [];
+      const headers = parseCSVLine(lines[0]);
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = parseCSVLine(lines[i]);
+        if (values.length < 3) continue;
+        const row = {};
+        headers.forEach((h, idx) => { row[h.trim()] = (values[idx] || '').trim(); });
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    function parseCSVLine(line) {
+      const result = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+          else inQuotes = !inQuotes;
+        } else if (ch === ',' && !inQuotes) {
+          result.push(current); current = '';
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current);
+      return result;
+    }
+
+    // ── Persistence ──
+    function saveData(key, dateKey, data) {
+      try {
+        localStorage.setItem(key, JSON.stringify(data));
+        localStorage.setItem(dateKey, Date.now().toString());
+      } catch (e) {
+        console.warn('Storage full, clearing old data');
+        localStorage.removeItem(STORAGE_KEYS.sold); // sold is biggest, clear first
+        try { localStorage.setItem(key, JSON.stringify(data)); localStorage.setItem(dateKey, Date.now().toString()); } catch {}
+      }
+    }
+
+    function loadData(key) {
+      try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; }
+    }
+
+    function formatAge(ts) {
+      if (!ts) return '';
+      const mins = Math.floor((Date.now() - parseInt(ts)) / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return `${Math.floor(hrs / 24)}d ago`;
+    }
+
+    // ── Init: restore saved data ──
+    function init() {
+      inventory = loadData(STORAGE_KEYS.inv);
+      sold = loadData(STORAGE_KEYS.sold);
+      saListings = loadData(STORAGE_KEYS.sa);
+      queueData = loadData(STORAGE_KEYS.queue);
+
+      updateCard('inv', inventory.length, STORAGE_KEYS.invDate);
+      updateCard('sold', sold.length, STORAGE_KEYS.soldDate);
+      updateCard('sa', saListings.length, STORAGE_KEYS.saDate);
+      updateCrossCheckBtn();
+
+      // Try loading queue from local server
+      loadQueueFromServer();
+    }
+
+    function updateCard(prefix, count, dateKey) {
+      const countEl = document.getElementById(prefix + 'Count');
+      const ageEl = document.getElementById(prefix + 'Age');
+      const card = document.getElementById(prefix + 'Card');
+      const ts = localStorage.getItem(dateKey);
+      if (count > 0) {
+        countEl.textContent = `${count} vehicles`;
+        ageEl.textContent = `Uploaded ${formatAge(ts)}`;
+        card.classList.add('loaded');
+      }
+    }
+
+    function updateCrossCheckBtn() {
+      document.getElementById('crossCheckBtn').disabled = (inventory.length === 0);
+      document.getElementById('cleanQueueBtn').disabled = (queueData.length === 0);
+    }
+
+    // ── File Uploads ──
+    document.getElementById('invInput').addEventListener('change', async (e) => {
+      inventory = await parseFile(e.target.files[0]);
+      saveData(STORAGE_KEYS.inv, STORAGE_KEYS.invDate, inventory);
+      updateCard('inv', inventory.length, STORAGE_KEYS.invDate);
+      updateCrossCheckBtn();
+    });
+
+    document.getElementById('soldInput').addEventListener('change', async (e) => {
+      sold = await parseFile(e.target.files[0]);
+      saveData(STORAGE_KEYS.sold, STORAGE_KEYS.soldDate, sold);
+      updateCard('sold', sold.length, STORAGE_KEYS.soldDate);
+      updateCrossCheckBtn();
+    });
+
+    document.getElementById('saInput').addEventListener('change', async (e) => {
+      saListings = await parseFile(e.target.files[0]);
+      saveData(STORAGE_KEYS.sa, STORAGE_KEYS.saDate, saListings);
+      updateCard('sa', saListings.length, STORAGE_KEYS.saDate);
+      updateCrossCheckBtn();
+    });
+
+    // ── Tabs ──
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ── Load Queue from local server (if running) ──
+    async function loadQueueFromServer() {
+      // Skip localhost fetch if on HTTPS (GitHub Pages) — browsers block mixed content
+      if (location.protocol === 'https:') {
+        if (queueData.length > 0) {
+          const ts = localStorage.getItem(STORAGE_KEYS.queueDate);
+          document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (cached ${formatAge(ts)})`;
+        } else {
+          document.getElementById('queueStatus').textContent = 'Queue only available on localhost (open http://localhost:7749)';
+        }
+        return;
+      }
+      try {
+        const res = await fetch('http://localhost:7749/queue/all', { signal: AbortSignal.timeout(2000) });
+        const data = await res.json();
+        if (data.vehicles && data.vehicles.length > 0) {
+          queueData = data.vehicles;
+          saveData(STORAGE_KEYS.queue, STORAGE_KEYS.queueDate, queueData);
+          updateCrossCheckBtn();
+          document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (live from server)`;
+        }
+      } catch {
+        if (queueData.length > 0) {
+          const ts = localStorage.getItem(STORAGE_KEYS.queueDate);
+          document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (cached ${formatAge(ts)})`;
+        } else {
+          document.getElementById('queueStatus').textContent = 'Server offline — start with: python3 imessage_server.py';
+        }
+      }
+    }
+
+    // ── Cross-Check ──
+    document.getElementById('crossCheckBtn').addEventListener('click', runCrossCheck);
+    document.getElementById('searchBox').addEventListener('input', applySearch);
+
+    function vin6From(row) {
+      return (row['Last 6 VIN'] || row['Vehicle VIN']?.slice(-6) || row['VIN']?.slice(-6) || row['vin6'] || '').toUpperCase();
+    }
+
+    function saVin6From(row) {
+      const vin = row['VIN'] || row['Vehicle VIN'] || row['Vin'] || row['Full VIN'] || '';
+      return vin.length >= 6 ? vin.slice(-6).toUpperCase() : '';
+    }
+
+    function runCrossCheck() {
+      const invMap = new Map();
+      const invSet = new Set();
+      const invStockByVin6 = new Map();
+      for (const v of inventory) {
+        const v6 = vin6From(v);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) { invSet.add(v6); invMap.set(v6, v); invStockByVin6.set(v6, stock); }
+      }
+
+      // Sold: only count as "sold" if NOT currently in inventory with same stock#
+      // Handles arbitrations — car sold, returned, re-stocked with new stock#
+      const soldStockSet = new Set();
+      const soldVin6All = new Set();
+      for (const v of sold) {
+        const v6 = vin6From(v);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) soldVin6All.add(v6);
+        if (stock) soldStockSet.add(stock);
+      }
+      const soldSet = new Set();
+      for (const v6 of soldVin6All) {
+        if (!invSet.has(v6)) {
+          // Not in current inventory — definitively sold
+          soldSet.add(v6);
+        } else {
+          // In both — check stock#. If current inventory stock# is also in sold,
+          // it means THIS specific deal was sold (not just a previous one with same VIN)
+          const currentStock = invStockByVin6.get(v6);
+          if (currentStock && soldStockSet.has(currentStock)) {
+            soldSet.add(v6); // Current stock# was sold — flag it
+          }
+          // Otherwise: old deal with same VIN was sold, new stock# is live — don't flag
+        }
+      }
+
+      // Categorize SA listings by status
+      // Live = currently in auction (has Days Remaining, no Hold Date)
+      // On Hold = pulled from auction by seller
+      // Removed = taken down permanently
+      // Sold/Expired = done, ignore
+      const saLive = new Map();      // Actually in live auction
+      const saOnHold = new Map();    // On hold (seller pulled)
+      const saRemoved = new Map();   // Removed by seller
+      let saLiveCount = 0;
+      let saHoldCount = 0;
+      let saTotal = 0;
+
+      for (const v of saListings) {
+        saTotal++;
+        const v6 = saVin6From(v);
+        if (v6.length < 5) continue;
+
+        const status = (v['Status'] || '').toLowerCase().trim();
+        const saleDate = (v['Sale Date'] || '').trim();
+        const removalDate = (v['Removal Date'] || '').trim();
+        const holdDate = (v['Hold Date'] || '').trim();
+        const daysRemaining = (v['Days Remaining'] || '').trim();
+
+        let category = 'ignore';
+        if (status) {
+          // manage_inventory format with explicit Status
+          if (status === 'live' || status === 'active') category = 'live';
+          else if (status === 'on hold') category = 'hold';
+          else if (status === 'deactivated') category = 'removed';
+        } else {
+          // InventoryResults format — infer from dates
+          if (saleDate) { category = 'ignore'; }
+          else if (removalDate) { category = 'removed'; }
+          else if (holdDate) { category = 'hold'; }
+          else { category = 'live'; }
+        }
+
+        if (category === 'live') {
+          saLive.set(v6, { ...v, _saStatus: 'Live' });
+          saLiveCount++;
+        } else if (category === 'hold') {
+          saOnHold.set(v6, { ...v, _saStatus: 'On Hold' });
+          saHoldCount++;
+        } else if (category === 'removed') {
+          saRemoved.set(v6, v);
+        }
+      }
+
+      // "Active on SA" = live + on hold (both need attention)
+      const saActive = new Map([...saLive, ...saOnHold]);
+      const saSet = saActive;
+
+      const notOnSA = [];
+      const properlyListed = [];
+      const soldButOnSA = [];  // In your sold books but active/hold/removed on SA
+      const onSANotInv = [];   // Active/hold on SA but not in your inventory
+
+      for (const v6 of invSet) {
+        if (soldSet.has(v6)) continue;
+        const v = invMap.get(v6);
+        if (saSet.has(v6)) {
+          const saV = saSet.get(v6) || {};
+          properlyListed.push({ vin6: v6, 'SA Status': saV._saStatus || 'Active', ...v });
+        } else {
+          notOnSA.push({ vin6: v6, ...v });
+        }
+      }
+
+      // "On SA but Not in Inventory" — only active + hold (you don't care about removed ones not in inv)
+      for (const [v6, saV] of saActive) {
+        if (!invSet.has(v6)) onSANotInv.push({ vin6: v6, ...saV });
+      }
+
+      // "Sold but Still on SA" — check active + hold + removed against sold list
+      // These need to be removed/already were removed from SA
+      for (const [v6, saV] of saActive) {
+        if (soldSet.has(v6)) soldButOnSA.push({ vin6: v6, status: 'Active', ...saV });
+      }
+      for (const [v6, saV] of saRemoved) {
+        if (soldSet.has(v6) && invSet.has(v6)) {
+          // Removed from SA AND sold AND still in inventory = already handled, skip
+        }
+      }
+
+      // Stats
+      document.getElementById('statsRow').style.display = '';
+      document.getElementById('sInv').textContent = inventory.length;
+      document.getElementById('sOnSA').textContent = `${saLiveCount} live, ${saHoldCount} hold`;
+      document.getElementById('sNotListed').textContent = notOnSA.length;
+      document.getElementById('sListed').textContent = properlyListed.length;
+      document.getElementById('sSoldOnSA').textContent = soldButOnSA.length;
+      document.getElementById('sUnknown').textContent = onSANotInv.length;
+
+      lastResults = { notOnSA, soldButOnSA, onSANotInv, properlyListed };
+      renderResults(lastResults);
+    }
+
+    function renderResults(r, filter = '') {
+      const f = filter.toUpperCase();
+      const filterItems = (items) => f ? items.filter(v => JSON.stringify(v).toUpperCase().includes(f)) : items;
+
+      const div = document.getElementById('results');
+      div.innerHTML = '';
+
+      const invCols = ['Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage', 'Days on lot', 'Buyer'];
+      const listedCols = ['SA Status', 'Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage'];
+      const saCols = ['vin6', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'VIN'];
+
+      if (r.notOnSA.length) div.innerHTML += renderGroup('Not Listed on SmartAuction', 'urgent', filterItems(r.notOnSA), invCols);
+      if (r.soldButOnSA.length) div.innerHTML += renderGroup('Sold but Still on SA (remove these)', 'warn', filterItems(r.soldButOnSA), saCols);
+      if (r.onSANotInv.length) div.innerHTML += renderGroup('On SA but Not in Inventory', 'info', filterItems(r.onSANotInv), saCols);
+      if (r.properlyListed.length) div.innerHTML += renderGroup('Properly Listed', 'ok', filterItems(r.properlyListed), listedCols);
+
+      if (saListings.length === 0) {
+        div.innerHTML += `<div class="result-group info"><h3>Upload SA Export for full cross-check</h3><p style="font-size:12px;color:#888;">SmartAuction > Manage Inventory > Export Results > Upload here</p></div>`;
+      }
+    }
+
+    function applySearch() {
+      if (lastResults) renderResults(lastResults, document.getElementById('searchBox').value);
+    }
+
+    // ── Queue Clean ──
+    document.getElementById('cleanQueueBtn').addEventListener('click', cleanQueue);
+
+    function cleanQueue() {
+      // Build inventory and sold lookups with stock# tiebreaker
+      const invSet = new Set();
+      const invStockByVin6 = new Map();
+      for (const v of inventory) {
+        const v6 = vin6From(v);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) { invSet.add(v6); invStockByVin6.set(v6, stock); }
+      }
+
+      const soldVin6All = new Set();
+      const soldStockSet = new Set();
+      for (const v of sold) {
+        const v6 = vin6From(v);
+        const stock = (v['Stock #'] || '').trim();
+        if (v6.length >= 5) soldVin6All.add(v6);
+        if (stock) soldStockSet.add(stock);
+      }
+
+      // Same logic: if VIN6 in both, compare stock#
+      const soldSet = new Set();
+      for (const v6 of soldVin6All) {
+        if (!invSet.has(v6)) {
+          soldSet.add(v6);
+        } else {
+          const currentStock = invStockByVin6.get(v6);
+          if (currentStock && soldStockSet.has(currentStock)) {
+            soldSet.add(v6);
+          }
+        }
+      }
+
+      const live = [];
+      const isSold = [];
+      const unknown = [];
+
+      for (const v of queueData) {
+        const v6 = (v.vin6 || '').toUpperCase();
+        if (soldSet.has(v6)) {
+          isSold.push(v);
+        } else if (invSet.has(v6)) {
+          live.push(v);
+        } else {
+          unknown.push(v);
+        }
+      }
+
+      const div = document.getElementById('queueResults');
+      div.innerHTML = '';
+
+      const qCols = ['vin6', 'miles', 'condition', 'tire_condition', 'notes', 'photo_count'];
+
+      if (live.length) div.innerHTML += renderGroup(`Still in Inventory (keep)`, 'ok', live, qCols);
+      if (isSold.length) div.innerHTML += renderGroup(`Sold (remove from queue)`, 'warn', isSold, qCols);
+      if (unknown.length) div.innerHTML += renderGroup(`Not Found in Inventory or Sold (investigate)`, 'gray', unknown, qCols);
+
+      document.getElementById('queueStatus').textContent = `${queueData.length} total: ${live.length} live, ${isSold.length} sold, ${unknown.length} unknown`;
+    }
+
+    // ── Render Helpers ──
+    function renderGroup(title, cls, items, columns) {
+      const validCols = columns.filter(c => items.some(item => item[c]));
+      // Collect full VINs for copy button
+      const vins = items.map(item => {
+        return item['Vehicle VIN'] || item['VIN'] || item['vin6'] || '';
+      }).filter(v => v);
+      const copyId = 'copy_' + Math.random().toString(36).substr(2, 6);
+
+      let html = `<div class="result-group ${cls}"><h3>${esc(title)} <span class="badge">${items.length}</span>`;
+      if (vins.length > 0) {
+        html += ` <button class="copy-vins-btn" onclick="window._copyVins('${copyId}')">Copy VINs</button>`;
+        html += `<textarea id="${copyId}" class="hidden-vins">${vins.join('\n')}</textarea>`;
+      }
+      html += `</h3>`;
+      html += `<div class="table-wrap"><table class="vehicle-table"><thead><tr>`;
+      for (const col of validCols) html += `<th>${esc(col)}</th>`;
+      html += `</tr></thead><tbody>`;
+      for (const item of items) {
+        html += '<tr>';
+        for (const col of validCols) {
+          const val = item[col] || '';
+          const cls = (col.includes('VIN') || col === 'vin6') ? 'vin' : '';
+          html += `<td class="${cls}">${esc(String(val))}</td>`;
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table></div></div>';
+      return html;
+    }
+
+    window._copyVins = function(id) {
+      const textarea = document.getElementById(id);
+      if (!textarea) return;
+      navigator.clipboard.writeText(textarea.value).then(() => {
+        const btn = textarea.previousElementSibling;
+        if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy VINs'; }, 1500); }
+      });
+    };
+
+    function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ── Auction Sale Report Parser ──
+    let parsedExtraSold = [];
+
+    document.getElementById('parseExtraSoldBtn').addEventListener('click', parseExtraSold);
+    document.getElementById('addExtraSoldBtn').addEventListener('click', confirmExtraSold);
+
+    function parseExtraSold() {
+      const text = document.getElementById('extraSoldPaste').value;
+      const preview = document.getElementById('extraSoldPreview');
+      const status = document.getElementById('extraSoldStatus');
+      const confirmBtn = document.getElementById('addExtraSoldBtn');
+
+      if (!text.trim()) { status.textContent = 'Paste something first'; return; }
+
+      // Find all 17-char VINs in the text
+      const allVins = [...new Set((text.match(/\b[A-HJ-NPR-Z0-9]{17}\b/gi) || []).map(v => v.toUpperCase()))];
+
+      if (allVins.length === 0) {
+        // Maybe they pasted just VIN6s or partial VINs
+        const vin6s = [...new Set((text.match(/\b[A-Z0-9]{5,7}\b/gi) || []).map(v => v.toUpperCase()))];
+        if (vin6s.length > 0) {
+          parsedExtraSold = vin6s.map(v => ({ vin: v, vin6: v, status: 'sold', source: 'manual' }));
+          preview.style.display = 'block';
+          preview.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px;">Found ${vin6s.length} VIN6s (manual entry):</div>` +
+            vin6s.map(v => `<span class="sold-preview-item">${v}</span>`).join('');
+          confirmBtn.disabled = false;
+          status.textContent = `${vin6s.length} VINs ready to add`;
+          return;
+        }
+        status.textContent = 'No VINs found in pasted text';
+        preview.style.display = 'none';
+        confirmBtn.disabled = true;
+        return;
+      }
+
+      // For auction PDFs: check each VIN for "Sale Amt" with real $ amount nearby
+      // Split text into vehicle blocks (each block starts with a VIN)
+      const confirmed = [];
+      const noSale = [];
+
+      for (const vin of allVins) {
+        const vinIdx = text.toUpperCase().indexOf(vin);
+        // Get ~500 chars after VIN to check for sale info
+        const block = text.substring(vinIdx, vinIdx + 600).toUpperCase();
+
+        const hasSaleAmt = block.match(/SALE\s*AMT[:\s]*\$([\d,]+\.?\d*)/);
+        const hasBuyer = block.includes('BUYER:') && !block.match(/BUYER:\s*\n/);
+        const hasNoSale = block.includes('NO SALE') || block.includes('IF BID') || block.includes('IF SALE');
+        const saleAmount = hasSaleAmt ? parseFloat(hasSaleAmt[1].replace(/,/g, '')) : 0;
+
+        if (hasNoSale || saleAmount === 0) {
+          noSale.push(vin);
+        } else if (hasSaleAmt && saleAmount > 0) {
+          confirmed.push({ vin, vin6: vin.slice(-6), amount: hasSaleAmt[1], source: 'auction' });
+        } else {
+          // No sale info found but VIN exists — include as sold (loose)
+          confirmed.push({ vin, vin6: vin.slice(-6), amount: '?', source: 'auction' });
+        }
+      }
+
+      parsedExtraSold = confirmed;
+      preview.style.display = 'block';
+
+      let html = '';
+      if (confirmed.length > 0) {
+        html += `<div style="font-size:12px;font-weight:600;color:#c62828;margin-bottom:4px;">Confirmed Sales (${confirmed.length}):</div>`;
+        html += confirmed.map(v => `<span class="sold-preview-item">${v.vin.slice(-6)} — $${v.amount}</span>`).join('');
+      }
+      if (noSale.length > 0) {
+        html += `<div style="font-size:12px;font-weight:600;color:#999;margin-top:6px;margin-bottom:4px;">Skipped — No Sale / IF (${noSale.length}):</div>`;
+        html += noSale.map(v => `<span class="nosale-preview-item">${v.slice(-6)}</span>`).join('');
+      }
+      preview.innerHTML = html;
+
+      confirmBtn.disabled = confirmed.length === 0;
+      status.textContent = `${confirmed.length} sold, ${noSale.length} skipped`;
+    }
+
+    function confirmExtraSold() {
+      if (parsedExtraSold.length === 0) return;
+      const status = document.getElementById('extraSoldStatus');
+      const confirmBtn = document.getElementById('addExtraSoldBtn');
+
+      // Load existing extra sold and merge
+      let extraSold = loadData('carzinc_extra_sold');
+      const existingVin6s = new Set(extraSold.map(v => v.vin6));
+      let added = 0;
+      for (const v of parsedExtraSold) {
+        if (!existingVin6s.has(v.vin6)) {
+          extraSold.push(v);
+          existingVin6s.add(v.vin6);
+          added++;
+        }
+      }
+      saveData('carzinc_extra_sold', 'carzinc_extra_sold_date', extraSold);
+
+      // Also add to the in-memory sold set for immediate cross-check
+      // Create fake sold rows that vin6From() can read
+      for (const v of parsedExtraSold) {
+        sold.push({ 'Last 6 VIN': v.vin6, 'Vehicle VIN': v.vin, 'Stock #': 'AUCTION-' + v.vin6 });
+      }
+
+      status.textContent = `Added ${added} new (${extraSold.length} total auction sales)`;
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Added!';
+      setTimeout(() => { confirmBtn.textContent = 'Confirm & Add to Sold'; }, 2000);
+
+      // Clear textarea
+      document.getElementById('extraSoldPaste').value = '';
+      document.getElementById('extraSoldPreview').style.display = 'none';
+      parsedExtraSold = [];
+    }
+
+    // ── Boot ──
+    // Load extra sold from storage and merge into sold array
+    function loadExtraSold() {
+      const extra = loadData('carzinc_extra_sold');
+      if (extra.length > 0) {
+        for (const v of extra) {
+          sold.push({ 'Last 6 VIN': v.vin6, 'Vehicle VIN': v.vin || '', 'Stock #': 'AUCTION-' + v.vin6 });
+        }
+        const ts = localStorage.getItem('carzinc_extra_sold_date');
+        document.getElementById('extraSoldStatus').textContent = `${extra.length} auction sales saved (${formatAge(ts)})`;
+      }
+    }
+
+    init();
+    loadExtraSold();
+  })();
+  </script>
+</body>
+</html>

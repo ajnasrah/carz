@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carz Inc - Quick Reference Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            color: #4ade80;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+        }
+
+        .print-button {
+            display: block;
+            margin: 0 auto 30px;
+            padding: 12px 30px;
+            background: #4ade80;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .print-button:hover {
+            background: #22c55e;
+        }
+
+        .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            padding: 10px 20px;
+            background: #333;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .back-button:hover {
+            background: #444;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: #16213e;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 4px solid #4ade80;
+        }
+
+        .card.warning {
+            border-left-color: #facc15;
+        }
+
+        .card.danger {
+            border-left-color: #e94560;
+        }
+
+        .card h2 {
+            color: #4ade80;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+        }
+
+        .card.warning h2 {
+            color: #facc15;
+        }
+
+        .card.danger h2 {
+            color: #e94560;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+
+        th {
+            background: #0f1629;
+            color: #4ade80;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background: rgba(74, 222, 128, 0.1);
+        }
+
+        .formula-box {
+            background: #1a3a1a;
+            border: 2px solid #4ade80;
+            border-radius: 10px;
+            padding: 25px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .formula-box h2 {
+            color: #4ade80;
+            font-size: 1.5em;
+            margin-bottom: 15px;
+        }
+
+        .formula {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #fff;
+            margin: 15px 0;
+        }
+
+        .fee-total {
+            background: #2a2a1a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            text-align: center;
+        }
+
+        .fee-total strong {
+            font-size: 1.3em;
+            color: #facc15;
+        }
+
+        .quick-calc {
+            background: #1a1a3e;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .quick-calc h3 {
+            color: #818cf8;
+            margin-bottom: 15px;
+        }
+
+        .example {
+            background: #0f1629;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .green { color: #4ade80; }
+        .yellow { color: #facc15; }
+        .red { color: #e94560; }
+
+        @media print {
+            body {
+                background: white;
+                color: black;
+                padding: 10px;
+            }
+
+            .print-button, .back-button, #calculator-card {
+                display: none;
+            }
+
+            .card {
+                background: #f5f5f5;
+                break-inside: avoid;
+                border: 1px solid #ccc;
+            }
+
+            .card h2 {
+                color: #333;
+            }
+
+            th {
+                background: #ddd;
+                color: #333;
+            }
+
+            .formula-box {
+                background: #e8f5e9;
+                border-color: #4caf50;
+            }
+
+            .formula-box h2 {
+                color: #2e7d32;
+            }
+
+            .fee-total {
+                background: #fff8e1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a href="index.html" class="back-button">← Back to Course</a>
+
+    <div class="container">
+        <h1>CARZ INC QUICK REFERENCE GUIDE</h1>
+        <p class="subtitle">Wholesale Car Buying - Print This & Keep It Handy</p>
+
+        <button class="print-button" onclick="window.print()">Print / Export PDF</button>
+
+        <!-- INTERACTIVE CALCULATOR - TOP OF PAGE -->
+        <div class="card" style="background: #0a1a0a; border: 2px solid #4ade80; margin-bottom: 20px;" id="calculator-card">
+            <h2 style="color: #4ade80; border-bottom-color: #4ade80;">MAX BID CALCULATOR</h2>
+            <p style="color: #888; margin-bottom: 15px; font-size: 0.9em;">Use Black Book "History Adjusted" value (already accounts for accidents/owners)</p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                <div>
+                    <label style="display: block; margin-bottom: 5px; color: #aaa;">What is this going to sell for? (Black Book Avg)</label>
+                    <input type="number" id="calc-book-top" placeholder="25000" style="width: 100%; padding: 12px; background: #16213e; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 1.1em;">
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px; color: #aaa;">Rehab Estimate (repairs only)</label>
+                    <input type="number" id="calc-rehab-top" placeholder="1500" style="width: 100%; padding: 12px; background: #16213e; border: 1px solid #333; border-radius: 6px; color: #fff; font-size: 1.1em;">
+                </div>
+            </div>
+            <button onclick="calculateMaxBidTop()" style="width: 100%; padding: 15px; background: linear-gradient(135deg, #4ade80, #22c55e); color: #1a1a2e; border: none; border-radius: 6px; font-size: 1.1em; font-weight: bold; cursor: pointer; margin-bottom: 15px;">Calculate Max Bid</button>
+            <div id="calc-result-top" style="background: #1a3a1a; padding: 20px; border-radius: 8px; text-align: center; display: none;">
+                <div style="font-size: 0.9em; color: #aaa; margin-bottom: 5px;">YOUR MAX BID:</div>
+                <div id="calc-max-bid-top" style="font-size: 2.5em; font-weight: bold; color: #4ade80;"></div>
+                <div id="calc-breakdown-top" style="margin-top: 15px; font-size: 0.9em; color: #aaa; text-align: left;"></div>
+            </div>
+            <div style="margin-top: 15px; padding: 12px; background: #1a2a3a; border-radius: 6px; border-left: 3px solid #facc15;">
+                <strong style="color: #facc15;">The $3,000 spread covers:</strong>
+                <span style="color: #aaa;"> ~$1,900 fees (auction, shipping, floor plan, etc.) + ~$1,000 target profit</span>
+            </div>
+        </div>
+
+        <script>
+            function calculateMaxBidTop() {
+                const book = parseFloat(document.getElementById('calc-book-top').value) || 0;
+                const rehab = parseFloat(document.getElementById('calc-rehab-top').value) || 0;
+
+                if (book === 0) {
+                    alert('Please enter a book value');
+                    return;
+                }
+
+                const spread = 3000;
+                const maxBid = book - spread - rehab;
+
+                document.getElementById('calc-max-bid-top').textContent = '$' + maxBid.toLocaleString();
+                document.getElementById('calc-breakdown-top').innerHTML = `
+                    <strong>Breakdown:</strong><br>
+                    $${book.toLocaleString()} (sell price from Black Book)<br>
+                    − $${spread.toLocaleString()} (fees + profit)<br>
+                    ${rehab > 0 ? `− $${rehab.toLocaleString()} (rehab)<br>` : ''}
+                    = <strong style="color: #4ade80;">$${maxBid.toLocaleString()} max bid</strong>
+                `;
+                document.getElementById('calc-result-top').style.display = 'block';
+
+                if (maxBid < 0) {
+                    document.getElementById('calc-max-bid-top').style.color = '#e94560';
+                    document.getElementById('calc-max-bid-top').textContent = 'PASS - No profit possible';
+                } else {
+                    document.getElementById('calc-max-bid-top').style.color = '#4ade80';
+                }
+            }
+        </script>
+
+        <!-- STEP-BY-STEP PROCESS -->
+        <div class="card" style="margin-bottom: 20px; border-left-color: #818cf8;">
+            <h2 style="color: #818cf8;">STEP-BY-STEP: EVALUATING & BUYING A VEHICLE</h2>
+            <table>
+                <tr style="background: rgba(129, 140, 248, 0.1);">
+                    <td style="width: 40px; text-align: center; font-weight: bold; color: #818cf8;">1</td>
+                    <td><strong>Find Vehicle on OVE</strong><br>
+                    <span style="color: #888;">Note: VIN, Year/Make/Model, Mileage, CR Grade, Buy Now price</span></td>
+                </tr>
+                <tr>
+                    <td style="text-align: center; font-weight: bold; color: #818cf8;">2</td>
+                    <td><strong>Pull Autoniq Report</strong><br>
+                    <span style="color: #888;">Enter VIN → Get Black Book History Adjusted AVG<br>
+                    <span class="yellow">Note: 2WD/RWD = LOW DEMAND. Don't stretch on price!</span></span></td>
+                </tr>
+                <tr style="background: rgba(233, 69, 96, 0.2);">
+                    <td style="text-align: center; font-weight: bold; color: #e94560;">3</td>
+                    <td><strong style="color: #e94560;">FIRST CHECK: Is there a $3,000 spread?</strong><br>
+                    <span style="color: #fff;">Book Value − Buy Now Price ≥ $3,000?<br>
+                    <strong class="red">NO → SKIP THIS CAR. Don't waste time. Move on.</strong><br>
+                    <strong class="green">YES → Continue to Step 4</strong></span></td>
+                </tr>
+                <tr>
+                    <td style="text-align: center; font-weight: bold; color: #818cf8;">4</td>
+                    <td><strong>Check History Reports</strong><br>
+                    <span style="color: #888;">Review AutoCheck for accidents, owners, damage<br>
+                    <span class="red">STOP if: Frame damage, Flood, Salvage title</span></span></td>
+                </tr>
+                <tr style="background: rgba(129, 140, 248, 0.1);">
+                    <td style="text-align: center; font-weight: bold; color: #818cf8;">5</td>
+                    <td><strong>Read the CR (Condition Report) - EVERY LINE</strong><br>
+                    <span style="color: #888;">Note all issues: mechanical, body, interior, tires, announcements</span></td>
+                </tr>
+                <tr>
+                    <td style="text-align: center; font-weight: bold; color: #818cf8;">6</td>
+                    <td><strong>Estimate Rehab Costs</strong><br>
+                    <span style="color: #888;">Add up all repairs from CR<br>
+                    For major parts: Check <strong>Car-Part.com</strong><br>
+                    <span class="yellow">Target: Under $3,000 total rehab</span></span></td>
+                </tr>
+                <tr style="background: rgba(74, 222, 128, 0.2);">
+                    <td style="text-align: center; font-weight: bold; color: #4ade80;">7</td>
+                    <td><strong>FINAL MAX BID = Book Value − $3,000 − Rehab</strong><br>
+                    <span style="color: #888;">The $3,000 covers fees + profit. Rehab is EXTRA on top.</span></td>
+                </tr>
+                <tr>
+                    <td style="text-align: center; font-weight: bold; color: #818cf8;">8</td>
+                    <td><strong>Compare to Buy Now Price</strong><br>
+                    <span style="color: #888;">Buy Now ≤ Max Bid? → <span class="green">BUY IT</span><br>
+                    Buy Now > Max Bid? → <span class="red">PASS</span></span></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- THE FORMULA -->
+        <div class="formula-box">
+            <h2>THE MAX BID FORMULA</h2>
+            <div class="formula">
+                Max Bid = Average Book Value - $3,000 - Rehab Costs
+            </div>
+            <p>Example: $25,000 book - $3,000 spread - $1,500 rehab = <strong>$20,500 Max Bid</strong></p>
+        </div>
+
+        <!-- HOW TO CALCULATE SELL PRICE -->
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>HOW TO FIND "WHAT IT WILL SELL FOR" (Autoniq)</h2>
+            <p style="margin-bottom: 15px;">Pull Autoniq for the vehicle. Use the <strong>Black Book AVERAGE</strong> as your baseline:</p>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                <div style="background: #0f1629; padding: 15px; border-radius: 8px; border-left: 4px solid #4ade80;">
+                    <h4 style="color: #4ade80; margin-bottom: 10px;">Black Book (USE THIS)</h4>
+                    <table style="width: 100%; font-size: 0.9em;">
+                        <tr><td>XClean:</td><td style="text-align: right;">$17,675</td></tr>
+                        <tr><td>Clean:</td><td style="text-align: right;">$15,800</td></tr>
+                        <tr style="background: rgba(74, 222, 128, 0.2);"><td><strong>Average:</strong></td><td style="text-align: right;"><strong>$14,100</strong> ← USE THIS</td></tr>
+                        <tr><td>Rough:</td><td style="text-align: right;">$12,750</td></tr>
+                    </table>
+                </div>
+
+                <div style="background: #0f1629; padding: 15px; border-radius: 8px; border-left: 4px solid #818cf8;">
+                    <h4 style="color: #818cf8; margin-bottom: 10px;">Other Values (Reference Only)</h4>
+                    <table style="width: 100%; font-size: 0.9em;">
+                        <tr><td>MMR:</td><td style="text-align: right;">$17,700</td><td style="color: #888; font-size: 0.8em;">Assumes Grade 4.0</td></tr>
+                        <tr><td>J.D. Power Trade-In:</td><td style="text-align: right;">$19,125</td><td style="color: #888; font-size: 0.8em;">Use this, NOT retail</td></tr>
+                        <tr><td>Retail Index:</td><td style="text-align: right;">$24,596</td><td style="color: #888; font-size: 0.8em;">Ignore - dealer list price</td></tr>
+                    </table>
+                </div>
+            </div>
+
+            <div style="background: #1a2a1a; padding: 15px; border-radius: 8px;">
+                <strong style="color: #4ade80;">Quick Rules:</strong>
+                <ul style="margin: 10px 0 0 20px;">
+                    <li><strong>CR Grade 3.0+:</strong> Use Black Book <strong>Average</strong></li>
+                    <li><strong>CR Grade 2.0-2.9:</strong> Use Black Book <strong>Average</strong> or between Avg/Rough</li>
+                    <li><strong>CR Grade 1.0-1.9:</strong> Use Black Book <strong>Rough</strong></li>
+                </ul>
+                <div style="margin-top: 15px; padding: 10px; background: #1a2a1a; border-radius: 5px; border-left: 3px solid #4ade80;">
+                    <strong style="color: #4ade80;">DEMAND IS #1:</strong> Book value already adjusts for 2WD vs 4WD. The real difference is how fast it sells. Target HIGH DEMAND configs!
+                </div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- FEE BREAKDOWN -->
+            <div class="card">
+                <h2>FEE BREAKDOWN (~$1,900 Total)</h2>
+                <table>
+                    <tr>
+                        <th>Fee Type</th>
+                        <th>Amount</th>
+                    </tr>
+                    <tr>
+                        <td>Office Fees</td>
+                        <td>$200</td>
+                    </tr>
+                    <tr>
+                        <td>Shipping (500mi × $0.80)</td>
+                        <td>$400</td>
+                    </tr>
+                    <tr>
+                        <td>Lot Fees</td>
+                        <td>$200</td>
+                    </tr>
+                    <tr>
+                        <td>Auction Buy Fee</td>
+                        <td>$700</td>
+                    </tr>
+                    <tr>
+                        <td>Auction Sell Fee</td>
+                        <td>$200</td>
+                    </tr>
+                    <tr>
+                        <td>Floor Plan (avg)</td>
+                        <td>$200</td>
+                    </tr>
+                </table>
+                <div class="fee-total">
+                    <strong>Total Fees: ~$1,900</strong><br>
+                    <span style="color: #888;">+ $1,000 profit = $2,900 → Round to $3,000 spread</span>
+                </div>
+            </div>
+
+            <!-- REHAB COSTS -->
+            <div class="card warning">
+                <h2>REHAB COST GUIDE (Target Under $3,000)</h2>
+                <p style="background: #3a2a0a; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-size: 0.9em;">
+                    <strong>NOTE:</strong> These are REHAB ONLY costs (fixing the vehicle). Fees like auction, shipping, floor plan are separate and already included in the $3,000 spread.
+                </p>
+                <table>
+                    <tr>
+                        <th>Item</th>
+                        <th>Cost</th>
+                    </tr>
+                    <tr>
+                        <td>Body Work (per panel)</td>
+                        <td>$300-400</td>
+                    </tr>
+                    <tr>
+                        <td>Hail Damage PDR (per panel)</td>
+                        <td>$400-500</td>
+                    </tr>
+                    <tr>
+                        <td>Seat Reupholster/Replace</td>
+                        <td>$300 each</td>
+                    </tr>
+                    <tr>
+                        <td>Full Detail (interior)</td>
+                        <td>$200-300</td>
+                    </tr>
+                    <tr>
+                        <td>Tires (set of 4)</td>
+                        <td>$600-1,000</td>
+                    </tr>
+                    <tr>
+                        <td>Brakes (all 4)</td>
+                        <td>$400-800</td>
+                    </tr>
+                    <tr>
+                        <td>Wheel Refinish (each)</td>
+                        <td>$75-150</td>
+                    </tr>
+                    <tr>
+                        <td>AC Repair</td>
+                        <td>$200-1,200</td>
+                    </tr>
+                    <tr>
+                        <td>Check Engine - Minor</td>
+                        <td>$100-500</td>
+                    </tr>
+                    <tr>
+                        <td>Check Engine - Major</td>
+                        <td>$500-3,000</td>
+                    </tr>
+                    <tr>
+                        <td>Ozone Treatment (odor)</td>
+                        <td>$200-500</td>
+                    </tr>
+                    <tr>
+                        <td>Smart Key Replacement</td>
+                        <td>$200-400</td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- MAJOR MECHANICAL -->
+            <div class="card danger">
+                <h2>MAJOR MECHANICAL (Use Car-Part.com)</h2>
+                <table>
+                    <tr>
+                        <th>Item</th>
+                        <th>Typical Range</th>
+                    </tr>
+                    <tr>
+                        <td>Used Engine (installed)</td>
+                        <td>$3,000-6,000</td>
+                    </tr>
+                    <tr>
+                        <td>Used Transmission (installed)</td>
+                        <td>$2,500-5,000</td>
+                    </tr>
+                    <tr>
+                        <td>Differential</td>
+                        <td>$1,000-2,500</td>
+                    </tr>
+                    <tr>
+                        <td>Transfer Case</td>
+                        <td>$800-2,000</td>
+                    </tr>
+                </table>
+                <p style="margin-top: 15px; color: #e94560;">
+                    <strong>ALWAYS check Car-Part.com</strong> for actual part prices before bidding!
+                </p>
+            </div>
+
+            <!-- HISTORY DEDUCTIONS -->
+            <div class="card danger">
+                <h2>HISTORY REPORT DEDUCTIONS</h2>
+                <table>
+                    <tr>
+                        <th>Issue</th>
+                        <th>Deduct from Sales Price</th>
+                    </tr>
+                    <tr>
+                        <td>Minor Accident</td>
+                        <td>$500-1,500</td>
+                    </tr>
+                    <tr>
+                        <td>Moderate Accident</td>
+                        <td>$2,000-4,000</td>
+                    </tr>
+                    <tr>
+                        <td>Previous Hail (repaired)</td>
+                        <td>$1,500-2,500</td>
+                    </tr>
+                    <tr>
+                        <td>Airbag Deployed</td>
+                        <td>$3,000-5,000</td>
+                    </tr>
+                    <tr style="background: #4a1515;">
+                        <td><strong>Frame Damage</strong></td>
+                        <td><strong>DO NOT BUY</strong></td>
+                    </tr>
+                    <tr style="background: #4a1515;">
+                        <td><strong>Flood</strong></td>
+                        <td><strong>DO NOT BUY</strong></td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- CR GRADE -->
+            <div class="card">
+                <h2>CR GRADE SCALE (We Target 1.0-3.0)</h2>
+                <table>
+                    <tr>
+                        <th>Grade</th>
+                        <th>Condition</th>
+                        <th>Our Action</th>
+                    </tr>
+                    <tr style="background: rgba(74, 222, 128, 0.2);">
+                        <td>1.0-1.9</td>
+                        <td>Rough/Damaged</td>
+                        <td class="green">BIG DISCOUNT - Evaluate carefully</td>
+                    </tr>
+                    <tr style="background: rgba(74, 222, 128, 0.2);">
+                        <td>2.0-2.9</td>
+                        <td>Below Average</td>
+                        <td class="green">OUR SWEET SPOT</td>
+                    </tr>
+                    <tr style="background: rgba(250, 204, 21, 0.2);">
+                        <td>3.0-3.4</td>
+                        <td>Average</td>
+                        <td class="yellow">Consider if price is right</td>
+                    </tr>
+                    <tr>
+                        <td>3.5-3.9</td>
+                        <td>Above Average</td>
+                        <td>Usually too expensive for us</td>
+                    </tr>
+                    <tr>
+                        <td>4.0-5.0</td>
+                        <td>Clean/Excellent</td>
+                        <td>Premium price - skip</td>
+                    </tr>
+                </table>
+                <p style="margin-top: 10px; color: #facc15;">
+                    <strong>MMR assumes Grade 4.0</strong> - Lower grades = opportunity!
+                </p>
+            </div>
+
+            <!-- CHECKLIST -->
+            <div class="card">
+                <h2>PRE-BID CHECKLIST</h2>
+                <table>
+                    <tr><td>☐ Pulled Carfax AND AutoCheck?</td></tr>
+                    <tr><td>☐ Calculated average book value (Autoniq)?</td></tr>
+                    <tr><td>☐ Read EVERY line of the CR?</td></tr>
+                    <tr><td>☐ Estimated rehab costs (under $3,000)?</td></tr>
+                    <tr><td>☐ Checked Car-Part.com for major parts?</td></tr>
+                    <tr><td>☐ Spread is at least $3,000?</td></tr>
+                    <tr><td>☐ No frame, flood, or salvage?</td></tr>
+                    <tr><td>☐ Transport arranged/priced?</td></tr>
+                    <tr><td>☐ Popular configuration (4WD, crew cab)?</td></tr>
+                    <tr><td>☐ Calculated max bid and WROTE IT DOWN?</td></tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- QUICK EXAMPLES -->
+        <div class="quick-calc">
+            <h3>QUICK CALCULATION EXAMPLES</h3>
+            <div class="grid">
+                <div class="example">
+                    <strong class="green">Ready to Go</strong><br>
+                    Book: $30,000<br>
+                    - $3,000 spread<br>
+                    - $0 rehab<br>
+                    = <strong>$27,000 max bid</strong>
+                </div>
+                <div class="example">
+                    <strong class="yellow">Light Rehab</strong><br>
+                    Book: $30,000<br>
+                    - $3,000 spread<br>
+                    - $1,500 rehab<br>
+                    = <strong>$25,500 max bid</strong>
+                </div>
+                <div class="example">
+                    <strong class="yellow">Moderate Rehab</strong><br>
+                    Book: $30,000<br>
+                    - $3,000 spread<br>
+                    - $2,500 rehab<br>
+                    = <strong>$24,500 max bid</strong>
+                </div>
+                <div class="example">
+                    <strong class="red">Minor Accident + Rehab</strong><br>
+                    Book: $30,000<br>
+                    - $1,500 accident deduct<br>
+                    - $3,000 spread<br>
+                    - $1,000 rehab<br>
+                    = <strong>$24,500 max bid</strong>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 30px; padding: 20px; background: #0f1629; border-radius: 10px;">
+            <p style="font-size: 1.2em; color: #4ade80;">
+                <strong>YOUR PROFIT IS MADE WHEN YOU BUY, NOT WHEN YOU SELL.</strong>
+            </p>
+            <p style="color: #888; margin-top: 10px;">
+                If the numbers don't work at purchase, walk away. There's always another truck.
+            </p>
+        </div>
+
+        <button class="print-button" onclick="window.print()" style="margin-top: 30px;">Print / Export PDF</button>
+    </div>
+</body>
+</html>
