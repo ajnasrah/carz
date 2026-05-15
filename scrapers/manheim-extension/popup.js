@@ -278,30 +278,44 @@ async function processPDFFile(file) {
     data.location = locationMatch[1].trim();
   }
 
-  // Extract damages - improved pattern matching
+  // Extract damages - improved pattern matching for Manheim format
   const lines = text.split('\n');
+  let inDamagesSection = false;
+  
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i].trim();
 
-    // Match damage patterns like "Front Bumper| Dent/Paint Dmg"
-    const damageMatch = line.match(/([A-Z]{1,2}\s+(?:Door|Fender|Bumper|Panel|Quarter|Wheel|Seat|Armrest|Grille|Tailgate|Hood|Roof|Bed|Side))[|\s]+((?:Dent|Scratch|Crack|Worn|Torn|Stained|Curb Rash|Prev Repair|Mult Dents|Misaligned|Paint Dmg|No Paint Dmg)(?:\/[A-Za-z\s]+)?)/i);
+    // Look for DAMAGES section header
+    if (line.toLowerCase().includes('damages') || line.toLowerCase() === 'damages') {
+      inDamagesSection = true;
+      continue;
+    }
+    
+    // Exit damages section if we hit another section
+    if (inDamagesSection && line.match(/^(DISCLOSURES|SEATING|OPTIONS|ANNOUNCEMENTS|TIRES)/i)) {
+      break;
+    }
 
-    if (damageMatch) {
-      const location = damageMatch[1].trim();
-      const type = damageMatch[2].trim();
-
-      // Check next line for severity
-      let severity = '';
-      if (i + 1 < lines.length) {
-        const severityMatch = lines[i + 1].match(/severity:\s*(.+)/i);
-        if (severityMatch) {
-          severity = ` (${severityMatch[1].trim()})`;
+    // Extract damages in the format: "Windshield | Cracked" or "Front Bumper Cover | Misaligned"
+    if (inDamagesSection) {
+      const pipeMatch = line.match(/^([A-Za-z\s]+[A-Za-z])\s*\|\s*([A-Za-z\s]+)$/);
+      if (pipeMatch) {
+        const location = pipeMatch[1].trim();
+        const type = pipeMatch[2].trim();
+        
+        // Check next line for severity
+        let severity = '';
+        if (i + 1 < lines.length) {
+          const severityMatch = lines[i + 1].match(/severity[:\s]+(.+)/i);
+          if (severityMatch) {
+            severity = ` (${severityMatch[1].trim()})`;
+          }
         }
-      }
 
-      const damageStr = `${location} - ${type}${severity}`;
-      if (!data.damages.includes(damageStr)) {
-        data.damages.push(damageStr);
+        const damageStr = `${location} - ${type}${severity}`;
+        if (!data.damages.includes(damageStr)) {
+          data.damages.push(damageStr);
+        }
       }
     }
   }
@@ -1262,6 +1276,87 @@ async function scrapePage() {
     }
   } catch (e) {
     console.error('scrapePage: Error extracting images:', e);
+  }
+
+  // Extract damages from page
+  try {
+    console.log('scrapePage: Extracting damages...');
+    
+    // Look for DAMAGES section in the page
+    const damageSelectors = [
+      '[class*="damage"]',
+      '[class*="condition"]', 
+      '[data-test*="damage"]',
+      '[data-test*="condition"]'
+    ];
+    
+    // First try to find damages in structured elements
+    for (const selector of damageSelectors) {
+      const elements = document.querySelectorAll(selector);
+      console.log(`scrapePage: Checking damage selector "${selector}": found ${elements.length} elements`);
+      
+      elements.forEach(el => {
+        const text = el.textContent.trim();
+        // Look for pipe-separated damage format: "Location | Type"
+        const pipeMatch = text.match(/^([A-Za-z\s]+[A-Za-z])\s*\|\s*([A-Za-z\s]+)$/);
+        if (pipeMatch) {
+          const location = pipeMatch[1].trim();
+          const type = pipeMatch[2].trim();
+          const damageStr = `${location} - ${type}`;
+          if (!data.damages.includes(damageStr)) {
+            data.damages.push(damageStr);
+            console.log('scrapePage: Found damage in DOM:', damageStr);
+          }
+        }
+      });
+    }
+    
+    // Also scan body text for DAMAGES section
+    const lines = bodyText.split('\n');
+    let inDamagesSection = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Look for DAMAGES section header
+      if (line.toLowerCase().includes('damages') || line.toLowerCase() === 'damages') {
+        inDamagesSection = true;
+        continue;
+      }
+      
+      // Exit damages section if we hit another section
+      if (inDamagesSection && line.match(/^(DISCLOSURES|SEATING|OPTIONS|ANNOUNCEMENTS|TIRES)/i)) {
+        break;
+      }
+      
+      // Extract damages in pipe format
+      if (inDamagesSection) {
+        const pipeMatch = line.match(/^([A-Za-z\s]+[A-Za-z])\s*\|\s*([A-Za-z\s]+)$/);
+        if (pipeMatch) {
+          const location = pipeMatch[1].trim();
+          const type = pipeMatch[2].trim();
+          
+          // Check next line for severity
+          let severity = '';
+          if (i + 1 < lines.length) {
+            const severityMatch = lines[i + 1].match(/severity[:\s]+(.+)/i);
+            if (severityMatch) {
+              severity = ` (${severityMatch[1].trim()})`;
+            }
+          }
+          
+          const damageStr = `${location} - ${type}${severity}`;
+          if (!data.damages.includes(damageStr)) {
+            data.damages.push(damageStr);
+            console.log('scrapePage: Found damage in body text:', damageStr);
+          }
+        }
+      }
+    }
+    
+    console.log('scrapePage: Damage extraction complete - found', data.damages.length, 'damages');
+  } catch (e) {
+    console.error('scrapePage: Error extracting damages:', e);
   }
 
   // Extract announcements and remarks

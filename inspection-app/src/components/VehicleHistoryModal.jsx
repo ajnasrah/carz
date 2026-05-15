@@ -131,18 +131,24 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-3xl w-full max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b">
+    <div 
+      className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-slate-900 border border-slate-700 rounded-xl max-w-3xl w-full max-h-[80vh] flex flex-col shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-slate-700">
           <div>
-            <h2 className="text-xl font-semibold">Vehicle History</h2>
-            <p className="text-sm text-gray-600 mt-1">
+            <h2 className="text-xl font-semibold text-emerald-400">Vehicle History</h2>
+            <p className="text-sm text-slate-400 mt-1">
               Stock: {stockNumber} {vin && `• VIN: ${vin}`}
             </p>
             {currentLocation && (
-              <p className="text-sm text-gray-600 mt-1">
+              <p className="text-sm text-slate-400 mt-1">
                 Current Location:{" "}
-                <span className="font-medium">
+                <span className="font-medium text-white">
                   {currentLocation.physical_location || "Unknown"}
                 </span>
                 {currentLocation.sa_status &&
@@ -156,7 +162,7 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg"
+            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"
           >
             <X className="h-5 w-5" />
           </button>
@@ -165,10 +171,10 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
         <div className="flex-1 overflow-y-auto p-4">
           {loading ? (
             <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400"></div>
             </div>
           ) : history.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-slate-400">
               No history records found
             </div>
           ) : (
@@ -179,12 +185,12 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
                     <div
                       className={`p-2 rounded-full ${
                         event.event_type.includes("sold")
-                          ? "bg-green-100 text-green-600"
+                          ? "bg-green-500/20 text-green-400"
                           : event.event_type.includes("service")
-                            ? "bg-orange-100 text-orange-600"
+                            ? "bg-orange-500/20 text-orange-400"
                             : event.event_type.includes("transport")
-                              ? "bg-blue-100 text-blue-600"
-                              : "bg-gray-100 text-gray-600"
+                              ? "bg-blue-500/20 text-blue-400"
+                              : "bg-slate-800 text-slate-400"
                       }`}
                     >
                       <Icon eventType={event.event_type} />
@@ -194,25 +200,25 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
                   <div className="flex-1">
                     <div className="flex items-start justify-between">
                       <div>
-                        <p className="font-medium text-gray-900">
+                        <p className="font-medium text-white">
                           {eventLabels[event.event_type] || event.event_type}
                         </p>
-                        <p className="text-sm text-gray-600 mt-1">
+                        <p className="text-sm text-slate-400 mt-1">
                           {getEventDescription(event)}
                         </p>
                         {event.event_data &&
                           Object.keys(event.event_data).length > 0 && (
                             <details className="mt-2">
-                              <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                              <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300">
                                 Additional details
                               </summary>
-                              <pre className="text-xs text-gray-600 mt-1 p-2 bg-gray-50 rounded overflow-x-auto">
+                              <pre className="text-xs text-slate-400 mt-1 p-2 bg-slate-800 rounded overflow-x-auto">
                                 {JSON.stringify(event.event_data, null, 2)}
                               </pre>
                             </details>
                           )}
                       </div>
-                      <div className="text-right text-sm text-gray-500 ml-4 flex-shrink-0">
+                      <div className="text-right text-sm text-slate-500 ml-4 flex-shrink-0">
                         <div>{formatDate(event.created_at)}</div>
                         {event.created_by && (
                           <div className="text-xs mt-1">
@@ -223,7 +229,7 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
                     </div>
 
                     {idx < history.length - 1 && (
-                      <div className="border-l-2 border-gray-200 ml-4 h-4 mt-2"></div>
+                      <div className="border-l-2 border-slate-700 ml-4 h-4 mt-2"></div>
                     )}
                   </div>
                 </div>

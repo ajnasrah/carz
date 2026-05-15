@@ -426,6 +426,13 @@
       config.log('No inventory found - sync inventory first to identify YOUR vehicles', 'warn');
     }
     
+    // Debug logging
+    console.log('UAX Post-Sale Processing:', {
+      presaleCount: stored.uaxPresaleStocks.length,
+      firstPresale: stored.uaxPresaleStocks[0],
+      hasVin: stored.uaxPresaleStocks[0]?.vin ? 'YES' : 'NO'
+    });
+    
     // Check ALL presale vehicles against post-sale for market analysis
     const sold = [];
     const noSale = [];
@@ -460,6 +467,7 @@
           year: postSale.year || presaleStock.year,
           make: postSale.make || presaleStock.make,
           model: postSale.model || presaleStock.model,
+          vin: presaleStock.vin,  // ADD VIN HERE!
           price: postSale.price,
           lane: postSale.lane,
           grade: postSale.grade,
@@ -476,6 +484,7 @@
           year: presaleStock.year,
           make: presaleStock.make,
           model: presaleStock.model,
+          vin: presaleStock.vin,  // ADD VIN HERE!
           lane: presaleStock.lane,
           isYours: isYours
         });
@@ -486,6 +495,28 @@
     }
     
     config.log(`Market: ${sold.length} SOLD, ${noSale.length} NO SALE | YOUR: ${yourSoldCount} sold, ${yourNoSaleCount} no sale, $${yourRevenue.toLocaleString()} revenue`, 'ok');
+    
+    // Auto-remove sold vehicles from queue
+    const yourSoldVins = sold.filter(v => v.isYours).map(v => v.vin).filter(Boolean);
+    if (yourSoldVins.length > 0) {
+      let removedCount = 0;
+      try {
+        for (const vin of yourSoldVins) {
+          const last6 = vin.slice(-6);
+          const response = await fetch(`http://localhost:7749/queue/mark-sold/${last6}`, { method: 'POST' });
+          if (response.ok) {
+            removedCount++;
+            config.log(`Marked ${last6} as sold - removed from queue and deleted photos`, 'ok');
+          }
+          // Skip 404s silently - vehicle not in queue
+        }
+        if (removedCount > 0) {
+          config.log(`Auto-removed ${removedCount} sold vehicles from queue`, 'ok');
+        }
+      } catch (err) {
+        config.log(`Error auto-removing sold vehicles: ${err.message}`, 'warn');
+      }
+    }
     
     // Show summary
     showSummary('UAX SALE RESULTS', sold.length, stored.uaxPresaleStocks.length, 0, 0, 0);
@@ -563,10 +594,12 @@
     html += '<div style="padding:8px;background:#e8f5e9;border-left:3px solid #2e7d32;border-radius:4px;margin-bottom:6px;">';
     html += `<div style="font-size:12px;font-weight:700;color:#2e7d32;margin-bottom:6px;">YOUR CARS SOLD (${yourSold.length})</div>`;
     if (yourSold.length > 0) {
-      html += `<button class="btn btn-small copy-your-sold" style="background:#2e7d32;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;">Copy UAX Stock #s</button>`;
+      html += `<button class="btn btn-small copy-your-sold" style="background:#2e7d32;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;margin-right:4px;">Copy UAX Stock #s</button>`;
+      html += `<button class="btn btn-small copy-your-sold-vins" style="background:#1976d2;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;">Copy VINs</button>`;
       html += '<div style="max-height:120px;overflow-y:auto;font-size:11px;background:white;padding:4px;border-radius:3px;">';
       for (const v of yourSold) {
-        html += `<div>UAX #${v.stock} - ${v.year} ${v.make} ${v.model} - $${v.price.toLocaleString()}</div>`;
+        const vinDisplay = v.vin ? ` · VIN: ${v.vin}` : '';
+        html += `<div>UAX #${v.stock} - ${v.year} ${v.make} ${v.model} - $${v.price.toLocaleString()}${vinDisplay}</div>`;
       }
       html += '</div>';
     } else {
@@ -578,10 +611,12 @@
     html += '<div style="padding:8px;background:#fff3e0;border-left:3px solid #ef6c00;border-radius:4px;margin-bottom:6px;">';
     html += `<div style="font-size:12px;font-weight:700;color:#ef6c00;margin-bottom:6px;">YOUR CARS NO SALE (${yourNoSale.length})</div>`;
     if (yourNoSale.length > 0) {
-      html += `<button class="btn btn-small copy-your-nosale" style="background:#ef6c00;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;">Copy UAX Stock #s</button>`;
+      html += `<button class="btn btn-small copy-your-nosale" style="background:#ef6c00;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;margin-right:4px;">Copy UAX Stock #s</button>`;
+      html += `<button class="btn btn-small copy-your-nosale-vins" style="background:#ff9800;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;">Copy VINs</button>`;
       html += '<div style="max-height:120px;overflow-y:auto;font-size:11px;background:white;padding:4px;border-radius:3px;">';
       for (const v of yourNoSale) {
-        html += `<div>UAX #${v.stock} - ${v.year} ${v.make} ${v.model}</div>`;
+        const vinDisplay = v.vin ? ` · VIN: ${v.vin}` : '';
+        html += `<div>UAX #${v.stock} - ${v.year} ${v.make} ${v.model}${vinDisplay}</div>`;
       }
       html += '</div>';
     } else {
@@ -654,7 +689,21 @@
         const stocks = yourSold.map(v => v.stock).join('\n');
         navigator.clipboard.writeText(stocks).then(() => {
           yourSoldBtn.textContent = 'Copied!';
-          setTimeout(() => { yourSoldBtn.textContent = 'Copy Stock Numbers'; }, 1500);
+          setTimeout(() => { yourSoldBtn.textContent = 'Copy UAX Stock #s'; }, 1500);
+        });
+      });
+    }
+    
+    // Copy VINs for sold vehicles
+    const yourSoldVinsBtn = panel.querySelector('.copy-your-sold-vins');
+    if (yourSoldVinsBtn) {
+      yourSoldVinsBtn.addEventListener('click', () => {
+        console.log('Copy VINs clicked. YourSold data:', yourSold);
+        console.log('First vehicle VIN:', yourSold[0]?.vin);
+        const vins = yourSold.map(v => v.vin || `NO_VIN_${v.stock}`).join('\n');
+        navigator.clipboard.writeText(vins).then(() => {
+          yourSoldVinsBtn.textContent = 'Copied VINs!';
+          setTimeout(() => { yourSoldVinsBtn.textContent = 'Copy VINs'; }, 1500);
         });
       });
     }
@@ -665,7 +714,19 @@
         const stocks = yourNoSale.map(v => v.stock).join('\n');
         navigator.clipboard.writeText(stocks).then(() => {
           yourNoSaleBtn.textContent = 'Copied!';
-          setTimeout(() => { yourNoSaleBtn.textContent = 'Copy Stock Numbers'; }, 1500);
+          setTimeout(() => { yourNoSaleBtn.textContent = 'Copy UAX Stock #s'; }, 1500);
+        });
+      });
+    }
+    
+    // Copy VINs for no-sale vehicles
+    const yourNoSaleVinsBtn = panel.querySelector('.copy-your-nosale-vins');
+    if (yourNoSaleVinsBtn) {
+      yourNoSaleVinsBtn.addEventListener('click', () => {
+        const vins = yourNoSale.map(v => v.vin || `NO_VIN_${v.stock}`).join('\n');
+        navigator.clipboard.writeText(vins).then(() => {
+          yourNoSaleVinsBtn.textContent = 'Copied VINs!';
+          setTimeout(() => { yourNoSaleVinsBtn.textContent = 'Copy VINs'; }, 1500);
         });
       });
     }
@@ -773,6 +834,254 @@
     config.log(`Exported UAX analysis: ${sold.length} sold, ${noSale.length} no sale`, 'ok');
   }
 
+  // Handle DAA Post-Sale data - compare YOUR presale list with post-sale results
+  async function handleDaaPostSale(file) {
+    // Clear previous results
+    const summaryEl = document.getElementById('luSummaryBanner');
+    const panelEl = document.getElementById('luMatchedPanel');
+    if (summaryEl) summaryEl.innerHTML = '';
+    if (panelEl) panelEl.innerHTML = '';
+    
+    const text = await file.text();
+    const rows = parseCSV(text);
+    config.log(`Parsed ${rows.length} DAA Post-Sale rows`);
+    
+    // Get stored presale data (from DAA Run upload)
+    const stored = await chrome.storage.local.get(['daaPresaleStocks', 'inventory']);
+    
+    if (!stored.daaPresaleStocks || stored.daaPresaleStocks.length === 0) {
+      config.log('No DAA presale data found - upload DAA Run list first!', 'warn');
+      if (panelEl) {
+        panelEl.innerHTML = `<div style="padding:12px;background:#fff3e0;border-radius:4px;color:#ef6c00;text-align:center;">
+          <div style="font-size:14px;font-weight:600;margin-bottom:6px;">⚠️ No DAA Run List Found</div>
+          <div style="font-size:11px;">Please upload yesterday's DAA Run list first (blue DAA Run button), then upload the post-sale results.</div>
+        </div>`;
+      }
+      return;
+    }
+    
+    // Create map of post-sale results
+    const postSaleMap = new Map();
+    for (const r of rows) {
+      const stockNum = (r['Stock #'] || r['Stock Number'] || '').trim();
+      const price = toNumber(r.Price || r['Sale Price']);
+      if (stockNum) {
+        postSaleMap.set(stockNum, {
+          sold: price && price > 0,
+          price: price || 0,
+          year: r.Year,
+          make: r.Make,
+          model: r.Model,
+          lane: r.Lane,
+          grade: toNumber(r.Grade)
+        });
+      }
+    }
+    
+    // Get YOUR vehicles by VIN matching
+    const yourVins = new Set();
+    const yourLast6 = new Set();
+    if (stored.inventory && stored.inventory.length > 0) {
+      for (const inv of stored.inventory) {
+        const vin = inv.vehicle_vin || inv.vin || inv.VIN;
+        if (vin) {
+          yourVins.add(String(vin).toUpperCase());
+          yourLast6.add(String(vin).slice(-6).toUpperCase());
+        }
+      }
+      config.log(`Your inventory has ${yourVins.size} VINs loaded for matching`, 'ok');
+    } else {
+      config.log('No inventory found - sync inventory first to identify YOUR vehicles', 'warn');
+    }
+    
+    // Check ALL presale vehicles against post-sale for market analysis
+    const sold = [];
+    const noSale = [];
+    let totalRevenue = 0;
+    let yourRevenue = 0;
+    let yourSoldCount = 0;
+    let yourNoSaleCount = 0;
+    
+    for (const presaleStock of stored.daaPresaleStocks) {
+      const stockStr = String(presaleStock.stock).trim();
+      const postSale = postSaleMap.get(stockStr);
+      
+      // Check if this is YOUR vehicle by VIN
+      let isYours = false;
+      if (presaleStock.vin) {
+        const vinUpper = presaleStock.vin.toUpperCase();
+        const last6 = vinUpper.slice(-6);
+        isYours = yourVins.has(vinUpper) || yourLast6.has(last6);
+      }
+      
+      if (postSale && postSale.sold) {
+        sold.push({
+          stock: stockStr,
+          year: postSale.year || presaleStock.year,
+          make: postSale.make || presaleStock.make,
+          model: postSale.model || presaleStock.model,
+          vin: presaleStock.vin,
+          price: postSale.price,
+          lane: postSale.lane,
+          grade: postSale.grade,
+          isYours: isYours
+        });
+        totalRevenue += postSale.price;
+        if (isYours) {
+          yourRevenue += postSale.price;
+          yourSoldCount++;
+        }
+      } else {
+        noSale.push({
+          stock: stockStr,
+          year: presaleStock.year,
+          make: presaleStock.make,
+          model: presaleStock.model,
+          vin: presaleStock.vin,
+          lane: presaleStock.lane,
+          isYours: isYours
+        });
+        if (isYours) {
+          yourNoSaleCount++;
+        }
+      }
+    }
+    
+    config.log(`Market: ${sold.length} SOLD, ${noSale.length} NO SALE | YOUR: ${yourSoldCount} sold, ${yourNoSaleCount} no sale, $${yourRevenue.toLocaleString()} revenue`, 'ok');
+    
+    // Auto-remove sold vehicles from queue (same as UAX)
+    const yourSoldVins = sold.filter(v => v.isYours).map(v => v.vin).filter(Boolean);
+    if (yourSoldVins.length > 0) {
+      let removedCount = 0;
+      try {
+        for (const vin of yourSoldVins) {
+          const last6 = vin.slice(-6);
+          const response = await fetch(`http://localhost:7749/queue/mark-sold/${last6}`, { method: 'POST' });
+          if (response.ok) {
+            removedCount++;
+            config.log(`Marked ${last6} as sold - removed from queue and deleted photos`, 'ok');
+          }
+        }
+        if (removedCount > 0) {
+          config.log(`Auto-removed ${removedCount} sold vehicles from queue`, 'ok');
+        }
+      } catch (err) {
+        config.log(`Error auto-removing sold vehicles: ${err.message}`, 'warn');
+      }
+    }
+    
+    // Show summary
+    showSummary('DAA SALE RESULTS', sold.length, stored.daaPresaleStocks.length, 0, 0, 0);
+    
+    // Render results with market analysis and YOUR vehicles highlighted
+    renderDaaSaleResults(sold, noSale, totalRevenue, yourSoldCount, yourNoSaleCount, yourRevenue);
+  }
+
+  function renderDaaSaleResults(sold, noSale, totalRevenue, yourSoldCount, yourNoSaleCount, yourRevenue) {
+    const panel = document.getElementById('luMatchedPanel');
+    if (!panel) return;
+    
+    // Separate YOUR vehicles
+    const yourSold = sold.filter(v => v.isYours);
+    const yourNoSale = noSale.filter(v => v.isYours);
+    
+    let html = '<div style="padding:8px;background:#f5f5f5;border-radius:4px;margin-bottom:6px;">';
+    
+    // 1. YOUR CARS SOLD
+    html += '<div style="padding:8px;background:#e8f5e9;border-left:3px solid #2e7d32;border-radius:4px;margin-bottom:6px;">';
+    html += `<div style="font-size:12px;font-weight:700;color:#2e7d32;margin-bottom:6px;">YOUR CARS SOLD (${yourSold.length})</div>`;
+    if (yourSold.length > 0) {
+      html += `<button class="btn btn-small copy-your-sold" style="background:#2e7d32;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;margin-right:4px;">Copy DAA Stock #s</button>`;
+      html += `<button class="btn btn-small copy-your-sold-vins" style="background:#1976d2;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;">Copy VINs</button>`;
+      html += '<div style="max-height:120px;overflow-y:auto;font-size:11px;background:white;padding:4px;border-radius:3px;">';
+      for (const v of yourSold) {
+        const vinDisplay = v.vin ? ` · VIN: ${v.vin}` : '';
+        html += `<div>DAA #${v.stock} - ${v.year} ${v.make} ${v.model} - $${v.price.toLocaleString()}${vinDisplay}</div>`;
+      }
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:11px;color:#999;">None of your vehicles sold</div>';
+    }
+    html += '</div>';
+    
+    // 2. YOUR CARS NO SALE
+    html += '<div style="padding:8px;background:#fff3e0;border-left:3px solid #ef6c00;border-radius:4px;margin-bottom:6px;">';
+    html += `<div style="font-size:12px;font-weight:700;color:#ef6c00;margin-bottom:6px;">YOUR CARS NO SALE (${yourNoSale.length})</div>`;
+    if (yourNoSale.length > 0) {
+      html += `<button class="btn btn-small copy-your-nosale" style="background:#ef6c00;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;margin-right:4px;">Copy DAA Stock #s</button>`;
+      html += `<button class="btn btn-small copy-your-nosale-vins" style="background:#ff9800;color:white;font-size:11px;padding:4px 10px;margin-bottom:6px;">Copy VINs</button>`;
+      html += '<div style="max-height:120px;overflow-y:auto;font-size:11px;background:white;padding:4px;border-radius:3px;">';
+      for (const v of yourNoSale) {
+        const vinDisplay = v.vin ? ` · VIN: ${v.vin}` : '';
+        html += `<div>DAA #${v.stock} - ${v.year} ${v.make} ${v.model}${vinDisplay}</div>`;
+      }
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:11px;color:#999;">None of your vehicles failed to sell</div>';
+    }
+    html += '</div>';
+    
+    // 3. MARKET REPORT - What sells good at DAA
+    html += '<div style="padding:8px;background:#f0f4f8;border-left:3px solid #1565c0;border-radius:4px;">';
+    html += `<div style="font-size:12px;font-weight:700;color:#1565c0;margin-bottom:6px;">WHAT SELLS GOOD AT DAA</div>`;
+    
+    // Quick stats
+    const totalVehicles = sold.length + noSale.length;
+    html += `<div style="font-size:11px;margin-bottom:6px;">`;
+    html += `<strong>${sold.length}/${totalVehicles}</strong> sold (${Math.round(sold.length/totalVehicles*100)}%) | `;
+    html += `<strong>$${(totalRevenue/1000).toFixed(0)}K</strong> total revenue`;
+    html += '</div>';
+    
+    html += '</div>';
+    html += '</div>';
+    panel.innerHTML = html;
+    
+    // Add event listeners for copy buttons
+    const yourSoldBtn = panel.querySelector('.copy-your-sold');
+    if (yourSoldBtn) {
+      yourSoldBtn.addEventListener('click', () => {
+        const stocks = yourSold.map(v => v.stock).join('\n');
+        navigator.clipboard.writeText(stocks).then(() => {
+          yourSoldBtn.textContent = 'Copied!';
+          setTimeout(() => { yourSoldBtn.textContent = 'Copy DAA Stock #s'; }, 1500);
+        });
+      });
+    }
+    
+    const yourSoldVinsBtn = panel.querySelector('.copy-your-sold-vins');
+    if (yourSoldVinsBtn) {
+      yourSoldVinsBtn.addEventListener('click', () => {
+        const vins = yourSold.map(v => v.vin || `NO_VIN_${v.stock}`).join('\n');
+        navigator.clipboard.writeText(vins).then(() => {
+          yourSoldVinsBtn.textContent = 'Copied VINs!';
+          setTimeout(() => { yourSoldVinsBtn.textContent = 'Copy VINs'; }, 1500);
+        });
+      });
+    }
+    
+    const yourNoSaleBtn = panel.querySelector('.copy-your-nosale');
+    if (yourNoSaleBtn) {
+      yourNoSaleBtn.addEventListener('click', () => {
+        const stocks = yourNoSale.map(v => v.stock).join('\n');
+        navigator.clipboard.writeText(stocks).then(() => {
+          yourNoSaleBtn.textContent = 'Copied!';
+          setTimeout(() => { yourNoSaleBtn.textContent = 'Copy DAA Stock #s'; }, 1500);
+        });
+      });
+    }
+    
+    const yourNoSaleVinsBtn = panel.querySelector('.copy-your-nosale-vins');
+    if (yourNoSaleVinsBtn) {
+      yourNoSaleVinsBtn.addEventListener('click', () => {
+        const vins = yourNoSale.map(v => v.vin || `NO_VIN_${v.stock}`).join('\n');
+        navigator.clipboard.writeText(vins).then(() => {
+          yourNoSaleVinsBtn.textContent = 'Copied VINs!';
+          setTimeout(() => { yourNoSaleVinsBtn.textContent = 'Copy VINs'; }, 1500);
+        });
+      });
+    }
+  }
+
   // Edge Pipeline format (UAX / DAA). Identical columns, user picks the
   // target source via which button they click.
   async function handleEdgePipeline(file, source /* 'uax' | 'daa' */) {
@@ -878,8 +1187,8 @@
       config.log(`${soldAtAuction.length} SOLD car(s) on ${source.toUpperCase()} run list — pull from auction!`, 'warn');
     }
     
-    // If UAX, save ALL vehicles from presale for comprehensive market analysis
-    if (source === 'uax') {
+    // Save ALL vehicles from presale for comprehensive market analysis (UAX or DAA)
+    if (source === 'uax' || source === 'daa') {
       const allPresaleVehicles = [];
       
       // Save ALL vehicles from presale for market analysis
@@ -901,8 +1210,14 @@
         }
       }
       
-      await chrome.storage.local.set({ uaxPresaleStocks: allPresaleVehicles });
-      config.log(`Saved ALL ${allPresaleVehicles.length} vehicles from UAX presale for market analysis`, 'ok');
+      // Store in different keys for UAX vs DAA
+      if (source === 'uax') {
+        await chrome.storage.local.set({ uaxPresaleStocks: allPresaleVehicles });
+        config.log(`Saved ALL ${allPresaleVehicles.length} vehicles from UAX presale for market analysis`, 'ok');
+      } else if (source === 'daa') {
+        await chrome.storage.local.set({ daaPresaleStocks: allPresaleVehicles });
+        config.log(`Saved ALL ${allPresaleVehicles.length} vehicles from DAA presale for market analysis`, 'ok');
+      }
     }
     
     showSummary(source, matched, rows.length, ok, err, cleared);
@@ -1100,6 +1415,99 @@
     }
     const { ok, err } = await upsertLocations(upserts);
     config.log(`SmartAuction: matched ${matched} of ${rows.length} (skipped ${skipped}), sold ${soldCount}, upserted ${ok}, errors ${err}`, 'ok');
+    
+    // Auto-mark active vehicles as listed in the queue
+    const activeVehicles = upserts.filter(u => u.sa_status === 'active');
+    if (activeVehicles.length > 0) {
+      let listedCount = 0;
+      try {
+        for (const vehicle of activeVehicles) {
+          const last6 = vehicle.vin.slice(-6);
+          const response = await fetch(`http://localhost:7749/queue/mark-listed/${last6}`, { method: 'POST' });
+          if (response.ok) {
+            listedCount++;
+            config.log(`Marked ${last6} as listed on SmartAuction`, 'ok');
+          }
+          // Skip 404s silently - vehicle not in queue
+        }
+        if (listedCount > 0) {
+          config.log(`Auto-marked ${listedCount} vehicles as listed in queue`, 'ok');
+        }
+      } catch (err) {
+        config.log(`Error marking vehicles as listed: ${err.message}`, 'warn');
+      }
+    }
+    
+    // Auto-mark hold vehicles as on hold in the queue
+    const holdVehicles = upserts.filter(u => u.sa_status === 'hold');
+    if (holdVehicles.length > 0) {
+      let holdCount = 0;
+      try {
+        for (const vehicle of holdVehicles) {
+          const last6 = vehicle.vin.slice(-6);
+          const response = await fetch(`http://localhost:7749/queue/hold/${last6}`, { method: 'POST' });
+          if (response.ok) {
+            holdCount++;
+            config.log(`Marked ${last6} as on hold`, 'ok');
+          }
+          // Skip 404s silently - vehicle not in queue
+        }
+        if (holdCount > 0) {
+          config.log(`Auto-marked ${holdCount} vehicles as on hold in queue`, 'ok');
+        }
+      } catch (err) {
+        config.log(`Error marking vehicles as on hold: ${err.message}`, 'warn');
+      }
+    }
+    
+    // Auto-mark sold vehicles as sold and remove from queue
+    const soldVehicles = upserts.filter(u => u.sa_status === 'sold');
+    if (soldVehicles.length > 0) {
+      let soldMarkedCount = 0;
+      try {
+        for (const vehicle of soldVehicles) {
+          const last6 = vehicle.vin.slice(-6);
+          const response = await fetch(`http://localhost:7749/queue/mark-sold/${last6}`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: 'smart_auction_sale' })
+          });
+          if (response.ok) {
+            soldMarkedCount++;
+            config.log(`Marked ${last6} as sold and removed from queue`, 'ok');
+          }
+          // Skip 404s silently - vehicle not in queue
+        }
+        if (soldMarkedCount > 0) {
+          config.log(`Auto-removed ${soldMarkedCount} sold vehicles from queue`, 'ok');
+        }
+      } catch (err) {
+        config.log(`Error marking vehicles as sold: ${err.message}`, 'warn');
+      }
+    }
+    
+    // Auto-remove vehicles that are removed from SmartAuction
+    const removedVehicles = upserts.filter(u => u.sa_status === 'removed');
+    if (removedVehicles.length > 0) {
+      let removedCount = 0;
+      try {
+        for (const vehicle of removedVehicles) {
+          const last6 = vehicle.vin.slice(-6);
+          const response = await fetch(`http://localhost:7749/queue/remove/${last6}`, { method: 'POST' });
+          if (response.ok) {
+            removedCount++;
+            config.log(`Removed ${last6} from queue (removed from SA)`, 'ok');
+          }
+          // Skip 404s silently - vehicle not in queue
+        }
+        if (removedCount > 0) {
+          config.log(`Auto-removed ${removedCount} vehicles removed from SA from queue`, 'ok');
+        }
+      } catch (err) {
+        config.log(`Error removing vehicles: ${err.message}`, 'warn');
+      }
+    }
+    
     showSummary('smart_auction', matched, rows.length, ok, err, 0);
     renderSmartAuctionBreakdown({ activeNotInInv, removedStillInInv, soldStillInInv });
   }
@@ -1541,6 +1949,7 @@
     bind('luUaxInput', 'luUaxStatus', (f) => handleEdgePipeline(f, 'uax'));
     bind('luUaxPostSaleInput', 'luUaxPostSaleStatus', handleUaxPostSale);
     bind('luDaaInput', 'luDaaStatus', (f) => handleEdgePipeline(f, 'daa'));
+    bind('luDaaPostSaleInput', 'luDaaPostSaleStatus', handleDaaPostSale);
     bind('luAdesaInput', 'luAdesaStatus', handleAdesa);
     bind('luDispatchInput', 'luDispatchStatus', handleSuperDispatch);
   }

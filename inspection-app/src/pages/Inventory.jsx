@@ -193,8 +193,9 @@ export default function Inventory() {
     adesa: "ADESA",
     in_transit: "In Transit",
     // Chat-sourced destinations (CARZ INC, Body shop, Mechanics, Seller Group)
-    body_shop: "Jorge's Shop",
-    mechanic_section: "Jorge's Shop",
+    body_shop: "Body Shop",
+    mechanic_section: "Mechanic",
+    mechanic: "Mechanic",
     jorge: "Jorge's Shop",
     front: "Memphis - Front Lot",
     seller_group: "Memphis - Front Lot",
@@ -230,7 +231,8 @@ export default function Inventory() {
     __dispatched__: "bg-yellow-500",
     __jackson__: "bg-sky-500",
     body_shop: "bg-rose-500",
-    mechanic_section: "bg-rose-500",
+    mechanic_section: "bg-indigo-500",
+    mechanic: "bg-indigo-500",
     jorge: "bg-rose-500",
     front: "bg-emerald-500",
     seller_group: "bg-emerald-500",
@@ -511,13 +513,12 @@ export default function Inventory() {
       );
       setEditingRow(null);
       
-      // For Missing filter, reload data to ensure proper filtering
-      if (sectionFilter === "__never__") {
-        // Reload data from database to get updated state
-        setTimeout(() => {
-          load(); // Reload data instead of full page refresh
-        }, 1000);
-      }
+      // Always reload data after location update to ensure proper filtering
+      // This ensures the effective_last_seen_ms is recalculated with the new location
+      setTimeout(() => {
+        console.log('Reloading data after location update...');
+        load(); // Reload all data to recalculate effective dates
+      }, 500);
     } catch (err) {
       alert("Save failed: " + (err.message || String(err)));
     } finally {
@@ -1113,7 +1114,7 @@ export default function Inventory() {
       {/* Location editor modal */}
       {editingRow && (
         <div
-          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/60 p-4"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
           onClick={() => !saving && setEditingRow(null)}
         >
           <div
@@ -1165,7 +1166,8 @@ export default function Inventory() {
               <option value="">— pick one —</option>
               <optgroup label="Memphis">
                 <option value="front">Front Lot</option>
-                <option value="body_shop">Jorge's Shop</option>
+                <option value="body_shop">Body Shop</option>
+                <option value="mechanic_section">Mechanic</option>
               </optgroup>
               <optgroup label="Jackson">
                 <option value="jackson">Jackson</option>
