@@ -17,6 +17,11 @@ function FrontLotAging() {
       const tenDaysAgo = new Date();
       tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
       
+      // First get inventory to match VINs and get location codes
+      const { data: inventory } = await supabase
+        .from('inventory')
+        .select('stock_number, last_6_vin, vehicle_vin, vehicle_year, vehicle_make, vehicle_model, location_code, days_on_lot');
+      
       // Query vehicles on front lot over 10 days old not on SmartAuction
       const { data, error: fetchError } = await supabase
         .from('vehicle_locations')
@@ -28,16 +33,54 @@ function FrontLotAging() {
       
       if (fetchError) throw fetchError;
       
-      // Filter for front lot vehicles
-      // Front lot = vehicles NOT in specific locations like body_shop, transport (Z), etc.
+      // Create inventory lookup maps
+      const invByStock = new Map();
+      const invByVin6 = new Map();
+      const invByFullVin = new Map();
+      
+      if (inventory) {
+        inventory.forEach(item => {
+          if (item.stock_number) invByStock.set(item.stock_number, item);
+          if (item.last_6_vin) invByVin6.set(item.last_6_vin.toUpperCase(), item);
+          if (item.vehicle_vin) invByFullVin.set(item.vehicle_vin.toUpperCase(), item);
+        });
+      }
+      
+      // Filter for front lot vehicles and match with inventory
       const frontLotVehicles = (data || []).filter(v => {
         const location = (v.physical_location || '').toLowerCase();
         
+        // Try to match with inventory to get Frazer location code
+        let invMatch = null;
+        if (v.stock_number) {
+          invMatch = invByStock.get(v.stock_number);
+        }
+        if (!invMatch && v.vin) {
+          // Try full VIN match
+          invMatch = invByFullVin.get(v.vin.toUpperCase());
+          // Try last 6 match
+          if (!invMatch && v.vin.length >= 6) {
+            const last6 = v.vin.slice(-6).toUpperCase();
+            invMatch = invByVin6.get(last6);
+          }
+        }
+        
+        // Update vehicle with inventory data
+        if (invMatch) {
+          v.stock_number = invMatch.stock_number || v.stock_number;
+          v.vin = invMatch.vehicle_vin || v.vin;
+          v.vehicle_info = `${invMatch.vehicle_year || ''} ${invMatch.vehicle_make || ''} ${invMatch.vehicle_model || ''}`.trim();
+          v.location_code = invMatch.location_code;
+          v.inv_days_on_lot = invMatch.days_on_lot;
+        }
+        
         // Locations that are NOT considered front lot:
         const excludedLocations = [
-          'z',
           'transport',
+          'in_transit',
+          'in transit',
           'body_shop',
+          'body shop',
           'sold',
           'wholesale',
           'arbitrated',
@@ -46,12 +89,18 @@ function FrontLotAging() {
         
         // Check if vehicle is in an excluded location
         const isExcluded = excludedLocations.some(loc => 
-          location === loc || location.includes(loc)
+          location.includes(loc.replace('_', ' ').replace('-', ' '))
         );
         
-        // Vehicle is on front lot if not in any excluded location
-        // Empty location is considered front lot
-        const isFrontLot = !location || !isExcluded;
+        // IMPORTANT: Check Frazer location code Z (transport)
+        // This is the key check - if location_code is Z, it's in transport
+        const isTransport = v.location_code === 'Z';
+        
+        // Vehicle is on front lot if:
+        // 1. NOT in transport (location code Z)
+        // 2. NOT in any excluded physical location
+        // 3. Empty location is considered front lot
+        const isFrontLot = !isTransport && (!location || !isExcluded);
         
         return isFrontLot;
       });
@@ -79,11 +128,13 @@ function FrontLotAging() {
   }, []);
 
   const exportToCSV = () => {
-    const headers = ['Stock Number', 'VIN', 'Location', 'Days on Lot', 'Last Updated'];
+    const headers = ['Stock Number', 'VIN', 'Vehicle', 'Location', 'Location Code', 'Days on Lot', 'Last Updated'];
     const rows = vehicles.map(v => [
-      v.stock_number,
+      v.stock_number || 'N/A',
       v.vin || '',
+      v.vehicle_info || '',
       v.physical_location || 'Front Lot',
+      v.location_code || '',
       v.days_on_lot,
       new Date(v.location_updated_at).toLocaleDateString()
     ]);
@@ -117,6 +168,9 @@ function FrontLotAging() {
               <h1 className="text-2xl font-bold text-gray-900">Front Lot Aging Report</h1>
               <p className="text-gray-600 mt-1">
                 Vehicles on front lot over 10 days old not listed on SmartAuction
+              </p>
+              <p className="text-gray-500 text-sm mt-1">
+                Excludes vehicles with location code Z (in transport)
               </p>
             </div>
             <div className="flex gap-2">
@@ -158,8 +212,13 @@ function FrontLotAging() {
             <div className="text-center py-12 text-gray-500">
               <p className="text-lg">No vehicles found</p>
               <p className="text-sm mt-2">
-                All front lot vehicles are either listed on SmartAuction or less than 10 days old
+                All front lot vehicles are either:
               </p>
+              <ul className="text-sm mt-2 space-y-1">
+                <li>• Listed on SmartAuction</li>
+                <li>• Less than 10 days old</li>
+                <li>• In transport (location code Z)</li>
+              </ul>
             </div>
           ) : (
             <div>
@@ -180,6 +239,9 @@ function FrontLotAging() {
                         VIN (Last 6)
                       </th>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
+                        Vehicle
+                      </th>
+                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
                         Location
                       </th>
                       <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
@@ -193,17 +255,27 @@ function FrontLotAging() {
                   <tbody>
                     {vehicles.map((vehicle, index) => (
                       <tr
-                        key={vehicle.stock_number || index}
+                        key={vehicle.stock_number || vehicle.vin || index}
                         className={`border-b ${getRowClass(vehicle.days_on_lot)}`}
                       >
                         <td className="px-4 py-3 font-medium text-gray-900">
-                          {vehicle.stock_number}
+                          {vehicle.stock_number || 'N/A'}
                         </td>
                         <td className="px-4 py-3 text-gray-700 font-mono">
-                          {vehicle.vin ? vehicle.vin.slice(-6) : 'N/A'}
+                          {vehicle.vin ? vehicle.vin.slice(-6).toUpperCase() : 'N/A'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-700 text-sm">
+                          {vehicle.vehicle_info || ''}
                         </td>
                         <td className="px-4 py-3 text-gray-700">
-                          {vehicle.physical_location || 'Front Lot'}
+                          <div>
+                            {vehicle.physical_location || 'Front Lot'}
+                            {vehicle.location_code && vehicle.location_code !== 'Z' && (
+                              <span className="ml-2 text-xs text-gray-500">
+                                (Code: {vehicle.location_code})
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <span
