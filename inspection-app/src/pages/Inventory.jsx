@@ -257,7 +257,7 @@ export default function Inventory() {
     M: "Memphis",
     J: "Jackson",
     Z: "Needs Transport",  // Z means needs transport/pickup
-    X: "Arbitration",  // X means arbitration
+    X: "In Transit",  // X means in transit/dispatched (was arbitration)
     A: "Auction",
   };
 
@@ -511,7 +511,8 @@ export default function Inventory() {
       let locationCodeUpdated = false;
       if (finalLoc === "in_transit") {
         const costRow = costMap.get(stockNumber);
-        if (costRow && costRow.location_code === "Z") {
+        // Update from Z (Needs Transport) to X (In Transit/Arbitration)
+        if (costRow && (costRow.location_code === "Z" || costRow.location_code === "A")) {
           const { error: invError } = await supabase
             .from("inventory")
             .update({ location_code: "X" })
@@ -523,6 +524,8 @@ export default function Inventory() {
             alert('Location saved but Frazer code update failed. Please check inventory.');
           } else {
             locationCodeUpdated = true;
+            // Force immediate update of location code in local state
+            costRow.location_code = "X";
           }
         }
       }
@@ -579,11 +582,11 @@ export default function Inventory() {
         clearTimeout(reloadTimeout);
       }
       
-      // Schedule a reload to sync with database
+      // Schedule a reload to sync with database (increased to 3 seconds for better stability)
       const timeout = setTimeout(() => {
         load();
         setReloadTimeout(null);
-      }, 2000);
+      }, 3000);
       setReloadTimeout(timeout);
       
     } catch (err) {
@@ -1005,12 +1008,15 @@ export default function Inventory() {
               const scanUpdated = r.last_seen_at
                 ? new Date(r.last_seen_at).getTime()
                 : 0;
+              // Physical location takes priority when it's been manually set
               const auctionIsNewer =
-                physLoc && physLoc !== "unknown" && locUpdated >= scanUpdated;
+                physLoc && physLoc !== "unknown" && (locUpdated >= scanUpdated || physLoc === "in_transit");
               const locBadge = auctionIsNewer
                 ? LOCATION_COLORS[physLoc] || "bg-slate-600"
                 : null;
-              const isDispatched = locCode === "X" || physLoc === "in_transit";
+              // Check if dispatched - prioritize physical location over Frazer code
+              const isDispatched = physLoc === "in_transit" || 
+                                   (locCode === "X" && physLoc !== "front" && physLoc !== "jackson");
               const frazerLocLabel = LOCATION_CODE_MAP[locCode];
               const isStuck21 =
                 r.effective_days_since != null && r.effective_days_since >= 21;
@@ -1054,7 +1060,10 @@ export default function Inventory() {
                         {r.days_on_lot && (
                           <span>· {r.days_on_lot}d on lot</span>
                         )}
-                        {locCode && (
+                        {/* Only show Frazer code if no physical location or if different from expected */}
+                        {locCode && (!physLoc || 
+                          (physLoc === "in_transit" && locCode !== "X") || 
+                          (physLoc !== "in_transit" && locCode === "Z")) && (
                           <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-bold text-[10px]">
                             {locCode} · {frazerLocLabel || "—"}
                           </span>
