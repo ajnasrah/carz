@@ -507,28 +507,9 @@ export default function Inventory() {
         throw new Error(`Failed to update location: ${locError.message}`);
       }
       
-      // If setting to "in_transit", also update the Frazer location code
+      // IMPORTANT: We do NOT modify location_code - it comes from Frazer
+      // The physical_location is what we track manually
       let locationCodeUpdated = false;
-      if (finalLoc === "in_transit") {
-        const costRow = costMap.get(stockNumber);
-        // Update from Z (Needs Transport) to X (In Transit/Arbitration)
-        if (costRow && (costRow.location_code === "Z" || costRow.location_code === "A")) {
-          const { error: invError } = await supabase
-            .from("inventory")
-            .update({ location_code: "X" })
-            .eq("stock_number", stockNumber);
-          
-          if (invError) {
-            console.warn('Could not update Frazer location code:', invError);
-            // Don't fail the whole operation, but notify user
-            alert('Location saved but Frazer code update failed. Please check inventory.');
-          } else {
-            locationCodeUpdated = true;
-            // Force immediate update of location code in local state
-            costRow.location_code = "X";
-          }
-        }
-      }
       
       // Optimistically update local state
       const nextLoc = {
