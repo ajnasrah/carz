@@ -51,6 +51,18 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
     loadHistory();
   }, [stockNumber]);
 
+  // Add escape key handler
+  useEffect(() => {
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [onClose]);
+
   async function loadHistory() {
     setLoading(true);
     try {
@@ -133,7 +145,12 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
   return (
     <div 
       className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50"
-      onClick={onClose}
+      onClick={(e) => {
+        // Only close if clicking the backdrop directly
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
     >
       <div 
         className="bg-slate-900 border border-slate-700 rounded-xl max-w-3xl w-full max-h-[80vh] flex flex-col shadow-2xl"
@@ -161,8 +178,12 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
             )}
           </div>
           <button
-            onClick={onClose}
-            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors"
+            aria-label="Close modal"
           >
             <X className="h-5 w-5" />
           </button>
@@ -236,6 +257,16 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
               ))}
             </div>
           )}
+        </div>
+        
+        {/* Footer with additional close button */}
+        <div className="p-4 border-t border-slate-700 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>
