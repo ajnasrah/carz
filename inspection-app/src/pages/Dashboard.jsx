@@ -166,6 +166,7 @@ export default function Dashboard() {
         <ActionTile to="/analytics" emoji="📈" label="Analytics" />
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
         <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
+        <ActionTile to="/reports" emoji="📊" label="Reports" />
         <ActionTile href="/training/" emoji="🎓" label="Training" />
       </div>
 

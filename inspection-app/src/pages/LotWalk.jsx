@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Mic, Square, Search, CheckCircle2, X, AlertCircle, Camera, CameraOff } from 'lucide-react'
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode'
 import { supabase } from '../services/supabase'
@@ -447,6 +447,13 @@ export default function LotWalk() {
           <h1 className="text-lg font-bold text-emerald-400">Track Inventory</h1>
           <p className="text-xs text-slate-400">{inventory.length} cars in inventory</p>
         </div>
+        <Link 
+          to="/unmatched" 
+          className="p-2 rounded-lg bg-yellow-500/20 text-yellow-400 border border-yellow-500/40"
+          title="View unmatched vehicles"
+        >
+          <AlertCircle size={20} />
+        </Link>
       </div>
 
       {/* Sticky section selector */}

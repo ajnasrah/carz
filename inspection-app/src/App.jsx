@@ -25,6 +25,7 @@ import VinCheck from './pages/VinCheck'
 import VehicleAnalytics from './pages/VehicleAnalytics'
 import FrontLotAging from './pages/FrontLotAging'
 import UnmatchedVehicles from './pages/UnmatchedVehicles'
+import ExecutiveDashboard from './pages/ExecutiveDashboard'
 // Inbound Inspection Pages
 import InboundDashboard from './pages/InboundDashboard'
 import InboundStart from './pages/InboundStart'
@@ -108,6 +109,9 @@ function AppRoutes() {
       {/* Front Lot Aging — vehicles on lot over 10 days not on SmartAuction */}
       <Route path="/front-lot-aging" element={<ProtectedRoute><FrontLotAging /></ProtectedRoute>} />
 
+      {/* Executive Dashboard */}
+      <Route path="/reports" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
+      
       {/* Inbound Inspection System */}
       <Route path="/inbound" element={<ProtectedRoute><InboundDashboard /></ProtectedRoute>} />
       <Route path="/inbound/new" element={<ProtectedRoute><InboundStart /></ProtectedRoute>} />
