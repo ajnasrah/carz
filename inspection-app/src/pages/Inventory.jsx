@@ -563,12 +563,14 @@ export default function Inventory() {
         clearTimeout(reloadTimeout);
       }
       
-      // Schedule a reload to sync with database (increased to 3 seconds for better stability)
-      const timeout = setTimeout(() => {
-        load();
-        setReloadTimeout(null);
-      }, 3000);
-      setReloadTimeout(timeout);
+      // Don't automatically reload after manual edits - it can overwrite the changes
+      // The user can manually refresh if needed
+      // Comment out automatic reload:
+      // const timeout = setTimeout(() => {
+      //   load();
+      //   setReloadTimeout(null);
+      // }, 3000);
+      // setReloadTimeout(timeout);
       
     } catch (err) {
       console.error('Save failed:', err);

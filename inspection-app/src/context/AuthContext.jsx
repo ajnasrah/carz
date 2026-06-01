@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
 import { AuthContext } from './useAuth'
-import { ensurePrimaryAdmin } from '../services/adminSetup'
+// Removed automatic admin setup - handled by database migration instead
+// import { ensurePrimaryAdmin } from '../services/adminSetup'
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -9,8 +10,8 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Ensure primary admin exists on app startup
-    ensurePrimaryAdmin()
+    // Primary admin is now handled by database migration
+    // No need to call ensurePrimaryAdmin() from frontend
     
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
