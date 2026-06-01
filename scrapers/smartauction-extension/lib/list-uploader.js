@@ -127,7 +127,7 @@
     // Calls the SECURITY DEFINER RPC `inventory_stocks_by_vins` which
     // bypasses RLS and returns matches for the VINs we care about.
     // Anon SELECT on inventory is blocked, so a direct ?select=* returns 0.
-    if (!vins.length) return { byVin: new Map(), byLast6: new Map() };
+    if (!vins.length) return { byVin: new Map(), byLast6: new Map(), last6Conflicts: new Map() };
     const url = `${config.supabaseUrl}/rest/v1/rpc/inventory_stocks_by_vins`;
     const res = await fetch(url, {
       method: 'POST',
@@ -140,18 +140,41 @@
     });
     if (!res.ok) {
       config.log('Inventory RPC failed: ' + res.status + ' ' + (await res.text()).slice(0, 200), 'err');
-      return { byVin: new Map(), byLast6: new Map() };
+      return { byVin: new Map(), byLast6: new Map(), last6Conflicts: new Map() };
     }
     const rows = await res.json();
     const byVin = new Map();
     const byLast6 = new Map();
+    const last6Conflicts = new Map(); // Track multiple VINs with same last6
+    const last6Count = new Map();
+    
+    // First pass: count last6 occurrences
+    for (const r of rows) {
+      const full = (r.vehicle_vin || '').toUpperCase();
+      const l6 = (r.last_6_vin || full.slice(-6) || '').toUpperCase();
+      if (l6) {
+        if (!last6Count.has(l6)) {
+          last6Count.set(l6, []);
+        }
+        last6Count.get(l6).push({ vin: full, stock: r.stock_number });
+      }
+    }
+    
+    // Second pass: build maps and track conflicts
     for (const r of rows) {
       const full = (r.vehicle_vin || '').toUpperCase();
       const l6 = (r.last_6_vin || full.slice(-6) || '').toUpperCase();
       if (full) byVin.set(full, r.stock_number);
-      if (l6) byLast6.set(l6, r.stock_number);
+      if (l6) {
+        byLast6.set(l6, r.stock_number);
+        // Mark as conflict if multiple vehicles have same last6
+        const vehicles = last6Count.get(l6);
+        if (vehicles && vehicles.length > 1) {
+          last6Conflicts.set(l6, vehicles);
+        }
+      }
     }
-    return { byVin, byLast6 };
+    return { byVin, byLast6, last6Conflicts };
   }
 
   // Look up VINs in vehicle_locations that have been sold on a marketplace
@@ -1095,13 +1118,17 @@
     const rows = parseCSV(text);
     config.log(`Parsed ${rows.length} ${source.toUpperCase()} rows`);
     const vins = rows.map((r) => (r.Vin || r.VIN || '').toUpperCase()).filter(Boolean);
-    const { byVin, byLast6 } = await fetchInventoryStocksForVins(vins);
-    config.log(`Matched ${byVin.size} VINs against inventory`);
+    const { byVin, byLast6, last6Conflicts } = await fetchInventoryStocksForVins(vins);
+    config.log(`Matched ${byVin.size} full VINs against inventory`);
+    if (last6Conflicts.size > 0) {
+      config.log(`⚠️ Warning: ${last6Conflicts.size} last-6 VINs have multiple matches`, 'warn');
+    }
     const now = new Date().toISOString();
     // Pre-resolve stocks so we can pull existing location rows in one shot.
     const candidateStocks = [];
     for (const r of rows) {
       const vin = (r.Vin || r.VIN || '').toUpperCase();
+      // Try full VIN first, fallback to last6 if needed
       const stock = vin ? (byVin.get(vin) || byLast6.get(last6(vin))) : null;
       if (stock) candidateStocks.push(stock);
     }
@@ -1116,7 +1143,20 @@
     for (const r of rows) {
       const vin = (r.Vin || r.VIN || '').toUpperCase();
       if (!vin) { skipped++; continue; }
-      const stock = byVin.get(vin) || byLast6.get(last6(vin));
+      
+      // Prioritize full VIN match
+      let stock = byVin.get(vin);
+      
+      // Only use last6 as fallback, with warning
+      if (!stock) {
+        const l6 = last6(vin);
+        stock = byLast6.get(l6);
+        if (stock && last6Conflicts.has(l6)) {
+          const conflicts = last6Conflicts.get(l6);
+          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
+        }
+      }
+      
       if (!stock) {
         skipped++;
         unmatchedVins.push(vin);
@@ -1239,12 +1279,16 @@
     const rows = parseCSV(text);
     config.log(`Parsed ${rows.length} ADESA rows`);
     const vins = rows.map((r) => (r.VIN || r.Vin || '').toUpperCase()).filter(Boolean);
-    const { byVin, byLast6 } = await fetchInventoryStocksForVins(vins);
-    config.log(`Matched ${byVin.size} VINs against inventory`);
+    const { byVin, byLast6, last6Conflicts } = await fetchInventoryStocksForVins(vins);
+    config.log(`Matched ${byVin.size} full VINs against inventory`);
+    if (last6Conflicts.size > 0) {
+      config.log(`⚠️ Warning: ${last6Conflicts.size} last-6 VINs have multiple matches`, 'warn');
+    }
     const now = new Date().toISOString();
     const candidateStocks = [];
     for (const r of rows) {
       const vin = (r.VIN || r.Vin || '').toUpperCase();
+      // Try full VIN first, fallback to last6 if needed
       const stock = vin ? (byVin.get(vin) || byLast6.get(last6(vin))) : null;
       if (stock) candidateStocks.push(stock);
     }
@@ -1259,7 +1303,20 @@
     for (const r of rows) {
       const vin = (r.VIN || r.Vin || '').toUpperCase();
       if (!vin) { skipped++; continue; }
-      const stock = byVin.get(vin) || byLast6.get(last6(vin));
+      
+      // Prioritize full VIN match
+      let stock = byVin.get(vin);
+      
+      // Only use last6 as fallback, with warning
+      if (!stock) {
+        const l6 = last6(vin);
+        stock = byLast6.get(l6);
+        if (stock && last6Conflicts.has(l6)) {
+          const conflicts = last6Conflicts.get(l6);
+          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
+        }
+      }
+      
       if (!stock) {
         skipped++;
         unmatchedVins.push(vin);
@@ -1346,8 +1403,11 @@
     const rows = parseCSV(text);
     config.log(`Parsed ${rows.length} SmartAuction rows`);
     const vins = rows.map((r) => (r.VIN || r.Vin || '').toUpperCase()).filter(Boolean);
-    const { byVin, byLast6 } = await fetchInventoryStocksForVins(vins);
-    config.log(`Matched ${byVin.size} VINs against inventory`);
+    const { byVin, byLast6, last6Conflicts } = await fetchInventoryStocksForVins(vins);
+    config.log(`Matched ${byVin.size} full VINs against inventory`);
+    if (last6Conflicts.size > 0) {
+      config.log(`⚠️ Warning: ${last6Conflicts.size} last-6 VINs have multiple matches`, 'warn');
+    }
     const now = new Date().toISOString();
     const upserts = [];
     // Breakdown buckets
@@ -1367,7 +1427,19 @@
       if (saleDate) saStatus = 'sold';
       else if (removalDate) saStatus = 'removed';
       else if (holdDate) saStatus = 'hold';
-      const stock = byVin.get(vin) || byLast6.get(last6(vin));
+      
+      // Prioritize full VIN match
+      let stock = byVin.get(vin);
+      
+      // Only use last6 as fallback, with warning
+      if (!stock) {
+        const l6 = last6(vin);
+        stock = byLast6.get(l6);
+        if (stock && last6Conflicts.has(l6)) {
+          const conflicts = last6Conflicts.get(l6);
+          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
+        }
+      }
       if (!stock) {
         skipped++;
         if (saStatus === 'active') {
@@ -1510,6 +1582,32 @@
     
     showSummary('smart_auction', matched, rows.length, ok, err, 0);
     renderSmartAuctionBreakdown({ activeNotInInv, removedStillInInv, soldStillInInv });
+    
+    // CRITICAL FIX: Update the popup's saListings array so cross-check works correctly
+    // The ListUploader updates Supabase but popup.js cross-check needs local saListings
+    try {
+      // Store the parsed SA data for popup.js cross-check to use
+      await chrome.storage.local.set({ 
+        saListings: rows,
+        saListingsDate: Date.now()
+      });
+      
+      // Also update the status display
+      const statusEl = document.getElementById('saExportStatus');
+      if (statusEl) {
+        statusEl.textContent = `${rows.length} SA vehicles`;
+        statusEl.className = 'upload-file-status loaded';
+      }
+      
+      // Notify popup.js if it has a function to refresh
+      if (window.refreshSAListings) {
+        window.refreshSAListings(rows);
+      }
+      
+      config.log(`Updated saListings for cross-check: ${rows.length} vehicles`, 'ok');
+    } catch (err) {
+      config.log(`Error updating saListings: ${err.message}`, 'warn');
+    }
   }
 
   function renderSmartAuctionBreakdown({ activeNotInInv, removedStillInInv, soldStillInInv }) {
@@ -1604,8 +1702,11 @@
     const rows = parseCSV(text);
     config.log(`Parsed ${rows.length} Manheim/OVE rows`);
     const vins = rows.map((r) => (r.VIN || r.Vin || '').toUpperCase()).filter(Boolean);
-    const { byVin, byLast6 } = await fetchInventoryStocksForVins(vins);
-    config.log(`Matched ${byVin.size} VINs against inventory`);
+    const { byVin, byLast6, last6Conflicts } = await fetchInventoryStocksForVins(vins);
+    config.log(`Matched ${byVin.size} full VINs against inventory`);
+    if (last6Conflicts.size > 0) {
+      config.log(`⚠️ Warning: ${last6Conflicts.size} last-6 VINs have multiple matches`, 'warn');
+    }
     const now = new Date().toISOString();
     const upserts = [];
     let matched = 0;
@@ -1613,7 +1714,20 @@
     for (const r of rows) {
       const vin = (r.VIN || r.Vin || '').toUpperCase();
       if (!vin) { skipped++; continue; }
-      const stock = byVin.get(vin) || byLast6.get(last6(vin));
+      
+      // Prioritize full VIN match
+      let stock = byVin.get(vin);
+      
+      // Only use last6 as fallback, with warning
+      if (!stock) {
+        const l6 = last6(vin);
+        stock = byLast6.get(l6);
+        if (stock && last6Conflicts.has(l6)) {
+          const conflicts = last6Conflicts.get(l6);
+          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
+        }
+      }
+      
       if (!stock) { skipped++; continue; }
       matched++;
       const group = (r['Account Group'] || '').toUpperCase();
@@ -1644,7 +1758,17 @@
     
     for (const r of rows) {
       const vin = (r.VIN || r.Vin || '').toUpperCase();
-      const stock = byVin.get(vin) || byLast6.get(last6(vin));
+      
+      // Prioritize full VIN match
+      let stock = byVin.get(vin);
+      
+      // Only use last6 as fallback  
+      if (!stock) {
+        const l6 = last6(vin);
+        stock = byLast6.get(l6);
+        // Note: Not logging conflicts here since we already did above
+      }
+      
       const status = (r.Status || '').toLowerCase();
       
       // Skip sold vehicles entirely
