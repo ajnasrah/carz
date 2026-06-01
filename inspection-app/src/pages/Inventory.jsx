@@ -43,6 +43,7 @@ export default function Inventory() {
   const [editLocation, setEditLocation] = useState("");
   const [editCustom, setEditCustom] = useState("");
   const [saving, setSaving] = useState(false);
+  const [reloadTimeout, setReloadTimeout] = useState(null); // track reload timeout
   const [historyStock, setHistoryStock] = useState(null); // stock number for history modal
   const [historyVin, setHistoryVin] = useState(null); // VIN for history modal
 
@@ -164,11 +165,18 @@ export default function Inventory() {
     setLoading(false);
   }
 
-  /* eslint-disable react-hooks/set-state-in-effect */
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     load();
+    
+    // Cleanup function to clear any pending timeouts
+    return () => {
+      if (reloadTimeout) {
+        clearTimeout(reloadTimeout);
+      }
+    };
   }, []);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const LOCATION_FILTERS = [
     "__loc_M__",
@@ -399,42 +407,55 @@ export default function Inventory() {
   }, [filtered, costMap]);
 
   function openLocationEditor(row) {
-    const currentLoc = locMap.get(row.stock_number)?.physical_location || "";
-    setEditingRow(row);
-    // If current is a known option, select it; otherwise fall back to "other" + prefill
-    const KNOWN = [
-      "front",
-      "jackson",
-      "uax",
-      "daa",
-      "adesa",
-      "in_transit",
-      "body_shop",
-      "pro_auto",
-      "summit_tire",
-      "tri_state",
-      "tri_state_glass",
-      "city_auto",
-      "upholstery",
-      "jim_keras_nissan",
-      "jim_keras_chevy_service",
-      "muffler_cs",
-      "unknown",
-    ];
-    if (KNOWN.includes(currentLoc)) {
-      setEditLocation(currentLoc);
-      setEditCustom("");
-    } else if (currentLoc) {
-      setEditLocation("__other__");
-      setEditCustom(currentLoc);
-    } else {
-      setEditLocation("");
-      setEditCustom("");
+    if (saving) return; // Prevent opening while another save is in progress
+    
+    try {
+      const currentLoc = locMap.get(row.stock_number)?.physical_location || "";
+      
+      // If current is a known option, select it; otherwise fall back to "other" + prefill
+      const KNOWN = [
+        "front",
+        "jackson",
+        "uax",
+        "daa",
+        "adesa",
+        "in_transit",
+        "body_shop",
+        "pro_auto",
+        "summit_tire",
+        "tri_state",
+        "tri_state_glass",
+        "city_auto",
+        "upholstery",
+        "jim_keras_nissan",
+        "jim_keras_chevy_service",
+        "muffler_cs",
+        "unknown",
+      ];
+      
+      // Batch all state updates together
+      if (KNOWN.includes(currentLoc)) {
+        setEditLocation(currentLoc);
+        setEditCustom("");
+      } else if (currentLoc) {
+        setEditLocation("__other__");
+        setEditCustom(currentLoc);
+      } else {
+        setEditLocation("");
+        setEditCustom("");
+      }
+      
+      // Set editing row last to ensure other state is ready
+      setEditingRow(row);
+    } catch (error) {
+      console.error('Error opening location editor:', error);
+      alert('Failed to open location editor: ' + error.message);
     }
   }
 
   async function saveLocation() {
-    if (!editingRow) return;
+    if (!editingRow || saving) return; // Prevent multiple simultaneous saves
+    
     const finalLoc =
       editLocation === "__other__"
         ? editCustom
@@ -443,84 +464,131 @@ export default function Inventory() {
             .replace(/[^a-z0-9]+/g, "_")
             .replace(/^_+|_+$/g, "")
         : editLocation;
-    if (!finalLoc) {
-      alert("Pick a location or type a custom one.");
+    
+    // Validate location
+    if (!finalLoc || finalLoc === "__other__") {
+      alert("Please select a location or enter a custom one.");
       return;
     }
+    
     setSaving(true);
+    const stockNumber = editingRow.stock_number;
+    const vin = editingRow.vehicle_vin || editingRow.last_6_vin || "";
+    
     try {
       const nowIso = new Date().toISOString();
-      const prevLoc =
-        locMap.get(editingRow.stock_number)?.physical_location || null;
-      const prevSource =
-        locMap.get(editingRow.stock_number)?.physical_source || null;
-      console.log('Saving location update:', {
-        stock: editingRow.stock_number,
-        location: finalLoc,
-        vin: editingRow.vehicle_vin,
-        previous: prevLoc
-      });
+      const prevLoc = locMap.get(stockNumber)?.physical_location || null;
+      const prevSource = locMap.get(stockNumber)?.physical_source || null;
       
-      const { data, error } = await supabase.from("vehicle_locations").upsert(
-        {
-          stock_number: String(editingRow.stock_number).trim(),
-          vin: editingRow.vehicle_vin || editingRow.last_6_vin || "",
-          physical_location: finalLoc,
-          physical_source: "manual",
-          location_updated_at: nowIso,
-          updated_at: nowIso,
-          notes: {
-            selected: editLocation,
-            raw_input: editLocation === "__other__" ? editCustom.trim() : null,
-            previous_location: prevLoc,
-            previous_source: prevSource,
-            edited_at: nowIso,
+      // First update the vehicle_locations table
+      const { data: locData, error: locError } = await supabase
+        .from("vehicle_locations")
+        .upsert(
+          {
+            stock_number: String(stockNumber).trim(),
+            vin: vin,
+            physical_location: finalLoc,
+            physical_source: "manual",
+            location_updated_at: nowIso,
+            updated_at: nowIso,
+            notes: {
+              selected: editLocation,
+              raw_input: editLocation === "__other__" ? editCustom.trim() : null,
+              previous_location: prevLoc,
+              previous_source: prevSource,
+              edited_at: nowIso,
+            },
           },
-        },
-        { onConflict: "stock_number" },
-      ).select();
+          { onConflict: "stock_number" }
+        )
+        .select();
       
-      if (error) {
-        console.error('Location save error:', error);
-        alert(`Failed to save location: ${error.message}`);
-        throw error;
+      if (locError) {
+        throw new Error(`Failed to update location: ${locError.message}`);
       }
-      console.log('Location saved successfully:', data);
       
-      // Verify the save worked
-      if (!data || data.length === 0) {
-        console.warn('No data returned from upsert');
+      // If setting to "in_transit", also update the Frazer location code
+      let locationCodeUpdated = false;
+      if (finalLoc === "in_transit") {
+        const costRow = costMap.get(stockNumber);
+        if (costRow && costRow.location_code === "Z") {
+          const { error: invError } = await supabase
+            .from("inventory")
+            .update({ location_code: "X" })
+            .eq("stock_number", stockNumber);
+          
+          if (invError) {
+            console.warn('Could not update Frazer location code:', invError);
+            // Don't fail the whole operation, but notify user
+            alert('Location saved but Frazer code update failed. Please check inventory.');
+          } else {
+            locationCodeUpdated = true;
+          }
+        }
       }
-      // Update local state so the card refreshes immediately
+      
+      // Optimistically update local state
       const nextLoc = {
-        ...(locMap.get(editingRow.stock_number) || {}),
-        stock_number: editingRow.stock_number,
+        ...(locMap.get(stockNumber) || {}),
+        stock_number: stockNumber,
+        vin: vin,
         physical_location: finalLoc,
         physical_source: "manual",
         location_updated_at: nowIso,
       };
-      const nextMap = new Map(locMap);
-      nextMap.set(editingRow.stock_number, nextLoc);
-      setLocMap(nextMap);
-      // Also bump effective_last_seen on the row
+      const nextLocMap = new Map(locMap);
+      nextLocMap.set(stockNumber, nextLoc);
+      setLocMap(nextLocMap);
+      
+      // Update costMap if location code changed
+      if (locationCodeUpdated) {
+        const currentCost = costMap.get(stockNumber);
+        if (currentCost) {
+          const nextCostMap = new Map(costMap);
+          nextCostMap.set(stockNumber, {
+            ...currentCost,
+            location_code: "X"
+          });
+          setCostMap(nextCostMap);
+        }
+      }
+      
+      // Update the row's effective_last_seen
       const nowMs = Date.now();
       setRows((prev) =>
-        prev.map((r) =>
-          r.stock_number === editingRow.stock_number
-            ? { ...r, effective_last_seen_ms: nowMs, effective_days_since: 0 }
-            : r,
-        ),
+        prev.map((r) => {
+          if (r.stock_number === stockNumber) {
+            return {
+              ...r,
+              effective_last_seen_ms: nowMs,
+              effective_days_since: 0,
+              current_section: finalLoc // Update current section display
+            };
+          }
+          return r;
+        })
       );
-      setEditingRow(null);
       
-      // Always reload data after location update to ensure proper filtering
-      // This ensures the effective_last_seen_ms is recalculated with the new location
-      setTimeout(() => {
-        console.log('Reloading data after location update...');
-        load(); // Reload all data to recalculate effective dates
-      }, 500);
+      // Success - close modal
+      setEditingRow(null);
+      setEditLocation("");
+      setEditCustom("");
+      
+      // Cancel any existing reload timeout
+      if (reloadTimeout) {
+        clearTimeout(reloadTimeout);
+      }
+      
+      // Schedule a reload to sync with database
+      const timeout = setTimeout(() => {
+        load();
+        setReloadTimeout(null);
+      }, 2000);
+      setReloadTimeout(timeout);
+      
     } catch (err) {
-      alert("Save failed: " + (err.message || String(err)));
+      console.error('Save failed:', err);
+      alert(err.message || "Failed to save location. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -1115,7 +1183,14 @@ export default function Inventory() {
       {editingRow && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => !saving && setEditingRow(null)}
+          onClick={(e) => {
+            // Only close on direct background click, not during save
+            if (e.target === e.currentTarget && !saving) {
+              setEditingRow(null);
+              setEditLocation("");
+              setEditCustom("");
+            }
+          }}
         >
           <div
             className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl"
@@ -1126,7 +1201,13 @@ export default function Inventory() {
                 Update Location
               </h2>
               <button
-                onClick={() => !saving && setEditingRow(null)}
+                onClick={() => {
+                  if (!saving) {
+                    setEditingRow(null);
+                    setEditLocation("");
+                    setEditCustom("");
+                  }
+                }}
                 className="text-slate-500 hover:text-white"
               >
                 <X size={18} />
@@ -1216,7 +1297,13 @@ export default function Inventory() {
                 {saving ? "Saving…" : "Save"}
               </button>
               <button
-                onClick={() => !saving && setEditingRow(null)}
+                onClick={() => {
+                  if (!saving) {
+                    setEditingRow(null);
+                    setEditLocation("");
+                    setEditCustom("");
+                  }
+                }}
                 disabled={saving}
                 className="px-4 bg-slate-800 text-slate-300 rounded-lg"
               >

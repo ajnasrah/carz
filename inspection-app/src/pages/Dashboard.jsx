@@ -158,17 +158,26 @@ export default function Dashboard() {
         <ActionTile to="/lot" emoji="🚶" label="Walk Lot" />
         <ActionTile to="/vin-check" emoji="🔍" label="Check VIN" />
         <ActionTile to="/inspections" emoji="📝" label={`Inspect${stats.inspectingCount ? ` (${stats.inspectingCount})` : ''}`} primary />
+        <ActionTile to="/inbound" emoji="📥" label="Inbound" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
         <ActionTile to="/sold-reports" emoji="💰" label="Sold" />
         <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
         <ActionTile to="/analytics" emoji="📈" label="Analytics" />
+        <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
+        <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
         <ActionTile href="/training/" emoji="🎓" label="Training" />
       </div>
 
       {profile?.role === 'admin' && (
-        <Link to="/admin" className="block mt-4 text-center text-xs text-slate-500 py-2">
-          Admin
+        <Link 
+          to="/admin" 
+          className="block mt-4 mx-4 px-4 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-semibold text-center shadow-lg hover:shadow-xl transition-shadow"
+        >
+          <div className="flex items-center justify-center gap-2">
+            <span>🛡️</span>
+            <span>Admin Panel</span>
+          </div>
         </Link>
       )}
     </div>

@@ -1013,6 +1013,16 @@
     return vin.length >= 6 ? vin.slice(-6).toUpperCase() : '';
   }
 
+  // Function to refresh SA listings when List Uploader updates them
+  window.refreshSAListings = function(newListings) {
+    saListings = newListings || [];
+    console.log(`[CrossCheck] SA listings refreshed: ${saListings.length} vehicles`);
+    // Re-run cross-check if we have inventory
+    if (inventory.length > 0) {
+      runCrossCheck();
+    }
+  };
+
   // ── Cross-Check (all client-side) ──
   async function runCrossCheck() {
     if (inventory.length === 0) {
@@ -1294,7 +1304,7 @@
           const vehicle = [v.year, v.make, v.model].filter(Boolean).join(' ');
           const completed = v.completed_at ? new Date(v.completed_at).toLocaleDateString() : '';
           const cost = inventoryCostByLast6.get(vin6);
-          const totalCost = cost ? (cost.originalCost + cost.addedCosts) : 0;
+          const totalCost = cost ? cost.totalCost : 0;  // Use totalCost directly, it's already complete
           const costLine = cost
             ? `<div class="queue-card-details" style="color:#00695c;font-weight:700;">Total Cost: ${fmtMoney(totalCost)}${cost.daysOnLot ? ` &middot; ${cost.daysOnLot} days on lot` : ''}</div>`
             : '';
@@ -2030,7 +2040,7 @@
       const map = new Map();
       for (const r of rows) {
         map.set(String(r.last_6_vin || '').toUpperCase(), {
-          originalCost: Number(r.total_cost_num) || 0,
+          totalCost: Number(r.total_cost_num) || 0,  // This is already the complete total
           addedCosts: Number(r.added_costs_num) || 0,
           daysOnLot: r.days_on_lot || null,
         });
@@ -2159,9 +2169,10 @@
           const mk = v.vehicle_make || '';
           const md = v.vehicle_model || '';
           const vin = v.vehicle_vin || '';
+          // total_cost_num already includes all costs - don't double count
           const totalCost = Number(cost.total_cost_num || 0);
           const addedCosts = Number(cost.added_costs_num || 0);
-          const allIn = totalCost + addedCosts;
+          const allIn = totalCost; // total_cost_num is already the complete total
           const daysOnLot = cost.days_on_lot || '';
           const miles = parseInt(String(v.mileage || '').replace(/[^0-9]/g, ''), 10) || 0;
           const buyer = v.buyer || '';
@@ -2194,7 +2205,7 @@
           if (allIn) {
             html += `<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;margin-bottom:8px;">`;
             html += `<div style="font-size:20px;font-weight:900;color:#166534;">Total: $${Math.round(allIn).toLocaleString()}</div>`;
-            if (totalCost && addedCosts) html += `<div style="font-size:11px;color:#666;">Original: $${Math.round(totalCost).toLocaleString()} &nbsp;+&nbsp; Added: $${Math.round(addedCosts).toLocaleString()}</div>`;
+            if (addedCosts) html += `<div style="font-size:11px;color:#666;">Added costs: $${Math.round(addedCosts).toLocaleString()}</div>`;
             html += `</div>`;
           }
           html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px;">`;
@@ -2261,6 +2272,60 @@
         syncChatBtn.textContent = orig;
       }
     });
+
+    // Front Lot Aging Report
+    const frontLotAgingBtn = document.getElementById('frontLotAgingBtn');
+    if (frontLotAgingBtn) frontLotAgingBtn.addEventListener('click', async () => {
+      frontLotAgingBtn.disabled = true;
+      const orig = frontLotAgingBtn.textContent;
+      frontLotAgingBtn.textContent = 'Loading...';
+      statusDiv.textContent = 'Fetching front lot aging data...';
+      
+      const resultsDiv = document.getElementById('frontLotAgingResults');
+      const queueListDiv = document.getElementById('queueList');
+      const crossCheckDiv = document.getElementById('crossCheckResults');
+      
+      try {
+        // Initialize the tracker
+        const tracker = new FrontLotTracker();
+        
+        // Get aging vehicles
+        const vehicles = await tracker.getFrontLotAging();
+        
+        // Generate and display report
+        resultsDiv.innerHTML = tracker.generateAgingReport(vehicles);
+        
+        // Initialize event listeners for the report
+        tracker.initEventListeners(resultsDiv);
+        
+        // Show the results and hide others
+        resultsDiv.style.display = 'block';
+        queueListDiv.style.display = 'none';
+        crossCheckDiv.style.display = 'none';
+        
+        statusDiv.textContent = `Found ${vehicles.length} vehicles on front lot over 10 days old not on SmartAuction`;
+        
+        // Listen for add to upload list events
+        window.addEventListener('addToUploadList', async (event) => {
+          const { stockNumbers } = event.detail;
+          
+          // Update SmartAuction status when added to upload list
+          if (stockNumbers && stockNumbers.length > 0) {
+            await tracker.updateSmartAuctionStatus(stockNumbers);
+            statusDiv.textContent = `Added ${stockNumbers.length} vehicles to upload list and marked as listed`;
+          }
+        }, { once: true });
+        
+      } catch (err) {
+        console.error('Front lot aging report failed', err);
+        statusDiv.textContent = `Report failed: ${err.message}`;
+        resultsDiv.innerHTML = `<div style="color: red; padding: 10px;">Error: ${err.message}</div>`;
+      }
+      
+      frontLotAgingBtn.textContent = orig;
+      frontLotAgingBtn.disabled = false;
+    });
+
     document.getElementById('runCrossCheck').addEventListener('click', runCrossCheck);
     document.getElementById('queueSearch').addEventListener('input', (e) => {
       queueSearchFilter = e.target.value.toUpperCase();
@@ -3149,9 +3214,10 @@
       const mk = v.make || v['Vehicle Make'] || '';
       const md = v.model || v['Vehicle Model'] || '';
       const fullVin = v.vin || v['Vehicle VIN'] || '';
+      // 'Total Cost' field already includes all costs - don't double count
       const totalCost = Number(v['Total Cost'] || v.total_cost || 0);
       const addedCosts = Number(v['Added Costs'] || v.added_costs || 0);
-      const allIn = totalCost + addedCosts;
+      const allIn = totalCost; // Total Cost is already the complete total
       const mileage = v.mileage || v['Mileage'] || '';
       const milesNum = parseInt(String(mileage).replace(/[^0-9]/g, ''), 10) || 0;
       const buyer = v.buyer || v['Buyer'] || v['Purchased From'] || '';
@@ -3162,7 +3228,7 @@
       let html = `<span class="match-found" style="font-weight:700;">${escHtml(yr)} ${escHtml(mk)} ${escHtml(md)}</span>`;
       html += `<div style="margin-top:6px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:11px;line-height:1.7;">`;
       if (allIn) html += `<div style="font-size:14px;font-weight:800;color:#166534;">Total Cost: $${Math.round(allIn).toLocaleString()}</div>`;
-      if (totalCost && addedCosts) html += `<div style="color:#666;">Original: $${Math.round(totalCost).toLocaleString()} + Added: $${Math.round(addedCosts).toLocaleString()}</div>`;
+      if (addedCosts) html += `<div style="color:#666;">Added costs: $${Math.round(addedCosts).toLocaleString()}</div>`;
       if (milesNum) html += `<div><b>Miles:</b> ${milesNum.toLocaleString()}</div>`;
       if (daysOnLot) html += `<div><b>Age:</b> ${daysOnLot} days</div>`;
       if (buyer) html += `<div><b>Buyer:</b> ${escHtml(buyer)}</div>`;
@@ -3231,9 +3297,10 @@
       const md = v?.vehicle_model || '';
       const fullVin = v?.vehicle_vin || '';
       const stock = v?.stock_number || '';
+      // total_cost_num already includes all costs - don't double count
       const totalCost = Number(costData?.total_cost_num || 0);
       const addedCosts = Number(costData?.added_costs_num || 0);
-      const allIn = totalCost + addedCosts;
+      const allIn = totalCost; // total_cost_num is already the complete total
       const daysOnLot = costData?.days_on_lot || '';
 
       matchedVehicle = v || {};
@@ -3247,7 +3314,7 @@
       let html = `<span class="match-found" style="font-weight:700;">${escHtml(yr)} ${escHtml(mk)} ${escHtml(md)}</span>`;
       html += `<div style="margin-top:6px;padding:8px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:11px;line-height:1.7;">`;
       if (allIn) html += `<div style="font-size:14px;font-weight:800;color:#166534;">Total Cost: $${Math.round(allIn).toLocaleString()}</div>`;
-      if (totalCost && addedCosts) html += `<div style="color:#666;">Original: $${Math.round(totalCost).toLocaleString()} + Added: $${Math.round(addedCosts).toLocaleString()}</div>`;
+      if (addedCosts) html += `<div style="color:#666;">Added costs: $${Math.round(addedCosts).toLocaleString()}</div>`;
       if (daysOnLot) html += `<div><b>Age:</b> ${daysOnLot} days</div>`;
       if (stock) html += `<div><b>Stock:</b> ${escHtml(stock)}</div>`;
       html += `</div>`;

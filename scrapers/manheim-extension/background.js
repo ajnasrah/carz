@@ -20,6 +20,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     return false; // Response already sent synchronously
   }
+  
+  // Handle single image download
+  if (request.action === 'downloadSingleImage') {
+    chrome.downloads.download({
+      url: request.url,
+      filename: request.filename,
+      saveAs: false
+    }).then(() => {
+      console.log('Downloaded:', request.filename);
+      sendResponse({ success: true });
+    }).catch(err => {
+      console.error('Download failed:', err);
+      sendResponse({ success: false, error: err.message });
+    });
+    return true; // Will respond asynchronously
+  }
 });
 
 // Keep service worker alive during long downloads (MV3 workaround).

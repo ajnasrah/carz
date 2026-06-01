@@ -117,6 +117,7 @@
         <button id="refreshQueue" class="btn btn-small">Refresh Queue</button>
         <button id="scrapeSoldBtn" class="btn btn-small" style="background:#7b1fa2;">Scrape Texts</button>
         <button id="syncChatLocationsBtn" class="btn btn-small" style="background:#00695c;">Sync Chat Locations</button>
+        <button id="frontLotAgingBtn" class="btn btn-small" style="background:#d32f2f;">Front Lot Aging</button>
       </div>
 
       <input type="text" class="search-input" id="queueSearch" placeholder="Search VIN, notes..." style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:12px;margin-bottom:8px;" />
@@ -134,6 +135,8 @@
       <div id="queueList" class="queue-list"></div>
 
       <div id="crossCheckResults" class="cross-check-results" style="display:none;"></div>
+      
+      <div id="frontLotAgingResults" class="front-lot-aging-results" style="display:none;"></div>
     </div>
 
     <!-- Info section — quick VIN lookup against live Supabase inventory -->
@@ -356,6 +359,7 @@
   <script src="lib/damage-mapper.js"></script>
   <script src="lib/inspection-transform.js"></script>
   <script src="lib/list-uploader.js"></script>
+  <script src="lib/front-lot-tracker.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

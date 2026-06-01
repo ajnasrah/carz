@@ -23,6 +23,13 @@ import MarketplaceListing from './pages/MarketplaceListing'
 import PullList from './pages/PullList'
 import VinCheck from './pages/VinCheck'
 import VehicleAnalytics from './pages/VehicleAnalytics'
+import FrontLotAging from './pages/FrontLotAging'
+import UnmatchedVehicles from './pages/UnmatchedVehicles'
+// Inbound Inspection Pages
+import InboundDashboard from './pages/InboundDashboard'
+import InboundStart from './pages/InboundStart'
+import ArrivalInspection from './pages/ArrivalInspection'
+import MechanicalInspection from './pages/MechanicalInspection'
 import BottomNav from './components/BottomNav'
 
 function ProtectedRoute({ children, requireSetup = true }) {
@@ -87,6 +94,7 @@ function AppRoutes() {
 
       {/* Lot Walk — track inventory location */}
       <Route path="/lot" element={<ProtectedRoute><LotWalk /></ProtectedRoute>} />
+      <Route path="/unmatched" element={<ProtectedRoute><UnmatchedVehicles /></ProtectedRoute>} />
 
       {/* Sold Reports — profit trends + recommendations */}
       <Route path="/sold-reports" element={<ProtectedRoute><SoldReports /></ProtectedRoute>} />
@@ -96,6 +104,15 @@ function AppRoutes() {
       
       {/* Vehicle Analytics — comprehensive filtering and analysis */}
       <Route path="/analytics" element={<ProtectedRoute><VehicleAnalytics /></ProtectedRoute>} />
+      
+      {/* Front Lot Aging — vehicles on lot over 10 days not on SmartAuction */}
+      <Route path="/front-lot-aging" element={<ProtectedRoute><FrontLotAging /></ProtectedRoute>} />
+
+      {/* Inbound Inspection System */}
+      <Route path="/inbound" element={<ProtectedRoute><InboundDashboard /></ProtectedRoute>} />
+      <Route path="/inbound/new" element={<ProtectedRoute><InboundStart /></ProtectedRoute>} />
+      <Route path="/inbound/:id/arrival" element={<ProtectedRoute><ArrivalInspection /></ProtectedRoute>} />
+      <Route path="/inbound/:id/mechanical" element={<ProtectedRoute><MechanicalInspection /></ProtectedRoute>} />
 
       {/* Admin */}
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />

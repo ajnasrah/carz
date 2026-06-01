@@ -397,11 +397,123 @@ async function scrapePage() {
   // Wait for dynamic content and scroll to load lazy images
   console.log('scrapePage: Waiting for dynamic content...');
   console.log('scrapePage: Current URL:', window.location.href);
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  await new Promise(resolve => setTimeout(resolve, 200));
 
   // Auto-navigate through image gallery to load all images
   console.log('scrapePage: Looking for gallery navigation...');
+  
+  // Collection for gallery images found during navigation
+  const galleryImageUrls = new Set();
+  
+  // Helper to find and capture the main gallery image
+  function captureCurrentImage() {
+    // Find the largest image on the page - that's likely the main gallery image
+    let largestImg = null;
+    let maxSize = 0;
+    
+    document.querySelectorAll('img').forEach(img => {
+      if (img.offsetWidth > 400 && img.src && !img.src.includes('logo') && !img.src.includes('icon')) {
+        const size = img.offsetWidth * img.offsetHeight;
+        if (size > maxSize) {
+          maxSize = size;
+          largestImg = img;
+        }
+      }
+    });
+    
+    if (largestImg && largestImg.src) {
+      // Clean the URL
+      let cleanUrl = largestImg.src;
+      if (cleanUrl.includes('?')) {
+        cleanUrl = cleanUrl.split('?')[0];
+      }
+      
+      if (!galleryImageUrls.has(cleanUrl)) {
+        galleryImageUrls.add(cleanUrl);
+        console.log(`scrapePage: Found image #${galleryImageUrls.size}: ${cleanUrl}`);
+        return true;
+      }
+    }
+    
+    // Also check all Manheim CDN images
+    document.querySelectorAll('img[src*="images.cdn.manheim.com"]').forEach(img => {
+      if (img.offsetWidth > 100) {
+        let cleanUrl = img.src;
+        if (cleanUrl.includes('?')) {
+          cleanUrl = cleanUrl.split('?')[0];
+        }
+        
+        if (!galleryImageUrls.has(cleanUrl)) {
+          galleryImageUrls.add(cleanUrl);
+          console.log(`scrapePage: Found Manheim image #${galleryImageUrls.size}: ${cleanUrl}`);
+        }
+      }
+    });
+    
+    return false;
+  }
+  
+  // Capture initial images
+  console.log('scrapePage: Capturing initial images...');
+  captureCurrentImage();
+  
+  // First try to click all thumbnail images to load full-size versions
+  const thumbnailSelectors = [
+    'img[class*="thumb"]',
+    'img[class*="thumbnail"]',
+    '[class*="thumbnail"] img',
+    '[class*="thumb"] img',
+    '[class*="gallery"] img[width]',
+    '[class*="carousel"] img',
+    '[role="button"] img',
+    'button img',
+    '[data-test*="thumbnail"] img',
+    '.image-gallery-thumbnail img',
+    '.gallery-thumb img'
+  ];
+  
+  console.log('scrapePage: Looking for thumbnail images to click...');
+  let thumbnailsClicked = false;
+  
+  for (const selector of thumbnailSelectors) {
+    const thumbnails = document.querySelectorAll(selector);
+    if (thumbnails.length > 3) { // Only if we find multiple thumbnails
+      console.log(`scrapePage: Found ${thumbnails.length} thumbnails with selector: ${selector}`);
+      
+      for (let i = 0; i < thumbnails.length; i++) {
+        try {
+          const thumb = thumbnails[i];
+          // Click the thumbnail or its parent if it's wrapped in a button/link
+          const clickTarget = thumb.closest('button, a, [role="button"]') || thumb;
+          
+          console.log(`scrapePage: Clicking thumbnail ${i + 1}/${thumbnails.length}`);
+          clickTarget.click();
+          
+          // Much shorter wait - just enough for src to update
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          // Capture the current image
+          captureCurrentImage();
+          
+          thumbnailsClicked = true;
+        } catch (e) {
+          console.log(`scrapePage: Error clicking thumbnail ${i}:`, e.message);
+        }
+      }
+      
+      if (thumbnailsClicked) {
+        console.log('scrapePage: Finished clicking through thumbnails');
+        console.log(`scrapePage: Captured ${galleryImageUrls.size} unique gallery images`);
+        break; // Don't try other selectors if we already clicked thumbnails
+      }
+    }
+  }
 
+  // If thumbnail clicking didn't work, try the next/forward button approach
+  if (!thumbnailsClicked) {
+    console.log('scrapePage: No thumbnails found, trying next button navigation...');
+  }
+  
   // Find next/forward buttons in gallery
   const nextButtonSelectors = [
     'button[aria-label*="next" i]',
@@ -456,6 +568,10 @@ async function scrapePage() {
 
   if (nextButton) {
     console.log('scrapePage: Found next button, clicking through gallery...');
+    
+    // Capture initial image before clicking
+    captureMainGalleryImage();
+    
     let clickCount = 0;
     const maxClicks = 50;
 
@@ -473,8 +589,11 @@ async function scrapePage() {
         clickCount++;
         console.log(`scrapePage: Gallery click ${clickCount}`);
 
-        // Wait for images to load
-        await new Promise(resolve => setTimeout(resolve, 400));
+        // Much shorter wait
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Capture the current image
+        captureCurrentImage();
 
         // Re-find the next button (React may re-render it)
         nextButton = findNextButton();
@@ -490,20 +609,17 @@ async function scrapePage() {
       }
     }
     console.log(`scrapePage: Clicked through gallery ${clickCount} times`);
+    console.log(`scrapePage: Captured ${galleryImageUrls.size} unique gallery images during navigation`);
   } else {
     console.log('scrapePage: No next button found');
   }
 
   const originalScroll = window.scrollY;
 
-  // Scroll to bottom to trigger lazy loading
+  // Quick scroll to trigger lazy loading
   window.scrollTo(0, document.body.scrollHeight);
-  await new Promise(resolve => setTimeout(resolve, 800));
-
-  // Scroll back to top
-  window.scrollTo(0, 0);
-  await new Promise(resolve => setTimeout(resolve, 500));
-
+  await new Promise(resolve => setTimeout(resolve, 200));
+  
   // Restore original position
   window.scrollTo(0, originalScroll);
 
@@ -1106,10 +1222,39 @@ async function scrapePage() {
     console.error('scrapePage: Error extracting damages:', e);
   }
 
+  // Quick final wait and capture
+  await new Promise(resolve => setTimeout(resolve, 200));
+  
+  // Do a final capture
+  captureCurrentImage();
+  
+  // Add all captured images to data.images (works for all auction sites)
+  console.log(`scrapePage: Total unique images found: ${galleryImageUrls.size}`);
+  let vehicleImageCount = 0;
+  for (const url of galleryImageUrls) {
+    // Skip only data: and blob: URLs, include everything else
+    // This works for Manheim, OVE, Edge Pipeline, CRS, fyuse, and any other auction site
+    if (!url.startsWith('data:') && !url.startsWith('blob:')) {
+      // Skip obvious non-vehicle images
+      if (url.includes('logo') || url.includes('icon') || url.includes('sprite') || 
+          url.includes('badge') || url.includes('button') || url.includes('.svg')) {
+        continue;
+      }
+      
+      data.images.push({
+        url: url,
+        alt: `vehicle_image_${data.images.length + 1}`,
+        index: data.images.length + 1
+      });
+      vehicleImageCount++;
+    }
+  }
+  console.log(`scrapePage: Added ${vehicleImageCount} vehicle images to download queue`);
+  
   // Extract all images (focus on real vehicle photos only)
   try {
-    console.log('scrapePage: Starting image extraction...');
-    const seenKeys = new Set();
+    console.log('scrapePage: Starting general image extraction...');
+    const seenKeys = new Set([...galleryImageUrls]); // Start with gallery URLs as seen
 
     // Normalize URL for dedup — strip resize/quality params so thumb + full-size
     // versions of the same image don't both get downloaded
@@ -1194,6 +1339,27 @@ async function scrapePage() {
       }
     }
 
+    // --- Method 0: Manheim-specific selectors ---
+    // Try to find images in Manheim's specific gallery structure
+    const manheimSelectors = [
+      '[class*="image-gallery-image"] img',
+      '[class*="gallery-main"] img',
+      '[class*="main-image"] img',
+      '[class*="vehicle-image"] img',
+      '[class*="carousel-inner"] img',
+      '.slick-slide img',
+      '[data-test*="vehicle-image"] img'
+    ];
+    
+    console.log('scrapePage: Trying Manheim-specific selectors...');
+    for (const selector of manheimSelectors) {
+      const imgs = document.querySelectorAll(selector);
+      if (imgs.length > 0) {
+        console.log(`scrapePage: Found ${imgs.length} images with selector: ${selector}`);
+        imgs.forEach(img => collectFromImg(img, 'manheim-specific'));
+      }
+    }
+    
     // --- Method 1: Every <img> on the page (skip tiny ones) ---
     const allImgs = document.querySelectorAll('img');
     console.log('scrapePage: Found', allImgs.length, 'img elements total');

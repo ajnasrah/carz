@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, Trash2, Shield, User } from 'lucide-react'
+import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
+import { isPrimaryAdmin } from '../services/adminSetup'
 
 export default function Admin() {
   const navigate = useNavigate()
@@ -12,6 +13,8 @@ export default function Admin() {
   const [showAdd, setShowAdd] = useState(false)
   const [newUser, setNewUser] = useState({ name: '', phone: '', role: 'inspector' })
   const [error, setError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [searchTerm, setSearchTerm] = useState('')
 
   async function loadUsers() {
     const { data } = await supabase
@@ -82,9 +85,22 @@ export default function Admin() {
     loadUsers()
   }
 
-  async function removeUser(userId) {
-    await supabase.from('profiles').delete().eq('id', userId)
-    loadUsers()
+  async function removeUser(user) {
+    if (isPrimaryAdmin(user.phone)) {
+      setError('Cannot remove the primary admin user')
+      setTimeout(() => setError(''), 3000)
+      return
+    }
+    
+    const { error } = await supabase.from('profiles').delete().eq('id', user.id)
+    
+    if (error) {
+      setError('Failed to remove user: ' + error.message)
+      setTimeout(() => setError(''), 3000)
+    } else {
+      setConfirmDelete(null)
+      loadUsers()
+    }
   }
 
   if (profile?.role !== 'admin') return null
@@ -99,7 +115,7 @@ export default function Admin() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
+      <div className="grid grid-cols-3 gap-3 mb-6">
         <div className="card text-center">
           <p className="text-2xl font-bold text-emerald-400">{users.length}</p>
           <p className="text-sm text-slate-400">Total Users</p>
@@ -110,7 +126,22 @@ export default function Admin() {
           </p>
           <p className="text-sm text-slate-400">Admins</p>
         </div>
+        <div className="card text-center">
+          <p className="text-2xl font-bold text-emerald-400">
+            {users.filter((u) => u.role === 'inspector').length}
+          </p>
+          <p className="text-sm text-slate-400">Inspectors</p>
+        </div>
       </div>
+
+      {/* Search Bar */}
+      <input
+        type="text"
+        placeholder="Search users by name or phone..."
+        value={searchTerm}
+        onChange={(e) => setSearchTerm(e.target.value)}
+        className="w-full mb-4 px-4 py-2 bg-slate-800 text-white rounded-lg"
+      />
 
       {/* Add User */}
       <button
@@ -161,18 +192,33 @@ export default function Admin() {
       )}
 
       {/* Users List */}
-      <h2 className="text-lg font-bold text-white mb-3">Users</h2>
+      <h2 className="text-lg font-bold text-white mb-3">Users ({users.filter(u => 
+        u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        u.phone?.includes(searchTerm)
+      ).length})</h2>
       {loading ? (
         <p className="text-slate-400">Loading...</p>
       ) : (
         <div className="space-y-2">
-          {users.map((u) => (
+          {users
+            .filter(u => 
+              u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+              u.phone?.includes(searchTerm)
+            )
+            .map((u) => (
             <div key={u.id} className="card flex items-center gap-3">
               <div className={`p-2 rounded-lg ${u.role === 'admin' ? 'bg-yellow-500/20' : 'bg-slate-700'}`}>
                 {u.role === 'admin' ? <Shield size={20} className="text-yellow-400" /> : <User size={20} className="text-slate-400" />}
               </div>
               <div className="flex-1">
-                <p className="font-semibold text-white">{u.name || 'Unnamed'}</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-white">{u.name || 'Unnamed'}</p>
+                  {isPrimaryAdmin(u.phone) && (
+                    <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full">
+                      Primary
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-slate-400">{u.phone || 'No phone'}</p>
               </div>
               <div className="flex gap-2">
@@ -183,14 +229,51 @@ export default function Admin() {
                   {u.role === 'admin' ? 'Demote' : 'Promote'}
                 </button>
                 <button
-                  onClick={() => removeUser(u.id)}
-                  className="p-2 rounded-lg bg-red-500/20 text-red-400"
+                  onClick={() => setConfirmDelete(u)}
+                  className="p-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                  disabled={isPrimaryAdmin(u.phone)}
+                  title={isPrimaryAdmin(u.phone) ? 'Cannot remove primary admin' : 'Remove user'}
                 >
                   <Trash2 size={16} />
                 </button>
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-800 rounded-xl p-6 max-w-sm w-full">
+            <h3 className="text-xl font-bold text-white mb-4">Confirm Delete</h3>
+            <p className="text-slate-300 mb-6">
+              Are you sure you want to remove <strong>{confirmDelete.name || 'this user'}</strong>?
+              <br/>
+              <span className="text-sm text-slate-400">{confirmDelete.phone}</span>
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => removeUser(confirmDelete)}
+                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+              >
+                Delete User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Toast */}
+      {error && (
+        <div className="fixed bottom-20 left-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50">
+          {error}
         </div>
       )}
     </div>

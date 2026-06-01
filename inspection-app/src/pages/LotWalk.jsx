@@ -4,7 +4,7 @@ import { ArrowLeft, Mic, Square, Search, CheckCircle2, X, AlertCircle, Camera, C
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode'
 import { supabase } from '../services/supabase'
 import {
-  fetchSections, recordScan, filterInventory, parseSpokenDigits,
+  fetchSections, recordScan, recordUnmatchedVehicle, filterInventory, parseSpokenDigits,
   extractVIN, matchVehicleByVIN,
 } from '../services/lotTracking'
 
@@ -160,7 +160,7 @@ export default function LotWalk() {
   // Resolves a decoded barcode/QR text into a vehicle and logs the scan.
   // Supports factory door-jamb VIN barcodes (17 chars), QR codes containing
   // VINs or stock numbers, and any Code 39/128/Data Matrix that maps to one.
-  const handleCameraDecoded = useCallback((decodedText) => {
+  const handleCameraDecoded = useCallback(async (decodedText) => {
     if (!decodedText) return
     // 1. Try VIN extraction (17-char VIN pattern, no I/O/Q)
     const vin = extractVIN(decodedText)
@@ -170,7 +170,20 @@ export default function LotWalk() {
         submitScanRef.current?.(vehicle, 'barcode')
         return
       }
-      showToast('error', 'VIN not in inventory', `Scanned ${vin.slice(-6)}`)
+      // VIN not found in inventory - record as unmatched
+      try {
+        await recordUnmatchedVehicle({
+          scanned_value: vin,
+          scan_type: 'vin',
+          section,
+          scan_method: 'barcode',
+          notes: 'Full VIN scanned but not in inventory'
+        })
+        showToast('warning', 'Unknown VIN recorded', `${vin.slice(-6)} - Added to unmatched list`)
+      } catch (err) {
+        console.error('Failed to record unmatched VIN', err)
+        showToast('error', 'VIN not in inventory', `Scanned ${vin.slice(-6)}`)
+      }
       return
     }
     // 2. No 17-char VIN — maybe a QR with a stock number or short code.
@@ -182,9 +195,22 @@ export default function LotWalk() {
     } else if (matches.length > 1) {
       setQuery(trimmed)  // surface for user to tap
     } else {
-      showToast('error', 'No match', `Scanned "${trimmed.slice(0, 20)}" — not in inventory`)
+      // No match - record as unmatched
+      try {
+        await recordUnmatchedVehicle({
+          scanned_value: trimmed,
+          scan_type: trimmed.length === 6 ? 'partial_vin' : 'unknown',
+          section,
+          scan_method: 'barcode',
+          notes: `Scanned value not found in inventory`
+        })
+        showToast('warning', 'Unknown vehicle recorded', `"${trimmed.slice(0, 20)}" - Added to unmatched list`)
+      } catch (err) {
+        console.error('Failed to record unmatched scan', err)
+        showToast('error', 'No match', `Scanned "${trimmed.slice(0, 20)}" — not in inventory`)
+      }
     }
-  }, [showToast])
+  }, [showToast, section])
 
   // Safely stop the scanner — html5-qrcode throws synchronously if you call
   // .stop() on a scanner that was never started, so we guard with cameraRunningRef
@@ -329,7 +355,19 @@ export default function LotWalk() {
         } else if (m.length > 1) {
           setQuery(digits)
         } else {
-          showToast('error', 'No match', `Heard "${digits}" — not in inventory`)
+          // No match - record as unmatched
+          recordUnmatchedVehicle({
+            scanned_value: digits,
+            scan_type: digits.length === 6 ? 'partial_vin' : 'unknown',
+            section,
+            scan_method: 'voice',
+            notes: 'Voice input not found in inventory'
+          }).then(() => {
+            showToast('warning', 'Unknown vehicle recorded', `"${digits}" - Added to unmatched list`)
+          }).catch(err => {
+            console.error('Failed to record unmatched voice scan', err)
+            showToast('error', 'No match', `Heard "${digits}" — not in inventory`)
+          })
         }
       }
     }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Manheim/OVE Scraper",
-  "version": "1.0",
-  "description": "Extract vehicle details, images, and damage info from Manheim and OVE listings",
+  "name": "Auto Auction Scraper",
+  "version": "2.1",
+  "description": "Extract vehicle details, images, and damage info from all major auction sites",
   "permissions": [
     "activeTab",
     "tabs",

@@ -48,6 +48,42 @@ export async function recordScan({ stock_number, vin, section, input_method, not
   return data
 }
 
+// Record a vehicle that was scanned but not found in inventory
+export async function recordUnmatchedVehicle({ scanned_value, scan_type, section, scan_method, notes }) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not authenticated — sign in first')
+  
+  // Determine scan type if not provided
+  let detectedType = scan_type
+  if (!detectedType) {
+    if (scanned_value.length === 17) {
+      detectedType = 'vin'
+    } else if (scanned_value.length === 6 && /^[A-Z0-9]+$/.test(scanned_value)) {
+      detectedType = 'partial_vin'
+    } else if (/^\d+(-\d+)?$/.test(scanned_value)) {
+      detectedType = 'stock_number'
+    } else {
+      detectedType = 'unknown'
+    }
+  }
+  
+  const { data, error } = await supabase
+    .from('unmatched_vehicles')
+    .insert({
+      scanned_value,
+      scan_type: detectedType,
+      section,
+      scan_method,
+      notes,
+      scanned_by: user.id,
+    })
+    .select()
+    .single()
+    
+  if (error) throw error
+  return data
+}
+
 export function staleness(daysSinceSeen) {
   if (daysSinceSeen == null) return 'never'
   if (daysSinceSeen >= 14) return 'red'

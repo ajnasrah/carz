@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
 import { AuthContext } from './useAuth'
+import { ensurePrimaryAdmin } from '../services/adminSetup'
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
@@ -8,6 +9,9 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Ensure primary admin exists on app startup
+    ensurePrimaryAdmin()
+    
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) loadProfile(session.user.id)

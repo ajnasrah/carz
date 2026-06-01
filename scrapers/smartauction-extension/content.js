@@ -137,16 +137,43 @@ async function fillVINAndCreate(data) {
   // dumped the VIN into whatever search/filter box SA happened to render
   // first in the DOM.
   function findVinInput() {
+    // MORE AGGRESSIVE VIN DETECTION - Check multiple attributes
     const candidates = [
-      'input[id*="vin" i]',
-      'input[name*="vin" i]',
-      'input[placeholder*="vin" i]',
-      'input[aria-label*="vin" i]',
-      'input[maxlength="17"]',
+      'input[id*="vin" i]:not([id*="search" i]):not([id*="filter" i])',
+      'input[name*="vin" i]:not([name*="search" i]):not([name*="filter" i])',
+      'input[placeholder*="vin" i]:not([placeholder*="search" i])',
+      'input[placeholder*="enter vin" i]',
+      'input[placeholder*="vehicle identification" i]',
+      'input[placeholder*="17" i]:not([placeholder*="search" i])',
+      'input[aria-label*="vin" i]:not([aria-label*="search" i])',
+      'input[aria-label*="vehicle identification" i]',
+      'input[maxlength="17"]:not([type="hidden"])',
+      'input[data-field="vin" i]',
+      'input[data-name="vin" i]',
     ];
+    
+    // First pass: Try all specific selectors
     for (const sel of candidates) {
       for (const el of document.querySelectorAll(sel)) {
-        if (isVisibleInput(el)) return el;
+        // Extra validation: skip if this is clearly wrong
+        const id = (el.id || '').toLowerCase();
+        const name = (el.name || '').toLowerCase();
+        const placeholder = (el.placeholder || '').toLowerCase();
+        const className = (el.className || '').toLowerCase();
+        
+        // Skip search/filter/query fields
+        if (id.includes('search') || id.includes('filter') || id.includes('query') ||
+            name.includes('search') || name.includes('filter') || name.includes('query') ||
+            placeholder.includes('search') || placeholder.includes('filter') || placeholder.includes('type to search') ||
+            className.includes('search') || className.includes('filter')) {
+          console.log('[VIN] Skipping search/filter field:', el);
+          continue;
+        }
+        
+        if (isVisibleInput(el)) {
+          console.log('[VIN] Found VIN input via selector:', sel, el);
+          return el;
+        }
       }
     }
     // Label-based lookup — findFieldByLabel handles <label for=>, sibling,
@@ -158,6 +185,13 @@ async function fillVINAndCreate(data) {
     // Last-resort: first visible text input. Only taken when nothing above
     // hits, which should be never on a valid Post Vehicle page.
     for (const el of document.querySelectorAll('input[type="text"], input:not([type])')) {
+      // Again, skip search/filter fields
+      const id = (el.id || '').toLowerCase();
+      const placeholder = (el.placeholder || '').toLowerCase();
+      if (id.includes('search') || id.includes('filter') || 
+          placeholder.includes('search') || placeholder.includes('filter')) {
+        continue;
+      }
       if (isVisibleInput(el)) return el;
     }
     return null;
@@ -175,11 +209,27 @@ async function fillVINAndCreate(data) {
 
   if (!vinInput) {
     addLog('VIN input field not found on this page', 'log-err');
+    console.error('[VIN] Could not find VIN input. All inputs on page:', 
+      [...document.querySelectorAll('input[type="text"], input:not([type])')].map(i => ({
+        id: i.id,
+        name: i.name,
+        placeholder: i.placeholder,
+        visible: i.offsetParent !== null
+      }))
+    );
     return { success: false, log };
   }
 
-  // Log which field we landed on so when the wrong one gets picked we can see why
-  addLog(`VIN field: ${vinInput.id || vinInput.name || vinInput.placeholder || '(no id/name)'}`);
+  // Log detailed info about which field we found
+  const fieldInfo = `${vinInput.id || vinInput.name || vinInput.placeholder || '(no id/name)'}`;
+  addLog(`VIN field found: ${fieldInfo}`);
+  console.log('[VIN] Selected input details:', {
+    id: vinInput.id,
+    name: vinInput.name,
+    placeholder: vinInput.placeholder,
+    className: vinInput.className,
+    maxLength: vinInput.maxLength
+  });
 
   setFieldValue(vinInput, fullVin);
   try { await navigator.clipboard.writeText(fullVin); } catch (_) {}
