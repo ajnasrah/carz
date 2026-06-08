@@ -711,12 +711,29 @@
     try {
       const res = await fetch(`${SCRAPER_URL}/status`);
       const data = await res.json();
-      scraperStatus.textContent = `Online — ${data.vehicle_count} vehicles`;
-      scraperStatus.className = 'scraper-badge online';
-      scrapeBtn.disabled = false;
-      setServerOnline(true, data.queue_stats);
+      
+      // Check if WhatsApp is connected
+      if (data.whatsapp_connected) {
+        scraperStatus.textContent = 'WhatsApp Connected';
+        scraperStatus.className = 'scraper-badge online';
+        scrapeBtn.disabled = false;
+      } else {
+        scraperStatus.textContent = 'WhatsApp Not Connected';
+        scraperStatus.className = 'scraper-badge offline';
+        scrapeBtn.disabled = false;  // Still allow attempts
+      }
+      
+      // Get queue stats from /queue/stats endpoint
+      try {
+        const qRes = await fetch(`${SCRAPER_URL}/queue/stats`);
+        const stats = await qRes.json();
+        const total = (stats.queued || 0) + (stats.listed || 0) + (stats.sold || 0);
+        setServerOnline(true, { total });
+      } catch {
+        setServerOnline(true);
+      }
     } catch {
-      scraperStatus.textContent = 'Server offline';
+      scraperStatus.textContent = 'Server offline - Start it first';
       scraperStatus.className = 'scraper-badge offline';
       scrapeBtn.disabled = true;
       setServerOnline(false);
@@ -796,9 +813,17 @@
 
   async function runScrape(body = {}) {
     scrapeBtn.disabled = true;
-    scrapeResult.textContent = 'Scraping...';
+    scrapeResult.textContent = 'Scraping all WhatsApp groups...';
     scrapeResult.className = 'scraper-result';
     try {
+      // Always scrape all groups unless specific parameters provided
+      if (!body.groupType) {
+        body.groupType = 'all';
+      }
+      if (!body.limit) {
+        body.limit = 1000;  // Get plenty of messages
+      }
+      
       const res = await fetch(`${SCRAPER_URL}/scrape`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -806,9 +831,18 @@
       });
       const data = await res.json();
       if (data.success) {
-        // Count vehicles from output
-        const lines = (data.output || '').split('\n').filter(l => l.trim().startsWith('/') || l.includes('mi,'));
-        scrapeResult.textContent = 'Done!';
+        // Show WhatsApp scrape results
+        const messages = data.message_count || 0;
+        const locationUpdates = data.location_updates || 0;
+        const vehicleUpdates = data.vehicle_updates || 0;
+        
+        if (locationUpdates > 0 || vehicleUpdates > 0) {
+          scrapeResult.textContent = `✓ ${messages} messages • ${locationUpdates} locations • ${vehicleUpdates} vehicles`;
+        } else if (messages > 0) {
+          scrapeResult.textContent = `✓ Processed ${messages} messages`;
+        } else {
+          scrapeResult.textContent = '✓ Done!';
+        }
         scrapeResult.className = 'scraper-result ok';
         checkScraperStatus();
       } else {
@@ -816,7 +850,7 @@
         scrapeResult.className = 'scraper-result err';
       }
     } catch (err) {
-      scrapeResult.textContent = 'Server not running';
+      scrapeResult.textContent = 'WhatsApp server not running';
       scrapeResult.className = 'scraper-result err';
     } finally {
       scrapeBtn.disabled = false;
