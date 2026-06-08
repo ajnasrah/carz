@@ -87,7 +87,7 @@ export default function Inventory() {
     }
 
     // Location-update times from vehicle_locations — a list upload (UAX/DAA/ADESA/
-    // Super Dispatch) or chat-sourced entry counts as tracking too, not just
+    // Super Dispatch) or chat-sourced entry counts as tracking too, not just  
     // physical lot scans.
     const lm = new Map();
     for (const r of locRes.data || []) lm.set(r.stock_number, r);
@@ -995,6 +995,8 @@ export default function Inventory() {
                 .join(" ");
               const c = costMap.get(r.stock_number) || {};
               const loc = locMap.get(r.stock_number) || {};
+              
+              
               const cost = toInt(c.total_cost) + toInt(c.added_costs);
               const sl = STALENESS_STYLES[staleness(r.effective_days_since)];
               const physLoc = loc.physical_location;
