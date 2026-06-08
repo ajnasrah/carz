@@ -75,7 +75,7 @@
     return stampedAt;
   }
 
-  // Tracks whether the local iMessage scraper server (legacy) is running.
+  // Tracks whether the local WhatsApp scraper server is running.
   // Flipped by setServerOnline(). When false we short-circuit the localhost
   // fetches so Chrome's console isn't filled with ERR_CONNECTION_REFUSED.
   let scraperServerAvailable = false;
@@ -781,7 +781,7 @@
       } catch { /* not running */ }
 
       // Show the start command with copy button
-      const cmd = 'cd ~/Desktop/carz\\ inc/scrapers && python3 imessage_server.py &';
+      const cmd = 'cd ~/Desktop/carz\\ inc/scrapers && python3 whatsapp_server.py &';
       statusDiv.innerHTML = 'Server not running. <button id="copyStartCmd" class="btn btn-small" style="background:#1976d2;margin:0 4px;padding:2px 8px;font-size:10px;">Copy Start Command</button>';
       statusDiv.className = 'status';
       document.getElementById('copyStartCmd').addEventListener('click', () => {

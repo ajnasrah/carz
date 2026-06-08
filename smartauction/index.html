@@ -369,7 +369,7 @@
           const ts = localStorage.getItem(STORAGE_KEYS.queueDate);
           document.getElementById('queueStatus').textContent = `${queueData.length} scraped vehicles (cached ${formatAge(ts)})`;
         } else {
-          document.getElementById('queueStatus').textContent = 'Server offline — start with: python3 imessage_server.py';
+          document.getElementById('queueStatus').textContent = 'Server offline — start with: python3 whatsapp_server.py';
         }
       }
     }
