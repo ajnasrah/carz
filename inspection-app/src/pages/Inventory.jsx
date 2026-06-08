@@ -72,7 +72,7 @@ export default function Inventory() {
         .select(
           "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
         )
-        .limit(10000), // Get ALL records, not just default 1000
+        .limit(10000) // FORCE v2: Get ALL records, not just default 1000
     ]);
 
     let statusRows = statusRes.data;
