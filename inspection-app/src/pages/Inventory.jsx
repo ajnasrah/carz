@@ -91,6 +91,7 @@ export default function Inventory() {
     // physical lot scans.
     const lm = new Map();
     for (const r of locRes.data || []) lm.set(r.stock_number, r);
+    
 
     // Annotate each row with effective_last_seen = max(scan, location_updated_at)
     // and effective_days_since. Z-code (Transport) cars without any other signal
@@ -1000,7 +1001,7 @@ export default function Inventory() {
               const locCode = c.location_code;
               const locUpdated = loc.location_updated_at
                 ? new Date(loc.location_updated_at).getTime()
-                : 0;
+                : (physLoc ? Date.now() : 0); // If we have a physical location but no timestamp, assume it's current
               const scanUpdated = r.last_seen_at
                 ? new Date(r.last_seen_at).getTime()
                 : 0;
