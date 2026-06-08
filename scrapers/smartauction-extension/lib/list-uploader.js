@@ -1471,6 +1471,8 @@
         sa_updated_at: now,
         updated_at: now,
       };
+      // SmartAuction is just the online listing platform
+      // Physical location is set separately when uploading UAX/ADESA run lists
       if (saStatus === 'sold') {
         soldCount++;
         row.sold_on = 'smart_auction';

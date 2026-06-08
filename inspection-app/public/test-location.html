@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Location Update Test</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { 
+            font-family: system-ui; 
+            padding: 20px; 
+            max-width: 600px; 
+            margin: 0 auto;
+            background: #1e293b;
+            color: white;
+        }
+        button { 
+            padding: 10px 20px; 
+            margin: 5px; 
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        button:hover { background: #2563eb; }
+        input, select { 
+            padding: 8px; 
+            margin: 5px; 
+            width: 200px;
+            background: #334155;
+            color: white;
+            border: 1px solid #475569;
+            border-radius: 4px;
+        }
+        #result { 
+            margin-top: 20px; 
+            padding: 15px; 
+            background: #0f172a; 
+            border-radius: 8px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .success { color: #10b981; }
+        .error { color: #ef4444; }
+        h2 { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Location Update Tester</h1>
+    
+    <h2>Single Vehicle Update</h2>
+    <div>
+        <input type="text" id="stockNumber" placeholder="Stock Number" value="06-016-26">
+        <select id="location">
+            <option value="uax">UAX</option>
+            <option value="daa">DAA</option>
+            <option value="adesa">ADESA</option>
+            <option value="in_transit">In Transit</option>
+            <option value="body_shop">Body Shop</option>
+            <option value="mechanic_section">Mechanic</option>
+            <option value="front">Front Lot</option>
+            <option value="jackson">Jackson</option>
+        </select>
+        <button onclick="updateSingle()">Update Location</button>
+    </div>
+    
+    <h2>Bulk Update</h2>
+    <div>
+        <textarea id="bulkStock" rows="5" style="width: 100%; background: #334155; color: white; border: 1px solid #475569; border-radius: 4px; padding: 8px;" placeholder="Enter stock numbers (one per line)">05-257-26
+05-183-26
+05-275-26</textarea>
+        <br>
+        <select id="bulkLocation">
+            <option value="uax">UAX</option>
+            <option value="daa">DAA</option>
+            <option value="adesa">ADESA</option>
+            <option value="in_transit">In Transit</option>
+            <option value="body_shop">Body Shop</option>
+            <option value="mechanic_section">Mechanic</option>
+            <option value="front">Front Lot</option>
+            <option value="jackson">Jackson</option>
+        </select>
+        <button onclick="updateBulk()">Bulk Update</button>
+    </div>
+    
+    <div id="result"></div>
+
+    <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+    
+    window.supabase = createClient(
+        'https://yprihgygmreibcuybwoy.supabase.co',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwcmloZ3lnbXJlaWJjdXlid295Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzODYzNTAsImV4cCI6MjA4ODk2MjM1MH0.L1oDMq7wYnyZwjZOYcYhNvrP0I5wFxf5BZPAwRM3m0o'
+    );
+    
+    window.updateSingle = async function() {
+        const result = document.getElementById('result');
+        const stockNumber = document.getElementById('stockNumber').value;
+        const location = document.getElementById('location').value;
+        
+        result.textContent = 'Updating...';
+        result.className = '';
+        
+        try {
+            // First get the vehicle details
+            const { data: vehicles, error: fetchError } = await window.supabase
+                .from('inventory')
+                .select('stock_number, vehicle_vin, last_6_vin')
+                .eq('stock_number', stockNumber);
+            
+            if (fetchError) throw fetchError;
+            if (!vehicles || vehicles.length === 0) throw new Error('Vehicle not found');
+            
+            const vehicle = vehicles[0];
+            
+            // Update location
+            const { data, error } = await window.supabase
+                .from('vehicle_locations')
+                .upsert({
+                    stock_number: String(vehicle.stock_number).trim(),
+                    vin: vehicle.vehicle_vin || vehicle.last_6_vin || '',
+                    physical_location: location,
+                    physical_source: 'manual',
+                    location_updated_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                }, { onConflict: 'stock_number' })
+                .select();
+            
+            if (error) throw error;
+            
+            result.textContent = '✅ SUCCESS!\n\n' + JSON.stringify(data[0], null, 2);
+            result.className = 'success';
+        } catch (error) {
+            result.textContent = '❌ ERROR:\n\n' + error.message + '\n\n' + JSON.stringify(error, null, 2);
+            result.className = 'error';
+        }
+    }
+    
+    window.updateBulk = async function() {
+        const result = document.getElementById('result');
+        const stockNumbers = document.getElementById('bulkStock').value.split('\n').map(s => s.trim()).filter(Boolean);
+        const location = document.getElementById('bulkLocation').value;
+        
+        result.textContent = 'Processing bulk update...';
+        result.className = '';
+        
+        try {
+            // Get vehicle details
+            const { data: vehicles, error: fetchError } = await window.supabase
+                .from('inventory')
+                .select('stock_number, vehicle_vin, last_6_vin')
+                .in('stock_number', stockNumbers);
+            
+            if (fetchError) throw fetchError;
+            if (!vehicles || vehicles.length === 0) throw new Error('No vehicles found');
+            
+            // Prepare updates
+            const updates = vehicles.map(v => ({
+                stock_number: String(v.stock_number).trim(),
+                vin: v.vehicle_vin || v.last_6_vin || '',
+                physical_location: location,
+                physical_source: 'bulk_manual',
+                location_updated_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            }));
+            
+            // Perform bulk update
+            const { data, error } = await window.supabase
+                .from('vehicle_locations')
+                .upsert(updates, { onConflict: 'stock_number' })
+                .select();
+            
+            if (error) throw error;
+            
+            result.textContent = '✅ SUCCESS! Updated ' + data.length + ' vehicles\n\n';
+            data.forEach(d => {
+                result.textContent += `${d.stock_number} → ${d.physical_location}\n`;
+            });
+            result.className = 'success';
+        } catch (error) {
+            result.textContent = '❌ ERROR:\n\n' + error.message + '\n\n' + JSON.stringify(error, null, 2);
+            result.className = 'error';
+        }
+    }
+    </script>
+</body>
+</html>

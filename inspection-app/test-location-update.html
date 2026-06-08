@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Location Update</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <h1>Location Update Test</h1>
+    <div id="status"></div>
+    <button onclick="testSingleUpdate()">Test Single Update</button>
+    <button onclick="testBulkUpdate()">Test Bulk Update</button>
+    <pre id="result"></pre>
+
+    <script>
+    const { createClient } = supabase;
+    const supabaseClient = createClient(
+        'https://yprihgygmreibcuybwoy.supabase.co',
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlwcmloZ3lnbXJlaWJjdXlid285Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzODYzNTAsImV4cCI6MjA4ODk2MjM1MH0.L1oDMq7wYnyZwjZOYcYhNvrP0I5wFxf5BZPAwRM3m0o'
+    );
+
+    async function testSingleUpdate() {
+        const status = document.getElementById('status');
+        const result = document.getElementById('result');
+        
+        status.textContent = 'Testing single update...';
+        
+        // Get a vehicle
+        const { data: vehicles, error: fetchError } = await supabaseClient
+            .from('inventory')
+            .select('stock_number, vehicle_vin, last_6_vin')
+            .limit(1);
+        
+        if (fetchError) {
+            result.textContent = 'Fetch error: ' + JSON.stringify(fetchError);
+            return;
+        }
+        
+        if (!vehicles || vehicles.length === 0) {
+            result.textContent = 'No vehicles found';
+            return;
+        }
+        
+        const vehicle = vehicles[0];
+        
+        // Update location
+        const { data, error } = await supabaseClient
+            .from('vehicle_locations')
+            .upsert({
+                stock_number: String(vehicle.stock_number).trim(),
+                vin: vehicle.vehicle_vin || vehicle.last_6_vin || '',
+                physical_location: 'in_transit',
+                physical_source: 'manual',
+                location_updated_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'stock_number' })
+            .select();
+        
+        if (error) {
+            result.textContent = 'Update error: ' + JSON.stringify(error);
+        } else {
+            result.textContent = 'SUCCESS! Updated ' + vehicle.stock_number + ' to in_transit\n\n' + JSON.stringify(data, null, 2);
+        }
+        
+        status.textContent = 'Test complete';
+    }
+
+    async function testBulkUpdate() {
+        const status = document.getElementById('status');
+        const result = document.getElementById('result');
+        
+        status.textContent = 'Testing bulk update...';
+        
+        // Get multiple vehicles
+        const { data: vehicles, error: fetchError } = await supabaseClient
+            .from('inventory')
+            .select('stock_number, vehicle_vin, last_6_vin')
+            .limit(5);
+        
+        if (fetchError) {
+            result.textContent = 'Fetch error: ' + JSON.stringify(fetchError);
+            return;
+        }
+        
+        if (!vehicles || vehicles.length === 0) {
+            result.textContent = 'No vehicles found';
+            return;
+        }
+        
+        // Prepare bulk updates
+        const updates = vehicles.map(v => ({
+            stock_number: String(v.stock_number).trim(),
+            vin: v.vehicle_vin || v.last_6_vin || '',
+            physical_location: 'body_shop',
+            physical_source: 'bulk_manual',
+            location_updated_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        }));
+        
+        // Perform bulk update
+        const { data, error } = await supabaseClient
+            .from('vehicle_locations')
+            .upsert(updates, { onConflict: 'stock_number' })
+            .select();
+        
+        if (error) {
+            result.textContent = 'Bulk update error: ' + JSON.stringify(error);
+        } else {
+            result.textContent = 'SUCCESS! Updated ' + data.length + ' vehicles to body_shop\n\nStock numbers: ' + 
+                vehicles.map(v => v.stock_number).join(', ') + '\n\n' + 
+                JSON.stringify(data, null, 2);
+        }
+        
+        status.textContent = 'Test complete';
+    }
+    </script>
+</body>
+</html>

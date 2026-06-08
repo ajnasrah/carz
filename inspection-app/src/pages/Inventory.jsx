@@ -10,6 +10,7 @@ import {
   X,
   Copy,
   History,
+  Upload,
 } from "lucide-react";
 import { supabase } from "../services/supabase";
 import { toInt, toMoney } from "../services/utils";
@@ -19,6 +20,7 @@ import {
   formatLastSeen,
 } from "../services/lotTracking";
 import VehicleHistoryModal from "../components/VehicleHistoryModal";
+import BulkLocationEdit from "../components/BulkLocationEdit";
 
 export default function Inventory() {
   const navigate = useNavigate();
@@ -46,6 +48,7 @@ export default function Inventory() {
   const [reloadTimeout, setReloadTimeout] = useState(null); // track reload timeout
   const [historyStock, setHistoryStock] = useState(null); // stock number for history modal
   const [historyVin, setHistoryVin] = useState(null); // VIN for history modal
+  const [showBulkEdit, setShowBulkEdit] = useState(false); // bulk location edit modal
 
   async function load() {
     setLoading(true);
@@ -504,7 +507,10 @@ export default function Inventory() {
         .select();
       
       if (locError) {
-        throw new Error(`Failed to update location: ${locError.message}`);
+        console.error('Location update failed:', locError);
+        alert(`Failed to update location: ${locError.message}\n\nDetails: ${JSON.stringify(locError)}`);
+        setSaving(false);
+        return;
       }
       
       // IMPORTANT: We do NOT modify location_code - it comes from Frazer
@@ -694,6 +700,13 @@ export default function Inventory() {
           title={`Export ${filtered.length} rows to CSV`}
         >
           <Download size={18} />
+        </button>
+        <button
+          onClick={() => setShowBulkEdit(true)}
+          className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-emerald-400"
+          title="Bulk edit locations"
+        >
+          <Upload size={18} />
         </button>
         <button
           onClick={load}
@@ -1314,6 +1327,17 @@ export default function Inventory() {
           onClose={() => {
             setHistoryStock(null);
             setHistoryVin(null);
+          }}
+        />
+      )}
+
+      {/* Bulk Location Edit Modal */}
+      {showBulkEdit && (
+        <BulkLocationEdit
+          onClose={() => setShowBulkEdit(false)}
+          onSuccess={() => {
+            setShowBulkEdit(false);
+            load(); // Reload data after bulk update
           }}
         />
       )}
