@@ -52,6 +52,13 @@ export default function Inventory() {
 
   async function load() {
     setLoading(true);
+    
+    // First get inventory stock numbers to filter vehicle_locations
+    const { data: inventoryStocks } = await supabase
+      .from("inventory")
+      .select("stock_number");
+    const stockNumbers = (inventoryStocks || []).map(r => r.stock_number);
+    
     // Pull from vehicle_lot_status view (joins inventory + latest scan).
     // Falls back to the plain inventory table if the view doesn't exist yet
     // (i.e. the lot-tracking-schema.sql migration hasn't been run).
@@ -67,12 +74,14 @@ export default function Inventory() {
         .select("name")
         .eq("active", true)
         .order("sort_order"),
-      supabase
-        .from("vehicle_locations")
-        .select(
-          "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
-        )
-        .limit(10000) // FORCE v2: Get ALL records, not just default 1000
+      stockNumbers.length > 0
+        ? supabase
+            .from("vehicle_locations")
+            .select(
+              "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
+            )
+            .in('stock_number', stockNumbers)
+        : Promise.resolve({ data: [], error: null })
     ]);
 
     let statusRows = statusRes.data;
