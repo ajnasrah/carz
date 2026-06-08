@@ -1004,9 +1004,11 @@ export default function Inventory() {
               const scanUpdated = r.last_seen_at
                 ? new Date(r.last_seen_at).getTime()
                 : 0;
-              // Physical location takes priority when it's been manually set
+              // Physical location takes priority for auction locations and when manually set
+              // Always show auction locations (uax, daa, adesa) as they are definitive
+              const isAuctionLocation = ['uax', 'daa', 'adesa'].includes(physLoc);
               const auctionIsNewer =
-                physLoc && physLoc !== "unknown" && (locUpdated >= scanUpdated || physLoc === "in_transit");
+                physLoc && physLoc !== "unknown" && (isAuctionLocation || locUpdated >= scanUpdated || physLoc === "in_transit");
               const locBadge = auctionIsNewer
                 ? LOCATION_COLORS[physLoc] || "bg-slate-600"
                 : null;
