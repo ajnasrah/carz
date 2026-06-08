@@ -71,7 +71,8 @@ export default function Inventory() {
         .from("vehicle_locations")
         .select(
           "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
-        ),
+        )
+        .limit(10000), // Get ALL records, not just default 1000
     ]);
 
     let statusRows = statusRes.data;
@@ -90,18 +91,7 @@ export default function Inventory() {
     // Super Dispatch) or chat-sourced entry counts as tracking too, not just  
     // physical lot scans.
     const lm = new Map();
-    console.log('Vehicle locations response:', locRes);
-    if (locRes.error) {
-      console.error('ERROR loading vehicle_locations:', locRes.error);
-    }
-    for (const r of locRes.data || []) {
-      lm.set(r.stock_number, r);
-      if (r.stock_number === '05-234-26') {
-        console.log('FOUND 05-234-26 in vehicle_locations:', r);
-      }
-    }
-    console.log('locMap size after loading:', lm.size);
-    console.log('05-234-26 in locMap?', lm.has('05-234-26'), lm.get('05-234-26'));
+    for (const r of locRes.data || []) lm.set(r.stock_number, r);
     
 
     // Annotate each row with effective_last_seen = max(scan, location_updated_at)
@@ -1007,16 +997,6 @@ export default function Inventory() {
               const c = costMap.get(r.stock_number) || {};
               const loc = locMap.get(r.stock_number) || {};
               
-              if (r.stock_number === '05-234-26') {
-                console.log('RENDERING 05-234-26:', {
-                  stock: r.stock_number,
-                  loc: loc,
-                  physLoc: loc.physical_location,
-                  locMapHas: locMap.has(r.stock_number),
-                  locMapGet: locMap.get(r.stock_number)
-                });
-              }
-              
               const cost = toInt(c.total_cost) + toInt(c.added_costs);
               const sl = STALENESS_STYLES[staleness(r.effective_days_since)];
               const physLoc = loc.physical_location;
@@ -1032,12 +1012,6 @@ export default function Inventory() {
               const locBadge = (physLoc && physLoc !== "unknown")
                 ? LOCATION_COLORS[physLoc] || "bg-slate-600"
                 : null;
-                
-              if (r.stock_number === '05-234-26') {
-                console.log('  physLoc:', physLoc);
-                console.log('  LOCATION_COLORS[physLoc]:', LOCATION_COLORS[physLoc]);
-                console.log('  locBadge:', locBadge);
-              }
               // Check if dispatched - prioritize physical location over Frazer code
               const isDispatched = physLoc === "in_transit" || 
                                    (locCode === "X" && physLoc !== "front" && physLoc !== "jackson");
