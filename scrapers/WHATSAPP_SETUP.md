@@ -1,6 +1,6 @@
 # WhatsApp Integration Setup Guide
 
-This replaces the iMessage scraper with WhatsApp for vehicle inspection data.
+This guide covers WhatsApp integration for vehicle inspection data.
 
 ## Prerequisites
 
@@ -61,7 +61,7 @@ python3 whatsapp_server.py
 
 ## How It Works
 
-### Message Format (Same as iMessage)
+### Message Format
 Messages in the WhatsApp group should follow this format:
 ```
 123456
@@ -83,7 +83,7 @@ Front bumper has minor scratch
 
 ## API Endpoints (Compatible with Chrome Extension)
 
-The server runs on **localhost:7749** (same as iMessage server) with these endpoints:
+The server runs on **localhost:7749** with these endpoints:
 
 - `GET /status` - Check server and WhatsApp connection
 - `POST /scrape` - Manually trigger message scraping
@@ -115,18 +115,7 @@ curl http://localhost:7750/groups
 - View logs in both terminal windows
 - Verify group name is correct
 
-## Migration from iMessage
-
-### Stop iMessage Services
-```bash
-# Stop the iMessage server
-pkill -f imessage_server.py
-
-# Disable LaunchAgent if set up
-launchctl unload ~/Library/LaunchAgents/com.carzinc.imessage.plist
-```
-
-### Data Continuity
+## Data Continuity
 - Vehicle folders remain in the same location: `~/Library/Application Support/CarzInc/seller_group_output`
 - Queue file (`queue.json`) format unchanged
 - Chrome extensions work without modifications

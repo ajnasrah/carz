@@ -1005,15 +1005,9 @@ export default function Inventory() {
               const scanUpdated = r.last_seen_at
                 ? new Date(r.last_seen_at).getTime()
                 : 0;
-              // Always use the most recent location update, regardless of source
-              // If physical_location was updated more recently than lot scan, use it
-              const usePhysicalLocation =
-                physLoc && physLoc !== "unknown" && (
-                  !r.last_seen_at || // No lot scan yet
-                  locUpdated >= scanUpdated || // Physical location is newer
-                  physLoc === "in_transit" // Always show in transit
-                );
-              const locBadge = usePhysicalLocation
+              // If we have a physical location from vehicle_locations, ALWAYS use it
+              // Don't care about timestamps or Frazer codes
+              const locBadge = (physLoc && physLoc !== "unknown")
                 ? LOCATION_COLORS[physLoc] || "bg-slate-600"
                 : null;
               // Check if dispatched - prioritize physical location over Frazer code

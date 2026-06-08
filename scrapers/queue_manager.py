@@ -5,7 +5,7 @@ Queue Manager for Carz Inc Vehicle Listing Pipeline
 Central manifest (queue.json) that tracks every vehicle's status through the
 listing pipeline: queued → listed → sold.
 
-Used by imessage_scraper.py and imessage_server.py.
+Used by whatsapp_server.py for vehicle queue management.
 """
 
 import json

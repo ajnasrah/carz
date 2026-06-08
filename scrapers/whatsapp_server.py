@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WhatsApp Server for Carz Inc - Replaces iMessage Server
+WhatsApp Server for Carz Inc
 Runs on localhost:7749 to maintain compatibility with Chrome extensions
 
 This uses WhatsApp Web automation via whatsapp-web.js running in Node.js
@@ -11,7 +11,7 @@ Usage:
   2. Then run: python3 whatsapp_server.py
   3. Scan QR code when prompted in the Node.js terminal
 
-Endpoints (same as iMessage server for compatibility):
+API Endpoints:
   GET  /status   - Check if server is running + last scrape info
   POST /scrape   - Run scraper (optional JSON body: {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"})
   GET  /vehicles - List all scraped vehicle folders
@@ -172,7 +172,7 @@ def update_vehicle_location(vin_last6, location, updated_by='WhatsApp'):
 def parse_vehicle_entry(text):
     """
     Parse a vehicle inspection message into structured data.
-    Expected format (same as iMessage):
+    Expected format:
         [last 6 of VIN]
         [miles]
         [condition]
