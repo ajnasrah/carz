@@ -93,6 +93,14 @@ export default function Inventory() {
     const lm = new Map();
     for (const r of locRes.data || []) lm.set(r.stock_number, r);
     
+    // Debug in production
+    console.log('Vehicle locations loaded:', {
+      count: (locRes.data || []).length,
+      has05_234_26: lm.has('05-234-26'),
+      data05_234_26: lm.get('05-234-26')
+    });
+    window._DEBUG_LOCMAP = lm; // Expose for console debugging
+    
 
     // Annotate each row with effective_last_seen = max(scan, location_updated_at)
     // and effective_days_since. Z-code (Transport) cars without any other signal
