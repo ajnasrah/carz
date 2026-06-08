@@ -1004,12 +1004,15 @@ export default function Inventory() {
               const scanUpdated = r.last_seen_at
                 ? new Date(r.last_seen_at).getTime()
                 : 0;
-              // Physical location takes priority for auction locations and when manually set
-              // Always show auction locations (uax, daa, adesa) as they are definitive
-              const isAuctionLocation = ['uax', 'daa', 'adesa'].includes(physLoc);
-              const auctionIsNewer =
-                physLoc && physLoc !== "unknown" && (isAuctionLocation || locUpdated >= scanUpdated || physLoc === "in_transit");
-              const locBadge = auctionIsNewer
+              // Always use the most recent location update, regardless of source
+              // If physical_location was updated more recently than lot scan, use it
+              const usePhysicalLocation =
+                physLoc && physLoc !== "unknown" && (
+                  !r.last_seen_at || // No lot scan yet
+                  locUpdated >= scanUpdated || // Physical location is newer
+                  physLoc === "in_transit" // Always show in transit
+                );
+              const locBadge = usePhysicalLocation
                 ? LOCATION_COLORS[physLoc] || "bg-slate-600"
                 : null;
               // Check if dispatched - prioritize physical location over Frazer code
