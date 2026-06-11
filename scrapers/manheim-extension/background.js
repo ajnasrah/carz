@@ -122,6 +122,37 @@ async function downloadAllData(data) {
       filename: folderPrefix + vin + '_summary.txt',
       saveAs: false
     });
+    
+    // Also save a JSON file with all the data
+    const jsonData = {
+      vin: data.vin,
+      vehicle: data.vehicle,
+      year: data.year,
+      make: data.make,
+      model: data.model,
+      odometer: data.odometer,
+      location: data.location,
+      seller: data.seller,
+      currentBid: data.currentBid,
+      inspectionType: data.inspectionType,
+      announcements: data.announcements,
+      damages: data.damages || [],
+      tires: data.tires || [],
+      images: downloadedImages.map(img => img.filename),
+      scraped_at: new Date().toISOString(),
+      source_url: data.url || '',
+      total_images: downloadedImages.length,
+      total_damages: (data.damages || []).length
+    };
+    
+    const jsonDataUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(jsonData, null, 2));
+    
+    console.log('Downloading JSON data file...');
+    await chrome.downloads.download({
+      url: jsonDataUrl,
+      filename: folderPrefix + vin + '_data.json',
+      saveAs: false
+    });
 
     console.log('All downloads completed for VIN:', vin);
   } finally {
@@ -163,7 +194,18 @@ function generateSummaryText(data, downloadedImages) {
 
   if (damages.length > 0) {
     damages.forEach((damage, i) => {
-      text += (i + 1) + '. ' + damage + '\n';
+      // Handle both string damages and object damages
+      if (typeof damage === 'string') {
+        text += (i + 1) + '. ' + damage + '\n';
+      } else if (damage.part && damage.type) {
+        text += (i + 1) + '. ' + damage.part + ' - ' + damage.type;
+        if (damage.severity) {
+          text += ' (' + damage.severity + ')';
+        }
+        text += '\n';
+      } else {
+        text += (i + 1) + '. ' + JSON.stringify(damage) + '\n';
+      }
     });
   } else {
     text += 'No damages detected or reported.\n';
@@ -178,13 +220,21 @@ function generateSummaryText(data, downloadedImages) {
     });
   }
 
-  if (data.announcements && data.announcements.length > 0) {
+  // Handle announcements - can be either a string or an array
+  if (data.announcements) {
     text += '\n' + '-'.repeat(60) + '\n';
     text += 'ANNOUNCEMENTS\n';
     text += '-'.repeat(60) + '\n\n';
-    data.announcements.forEach((ann, i) => {
-      text += (i + 1) + '. ' + ann + '\n\n';
-    });
+    
+    if (Array.isArray(data.announcements) && data.announcements.length > 0) {
+      data.announcements.forEach((ann, i) => {
+        text += (i + 1) + '. ' + ann + '\n\n';
+      });
+    } else if (typeof data.announcements === 'string' && data.announcements.length > 0) {
+      text += data.announcements + '\n\n';
+    } else {
+      text += 'No announcements\n\n';
+    }
   }
 
   text += '\n' + '-'.repeat(60) + '\n';

@@ -40,6 +40,13 @@
         <summary class="paste-summary">📋 List Uploader — sync cars across sources</summary>
         <div style="padding:4px 0;">
           <div class="upload-row">
+            <label class="btn btn-small upload-label-btn" style="background:#2e7d32;color:#fff;">
+              ADESA Data
+              <input type="file" id="adesaJsonInput" accept=".json" style="display:none" />
+            </label>
+            <span id="adesaJsonStatus" class="upload-file-status">Load ADESA JSON</span>
+          </div>
+          <div class="upload-row">
             <label class="btn btn-small upload-label-btn" style="background:#7b1fa2;color:#fff;">
               SmartAuction
               <input type="file" id="luSaInput" accept=".csv" style="display:none" />
@@ -379,6 +386,7 @@
   <script src="lib/inspection-transform.js"></script>
   <script src="lib/list-uploader.js"></script>
   <script src="lib/front-lot-tracker.js"></script>
+  <script src="lib/adesa-bridge.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

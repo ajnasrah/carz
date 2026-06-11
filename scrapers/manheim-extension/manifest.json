@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Auto Auction Scraper",
-  "version": "2.1",
-  "description": "Extract vehicle details, images, and damage info from all major auction sites",
+  "version": "3.0",
+  "description": "Extract vehicle details, images, and damage info from Manheim, Edge, and ADESA",
   "permissions": [
     "activeTab",
     "tabs",
@@ -14,6 +14,8 @@
     "*://*.manheim.com/*",
     "*://*.ove.com/*",
     "*://*.edgepipeline.com/*",
+    "*://*.adesa.com/*",
+    "*://marketplace.adesa.com/*",
     "*://*.crsimplified-ae.s3.amazonaws.com/*",
     "*://*.cloudfront.net/*",
     "*://*.akamaized.net/*",
@@ -32,7 +34,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.manheim.com/*", "*://*.ove.com/*", "*://*.edgepipeline.com/*", "*://*.crsimplified-ae.s3.amazonaws.com/*"],
+      "matches": ["*://*.manheim.com/*", "*://*.ove.com/*", "*://*.edgepipeline.com/*", "*://*.adesa.com/*", "*://marketplace.adesa.com/*", "*://*.crsimplified-ae.s3.amazonaws.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

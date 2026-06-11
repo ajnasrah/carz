@@ -89,3 +89,35 @@ h1 {
   background: white;
   border-radius: 3px;
 }
+
+.site-info {
+  padding: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  border-radius: 5px;
+  text-align: center;
+}
+
+.site-info.manheim {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #90caf9;
+}
+
+.site-info.edge {
+  background: #f3e5f5;
+  color: #6a1b9a;
+  border: 1px solid #ba68c8;
+}
+
+.site-info.adesa {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #81c784;
+}
+
+.site-info.unknown {
+  background: #fafafa;
+  color: #757575;
+  border: 1px solid #e0e0e0;
+}

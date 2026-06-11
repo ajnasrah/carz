@@ -2496,6 +2496,12 @@
         saveSession();
       }
     });
+
+    // ADESA Data Import
+    const adesaFileInput = document.getElementById('adesaFileInput');
+    if (adesaFileInput) {
+      adesaFileInput.addEventListener('change', handleAdesaImport);
+    }
   }
 
   // ── Step Navigation ──
@@ -3139,6 +3145,78 @@
     panelSel.value = '';
     typeSel.value = '';
     descEl.value = '';
+  }
+
+  // ── ADESA Data Import ──
+  async function handleAdesaImport(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    statusDiv.textContent = 'Loading ADESA data...';
+    statusDiv.className = 'status';
+    
+    try {
+      const text = await file.text();
+      const adesaData = JSON.parse(text);
+      
+      // Use AdesaBridge to convert the data
+      if (typeof window.AdesaBridge === 'undefined') {
+        statusDiv.textContent = 'Error: ADESA bridge not loaded';
+        statusDiv.className = 'status error';
+        return;
+      }
+      
+      const converted = window.AdesaBridge.convertVehicleData(adesaData);
+      
+      // Fill VIN fields
+      if (converted.vin) {
+        const last6 = converted.vin.slice(-6);
+        vin6Input.value = last6;
+        document.getElementById('fullVin').value = converted.vin;
+      }
+      
+      // Fill mileage
+      if (converted.mileage) {
+        odometerInput.value = converted.mileage.toString().replace(/\D/g, '');
+      }
+      
+      // Clear existing damages and add ADESA damages
+      damages = [];
+      if (converted.damages && converted.damages.length > 0) {
+        converted.damages.forEach(damage => {
+          // Map ADESA damage format to SmartAuction format
+          addDamage({
+            panel: damage.panel || 'Unknown',
+            type: damage.type || 'Damage',
+            description: damage.description || `${damage.type} on ${damage.panel}`,
+            severity: damage.severity || '',
+            chargeable: damage.chargeable || 'No',
+            estimatedCost: damage.estimatedCost || 0,
+            category: damage.category || 'Exterior'
+          });
+        });
+      }
+      
+      // Update vehicle info display
+      if (adesaData.year && adesaData.make && adesaData.model) {
+        const vehicleStr = `${adesaData.year} ${adesaData.make} ${adesaData.model}`;
+        document.getElementById('vehicleTitle').textContent = vehicleStr;
+      }
+      
+      renderDamages();
+      saveSession();
+      
+      statusDiv.textContent = `Loaded: ${converted.vin ? converted.vin.slice(-6) : 'Unknown'} - ${damages.length} damages`;
+      statusDiv.className = 'status success';
+      
+      // Reset file input so the same file can be selected again
+      e.target.value = '';
+      
+    } catch (err) {
+      console.error('ADESA import error:', err);
+      statusDiv.textContent = 'Error loading ADESA file: ' + err.message;
+      statusDiv.className = 'status error';
+    }
   }
 
   // ── Step 2: Tire Duplication ──

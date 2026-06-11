@@ -36,6 +36,7 @@ export default function Inventory() {
     if (f === "never") return "__never__";
     if (f === "stale") return "__stale__";
     if (f === "needs_dispatch") return "__needs_dispatch__";
+    if (f === "front_lot_aging") return "__front_lot_aging__";
     return "";
   });
   const [sections, setSections] = useState([]);
@@ -310,6 +311,17 @@ export default function Inventory() {
           const loc = locMap.get(r.stock_number) || {};
           return (
             c.location_code === "Z" && loc.physical_location !== "in_transit"
+          );
+        });
+      } else if (sectionFilter === "__front_lot_aging__") {
+        // Front lot vehicles over 10 days not listed on SmartAuction
+        result = result.filter((r) => {
+          const loc = locMap.get(r.stock_number) || {};
+          const daysOnLot = parseInt(r.days_on_lot, 10) || 0;
+          return (
+            loc.physical_location === "front_lot" && 
+            daysOnLot >= 10 &&
+            !loc.sa_status  // Not listed on SmartAuction
           );
         });
       } else if (sectionFilter === "__other_small__") {
@@ -778,6 +790,15 @@ export default function Inventory() {
             c.location_code === "Z" && loc.physical_location !== "in_transit"
           );
         }).length;
+        const frontLotAgingCount = rows.filter((r) => {
+          const loc = locMap.get(r.stock_number) || {};
+          const daysOnLot = parseInt(r.days_on_lot, 10) || 0;
+          return (
+            loc.physical_location === "front_lot" && 
+            daysOnLot >= 10 &&
+            !loc.sa_status
+          );
+        }).length;
         const isPlaces =
           sectionFilter &&
           ![
@@ -785,6 +806,7 @@ export default function Inventory() {
             "__stale__",
             "__never__",
             "__needs_dispatch__",
+            "__front_lot_aging__",
           ].includes(sectionFilter);
         const Pill = ({ active, onClick, children }) => (
           <button
@@ -818,6 +840,12 @@ export default function Inventory() {
                 onClick={() => setSectionFilter("__needs_dispatch__")}
               >
                 🚛 Needs Dispatch ({needsDispatchCount})
+              </Pill>
+              <Pill
+                active={sectionFilter === "__front_lot_aging__"}
+                onClick={() => setSectionFilter("__front_lot_aging__")}
+              >
+                📅 Front Lot 10d+ ({frontLotAgingCount})
               </Pill>
               <Pill
                 active={sectionFilter === "__never__"}
