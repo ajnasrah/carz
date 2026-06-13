@@ -231,9 +231,20 @@ async function fillVINAndCreate(data) {
     maxLength: vinInput.maxLength
   });
 
+  // Force the full VIN without any truncation
+  vinInput.maxLength = 17; // Ensure field accepts full VIN
   setFieldValue(vinInput, fullVin);
+  
+  // Double-check the value was set correctly
+  if (vinInput.value !== fullVin) {
+    // If first attempt failed, try direct assignment
+    vinInput.value = fullVin;
+    vinInput.dispatchEvent(new Event('input', { bubbles: true }));
+    vinInput.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  
   try { await navigator.clipboard.writeText(fullVin); } catch (_) {}
-  addLog('VIN entered & copied to clipboard — click Create New Post manually', 'log-ok');
+  addLog(`VIN entered (${fullVin}) & copied to clipboard — click Create New Post manually`, 'log-ok');
 
   return { success: true, log };
 }

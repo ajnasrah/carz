@@ -688,6 +688,11 @@
 
     checkScraperStatus();
     bindEvents();
+    
+    // Load queue data immediately
+    Promise.all([loadQueue(), loadCompletedInspections()]).then(() => {
+      renderDashList();
+    });
     goToStep(1);
 
     // Default to queue dashboard mode
@@ -709,7 +714,11 @@
   // ── Scraper ──
   async function checkScraperStatus() {
     try {
-      const res = await fetch(`${SCRAPER_URL}/status`);
+      // Add timeout to prevent hanging
+      const res = await fetch(`${SCRAPER_URL}/status`, { 
+        signal: AbortSignal.timeout(3000),
+        mode: 'cors'
+      });
       const data = await res.json();
       
       // Check if WhatsApp is connected
@@ -725,18 +734,26 @@
       
       // Get queue stats from /queue/stats endpoint
       try {
-        const qRes = await fetch(`${SCRAPER_URL}/queue/stats`);
+        const qRes = await fetch(`${SCRAPER_URL}/queue/stats`, {
+          signal: AbortSignal.timeout(2000)
+        });
         const stats = await qRes.json();
         const total = (stats.queued || 0) + (stats.listed || 0) + (stats.sold || 0);
         setServerOnline(true, { total });
       } catch {
         setServerOnline(true);
       }
-    } catch {
+    } catch (err) {
+      console.log('Server check failed:', err.message);
       scraperStatus.textContent = 'Server offline - Start it first';
       scraperStatus.className = 'scraper-badge offline';
       scrapeBtn.disabled = true;
       setServerOnline(false);
+      
+      // Retry after 2 seconds if it's a connection error
+      if (err.name === 'TypeError' || err.name === 'AbortError') {
+        setTimeout(() => checkScraperStatus(), 2000);
+      }
     }
   }
 
@@ -752,16 +769,24 @@
     const isOnline = serverDot.classList.contains('online');
 
     if (isOnline) {
-      // Stop server
+      // Stop both servers
       serverToggle.disabled = true;
       serverLabel.textContent = 'Stopping...';
+      
+      // Try to stop Python server
       try {
         await fetch(`${SCRAPER_URL}/shutdown`, { method: 'POST' });
       } catch { /* expected — server shuts down */ }
-      await new Promise(r => setTimeout(r, 1000));
+      
+      // Try to stop WhatsApp client
+      try {
+        await fetch('http://localhost:7750/shutdown', { method: 'POST' });
+      } catch { /* expected — client shuts down */ }
+      
+      await new Promise(r => setTimeout(r, 1500));
       setServerOnline(false);
       serverToggle.disabled = false;
-      statusDiv.textContent = 'Server stopped';
+      statusDiv.textContent = 'Servers stopped';
       statusDiv.className = 'status';
     } else {
       // Can't start from extension — show command
@@ -781,7 +806,7 @@
       } catch { /* not running */ }
 
       // Show the start command with copy button
-      const cmd = 'cd ~/Desktop/carz\\ inc/scrapers && python3 whatsapp_server.py &';
+      const cmd = 'cd ~/Desktop/carz\\ inc/scrapers && python3 whatsapp_server.py & node whatsapp_client.js';
       statusDiv.innerHTML = 'Server not running. <button id="copyStartCmd" class="btn btn-small" style="background:#1976d2;margin:0 4px;padding:2px 8px;font-size:10px;">Copy Start Command</button>';
       statusDiv.className = 'status';
       document.getElementById('copyStartCmd').addEventListener('click', () => {
@@ -857,7 +882,7 @@
     }
   }
 
-  // ── Scraper: Lookup VIN from Messages ──
+  // ── Scraper: Lookup VIN from WhatsApp Queue ──
   async function lookupFromMessages() {
     const vin6 = vin6Input.value.trim();
     if (vin6.length < 4) {
@@ -873,7 +898,7 @@
     try {
       const res = await fetch(`${SCRAPER_URL}/vehicle/${vin6}`);
       if (!res.ok) {
-        msgLookupResult.textContent = `No match for "${vin6}" in scraped messages`;
+        msgLookupResult.textContent = `No match for "${vin6}" in WhatsApp queue`;
         msgLookupResult.className = 'msg-lookup-result visible err';
         return;
       }
@@ -960,9 +985,23 @@
     wizardSection.style.display = mode === 'wizard' ? 'block' : 'none';
     infoSection.style.display = mode === 'info' ? 'block' : 'none';
     if (mode === 'queue') {
-      await Promise.all([loadQueue(), loadCompletedInspections()]);
+      // Only load queue if we don't have data yet
+      if (!queueData || queueData.length === 0) {
+        await Promise.all([loadQueue(), loadCompletedInspections()]);
+      }
       await restoreDashUploads();
-      if (inventory.length > 0 && !crossCheckData) await runCrossCheck();
+      
+      // Update stats from queue data
+      const queued = queueData.filter(v => v.status === 'queued').length;
+      const listed = queueData.filter(v => v.status === 'listed').length;
+      const sold = queueData.filter(v => v.status === 'sold').length;
+      const ready = queueData.filter(v => v.status === 'queued' && v.photo_count > 0).length;
+      
+      document.getElementById('statQueued').textContent = queued || 0;
+      document.getElementById('statListed').textContent = listed || 0;
+      document.getElementById('statSold').textContent = sold || 0;
+      document.getElementById('statTotal').textContent = queueData.length || 0;
+      
       renderDashList();
     }
     if (mode === 'info') {
@@ -1015,7 +1054,7 @@
       soldData = await parseUploadFile(file);
       await chrome.storage.local.set({ soldData, soldDate: Date.now() });
       if (st) { st.textContent = `${soldData.length} sold`; st.className = 'upload-file-status loaded'; }
-      if (inventory.length > 0) runCrossCheck();
+      // Cross-check removed - now part of Prepare to List button
     } catch (err) { if (st) st.textContent = 'Error: ' + err.message; }
   }
 
@@ -1053,7 +1092,7 @@
     console.log(`[CrossCheck] SA listings refreshed: ${saListings.length} vehicles`);
     // Re-run cross-check if we have inventory
     if (inventory.length > 0) {
-      runCrossCheck();
+      // Cross-check removed - now part of Prepare to List button
     }
   };
 
@@ -1182,23 +1221,26 @@
   }
 
   function renderDashList() {
-    // Ready-to-List can show Carz Inc completed inspections even before any
-    // inventory/SA upload, so skip the empty-state guard for that case.
+    // Use queue data directly instead of crossCheckData
+    const hasQueueData = queueData && queueData.length > 0;
     const hasInspections = activeFilter === 'ready' && supabaseCompleted.length > 0;
-    if (!crossCheckData && !hasInspections) {
-      let msg = '';
-      if (inventory.length === 0) msg = 'Upload Inventory to get started';
-      else if (saListings.length === 0) msg = 'Upload SA Export, then click Cross-Check';
-      else msg = 'Click Cross-Check to see results';
+    
+    // Only show empty state if we have NO data at all
+    if (!hasQueueData && !hasInspections && !crossCheckData) {
+      let msg = 'Loading queue data...';
+      if (queueData && queueData.length === 0) {
+        msg = 'No vehicles in queue. Click "Scrape WhatsApp" to add vehicles.';
+      }
       queueList.innerHTML = `<div style="text-align:center;color:#999;padding:20px;">${msg}</div>`;
-      return;
+      // Don't return early - continue to show any data we have
     }
     const r = crossCheckData || { readyToList: [], removedInInv: [], notOnSA: [], soldButOnSA: [], properlyListed: [] };
     let items = [];
     let cols = [];
 
     if (activeFilter === 'ready') {
-      items = r.readyToList || [];
+      // Show queued vehicles with photos from WhatsApp queue
+      items = queueData.filter(v => v.status === 'queued' && v.photo_count > 0) || [];
       cols = ['vin6', 'miles', 'condition', 'tire_condition', 'photo_count', 'notes'];
     } else if (activeFilter === 'hold') {
       // Show held cars from server queue
@@ -1208,11 +1250,13 @@
       items = r.removedInInv || [];
       cols = ['Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage', 'Buyer'];
     } else if (activeFilter === 'not-on-sa') {
-      items = r.notOnSA;
-      cols = ['Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage', 'Buyer'];
+      // Show all queued vehicles from WhatsApp
+      items = queueData.filter(v => v.status === 'queued') || [];
+      cols = ['vin6', 'miles', 'condition', 'tire_condition', 'notes', 'message_date'];
     } else if (activeFilter === 'sold-on-sa') {
-      items = r.soldButOnSA;
-      cols = ['vin6', 'VIN', 'Year', 'Make', 'Model'];
+      // Show sold vehicles from WhatsApp queue
+      items = queueData.filter(v => v.status === 'sold') || [];
+      cols = ['vin6', 'miles', 'sold_at', 'sold_reason', 'sa_status'];
     } else if (activeFilter === 'listed') {
       // Show recently listed cars from queue (with undo) + properly listed from SA
       const queueListed = queueData.filter(v => v.status === 'listed');
@@ -1232,8 +1276,8 @@
 
     if (items.length === 0 && !hasSupabaseInspections) {
       let hint = '';
-      if (activeFilter === 'ready' && queueData.length === 0) hint = '<br><span style="font-size:11px;">Server not running or no texts scraped. Click "Scrape Texts" with server running.</span>';
-      else if (activeFilter === 'ready') hint = '<br><span style="font-size:11px;">No cars in queue match: in inventory + not sold + not on SA + has photos</span>';
+      if (activeFilter === 'ready' && queueData.length === 0) hint = '<br><span style="font-size:11px;">No vehicles in queue. Click "Scrape WhatsApp" to get vehicles.</span>';
+      else if (activeFilter === 'ready') hint = '<br><span style="font-size:11px;">No vehicles with photos ready to list</span>';
       queueList.innerHTML = `<div style="text-align:center;color:#999;padding:20px;">No vehicles${hint}</div>`;
       return;
     }
@@ -2007,12 +2051,24 @@
 
   // ── Queue from server ──
   async function loadQueue() {
-    if (!scraperServerAvailable) { queueData = []; return; }
+    // Always try to load queue, regardless of scraperServerAvailable
     try {
-      const res = await fetch(`${SCRAPER_URL}/queue/all`, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(`${SCRAPER_URL}/queue/all`, { 
+        signal: AbortSignal.timeout(3000),
+        mode: 'cors'
+      });
       const data = await res.json();
       queueData = data.vehicles || [];
-    } catch { /* server offline, use empty */ }
+      console.log(`Queue loaded: ${queueData.length} vehicles`);
+      
+      // If we successfully loaded data, mark server as available
+      if (queueData.length > 0) {
+        scraperServerAvailable = true;
+      }
+    } catch (err) { 
+      console.error('Failed to load queue:', err);
+      queueData = [];
+    }
   }
 
   // ── Completed inspections from Carz Inc PWA (Supabase) ──
@@ -2105,39 +2161,7 @@
     return Object.values(photos).filter((p) => p && p.url).length;
   }
 
-  // ── Scrape button ──
-  async function scrapeNewTexts() {
-    const btn = document.getElementById('scrapeSoldBtn');
-    btn.disabled = true;
-    btn.textContent = 'Scraping...';
-    statusDiv.textContent = 'Scraping new texts...';
-    statusDiv.className = 'status';
-    try {
-      const res = await fetch(`${SCRAPER_URL}/scrape`, { method: 'POST', signal: AbortSignal.timeout(600000) });
-      const data = await res.json();
-      if (data.success) {
-        await loadQueue();
-        const newCount = data.new_vehicles || 0;
-        statusDiv.textContent = newCount > 0
-          ? `Found ${newCount} new vehicle${newCount > 1 ? 's' : ''} from texts. ${queueData.length} in queue.`
-          : `No new vehicles. ${queueData.length} in queue.`;
-        statusDiv.className = 'status success';
-        if (inventory.length > 0) await runCrossCheck();
-      } else {
-        statusDiv.textContent = data.error || 'Scrape failed';
-        statusDiv.className = 'status error';
-      }
-    } catch (err) {
-      if (err.name === 'TimeoutError') {
-        statusDiv.textContent = 'Scrape taking too long — try again';
-      } else {
-        statusDiv.textContent = 'Server not running';
-      }
-      statusDiv.className = 'status error';
-    }
-    btn.disabled = false;
-    btn.textContent = 'Scrape Texts';
-  }
+  // Old scrapeNewTexts function removed - replaced with WhatsApp scraper integration
 
   // ── Event Binding ──
   function bindEvents() {
@@ -2267,43 +2291,90 @@
     }
 
     // Dashboard buttons
-    document.getElementById('refreshQueue').addEventListener('click', async () => { await Promise.all([loadQueue(), loadCompletedInspections()]); runCrossCheck(); renderDashList(); });
-    document.getElementById('scrapeSoldBtn').addEventListener('click', scrapeNewTexts);
+    document.getElementById('refreshQueue').addEventListener('click', async () => { 
+      await Promise.all([loadQueue(), loadCompletedInspections()]); 
+      renderDashList(); 
+    });
 
-    // Sync chat locations — pulls new messages from CARZ INC / Seller Group /
-    // Mechanics / Body shop chats and upserts physical_location to Supabase.
-    const syncChatBtn = document.getElementById('syncChatLocationsBtn');
-    if (syncChatBtn) syncChatBtn.addEventListener('click', async () => {
-      syncChatBtn.disabled = true;
-      const orig = syncChatBtn.textContent;
-      syncChatBtn.textContent = 'Syncing…';
-      statusDiv.textContent = 'Syncing chat locations…';
+    // Scrape WhatsApp - get new vehicles from WhatsApp groups
+    const scrapeWhatsAppBtn = document.getElementById('scrapeWhatsAppBtn');
+    if (scrapeWhatsAppBtn) scrapeWhatsAppBtn.addEventListener('click', async () => {
+      scrapeWhatsAppBtn.disabled = true;
+      const orig = scrapeWhatsAppBtn.textContent;
+      scrapeWhatsAppBtn.textContent = 'Scraping...';
+      statusDiv.textContent = 'Scraping WhatsApp messages...';
       statusDiv.className = 'status';
       try {
-        const res = await fetch(`${SCRAPER_URL}/scrape-locations`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ incremental: true }),
-          signal: AbortSignal.timeout(600000),
+        const scrapeRes = await fetch(`${SCRAPER_URL}/scrape`, { 
+          method: 'POST', 
+          signal: AbortSignal.timeout(60000) 
         });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || 'Sync failed');
-        const t = data.totals || {};
-        const parts = [];
-        for (const [name, s] of Object.entries(t.by_chat || {})) {
-          if (s.msgs > 0) parts.push(`${name}: ${s.matched}/${s.msgs}`);
-        }
-        const body = parts.length ? parts.join(' · ') : 'no new messages';
-        statusDiv.textContent = `Chat sync: ${data.upserted} car${data.upserted === 1 ? '' : 's'} updated (${body})`;
+        const scrapeData = await scrapeRes.json();
+        
+        await loadQueue();
+        const newVehicles = scrapeData.vehicles_found || scrapeData.new_vehicles || 0;
+        statusDiv.textContent = newVehicles > 0 
+          ? `Found ${newVehicles} new vehicle${newVehicles !== 1 ? 's' : ''} from WhatsApp`
+          : 'No new vehicles found in WhatsApp';
         statusDiv.className = 'status success';
+        
+        // Update stats and render
+        const queued = queueData.filter(v => v.status === 'queued').length;
+        const listed = queueData.filter(v => v.status === 'listed').length;
+        const sold = queueData.filter(v => v.status === 'sold').length;
+        
+        document.getElementById('statQueued').textContent = queued || 0;
+        document.getElementById('statListed').textContent = listed || 0;
+        document.getElementById('statSold').textContent = sold || 0;
+        document.getElementById('statTotal').textContent = queueData.length || 0;
+        
+        renderDashList();
       } catch (err) {
         statusDiv.textContent = err.name === 'TimeoutError'
-          ? 'Chat sync timed out — try again'
-          : 'Chat sync failed: ' + (err.message || String(err));
+          ? 'WhatsApp scrape timed out — try again'
+          : 'WhatsApp server not running';
         statusDiv.className = 'status error';
       } finally {
-        syncChatBtn.disabled = false;
-        syncChatBtn.textContent = orig;
+        scrapeWhatsAppBtn.disabled = false;
+        scrapeWhatsAppBtn.textContent = orig;
+      }
+    });
+
+    // Removed Update Locations button - functionality integrated into Scrape WhatsApp
+
+    // Prepare to List - cross-check and prepare vehicles for SmartAuction listing
+    const prepareBtn = document.getElementById('prepareListingBtn');
+    if (prepareBtn) prepareBtn.addEventListener('click', async () => {
+      prepareBtn.disabled = true;
+      const orig = prepareBtn.textContent;
+      prepareBtn.textContent = 'Preparing...';
+      statusDiv.textContent = 'Preparing vehicles for SmartAuction...';
+      statusDiv.className = 'status';
+      try {
+        // Load latest data
+        await Promise.all([loadQueue(), loadCompletedInspections()]);
+        
+        // Get vehicles ready to list (with photos, not on SA)
+        const readyToList = queueData.filter(v => 
+          v.ready_with_photos && 
+          !v.on_smartauction && 
+          !v.physical_location?.toLowerCase().includes('sold')
+        );
+        
+        statusDiv.textContent = `${readyToList.length} vehicle${readyToList.length !== 1 ? 's' : ''} ready to list on SmartAuction`;
+        statusDiv.className = 'status success';
+        
+        // Switch to ready filter to show the vehicles
+        activeFilter = 'ready';
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.filter-btn[data-filter="ready"]')?.classList.add('active');
+        renderDashList();
+      } catch (err) {
+        statusDiv.textContent = 'Failed to prepare listing: ' + (err.message || String(err));
+        statusDiv.className = 'status error';
+      } finally {
+        prepareBtn.disabled = false;
+        prepareBtn.textContent = orig;
       }
     });
 
@@ -2360,7 +2431,7 @@
       frontLotAgingBtn.disabled = false;
     });
 
-    document.getElementById('runCrossCheck').addEventListener('click', runCrossCheck);
+    // Removed old Cross-Check button - functionality integrated into Prepare to List
     document.getElementById('queueSearch').addEventListener('input', (e) => {
       queueSearchFilter = e.target.value.toUpperCase();
       renderDashList();
@@ -2799,7 +2870,7 @@
       if (badge) { badge.textContent = `${mapped.length} inv`; badge.className = 'scraper-badge online'; }
       if (result && !silent) { result.textContent = `${mapped.length} inventory rows`; result.className = 'scraper-result ok'; }
       // Re-run the cross-check if SA data is already loaded
-      if (saListings.length > 0) runCrossCheck();
+      // Cross-check removed - now part of Prepare to List button
     } catch (err) {
       console.error('[syncSupabaseInventory]', err);
       if (badge) { badge.textContent = 'Error'; badge.className = 'scraper-badge offline'; }
@@ -2836,7 +2907,7 @@
       }
       const result = document.getElementById('supabaseInvResult');
       if (result && !silent) { result.textContent = `${mapped.length} sold rows`; result.className = 'scraper-result ok'; }
-      if (saListings.length > 0) runCrossCheck();
+      // Cross-check removed - now part of Prepare to List button
     } catch (err) {
       console.error('[syncSupabaseSold]', err);
       const result = document.getElementById('supabaseInvResult');
@@ -3358,7 +3429,7 @@
         odometerInput.value = String(mileage).replace(/[^0-9]/g, '');
       }
 
-      // Also auto-lookup from scraped messages
+      // Also auto-lookup from WhatsApp queue
       lookupFromMessages();
     } else if (matches.length > 1) {
       matchedVehicle = null;
@@ -3444,10 +3515,18 @@
 
   function copyFullVIN() {
     const vin = fullVinDisplay.value;
-    if (!vin) return;
+    console.log('[Copy VIN] Attempting to copy:', vin);
+    if (!vin) {
+      console.log('[Copy VIN] No VIN to copy');
+      return;
+    }
     copyToClipboard(vin);
     copyVinBtn.textContent = 'Copied!';
-    setTimeout(() => { copyVinBtn.textContent = 'Copy'; }, 1500);
+    copyVinBtn.style.background = '#4caf50';
+    setTimeout(() => { 
+      copyVinBtn.textContent = 'Copy';
+      copyVinBtn.style.background = '';
+    }, 1500);
   }
 
   async function resetForNewVehicle() {
@@ -4033,26 +4112,40 @@
   }
 
   // ── Helpers ──
-  function copyToClipboard(text) {
+  async function copyToClipboard(text) {
     // Modern Clipboard API works in Chrome side panels as long as the call
     // fires during a user gesture (which it does — every caller is a click
     // handler). The old execCommand path has been deprecated and was
     // silently failing in recent Chrome versions, which is why "Copy VIN"
     // started returning nothing. Fall back to execCommand if the async
     // write throws (blocked-by-permissions, not-user-gesture, etc.).
+    const textStr = String(text ?? '');
+    console.log('[copyToClipboard] Copying text:', textStr);
+    
     try {
-      const p = navigator.clipboard?.writeText?.(String(text ?? ''));
-      if (p && typeof p.then === 'function') {
-        p.catch((err) => {
-          console.warn('[copy] clipboard API failed, falling back to execCommand:', err);
-          execCommandCopy(text);
-        });
-        return;
+      // Try modern clipboard API first
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(textStr);
+        console.log('[copyToClipboard] Successfully copied via clipboard API');
+        return true;
       }
     } catch (err) {
-      console.warn('[copy] clipboard API threw, falling back to execCommand:', err);
+      console.warn('[copyToClipboard] Clipboard API failed:', err);
     }
-    execCommandCopy(text);
+    
+    // Fallback to execCommand
+    try {
+      const result = execCommandCopy(textStr);
+      if (result) {
+        console.log('[copyToClipboard] Successfully copied via execCommand');
+      } else {
+        console.warn('[copyToClipboard] execCommand returned false');
+      }
+      return result;
+    } catch (err) {
+      console.error('[copyToClipboard] Both methods failed:', err);
+      return false;
+    }
   }
 
   function execCommandCopy(text) {
@@ -4060,10 +4153,21 @@
     ta.value = String(text ?? '');
     ta.style.position = 'fixed';
     ta.style.left = '-9999px';
+    ta.style.top = '0';
     document.body.appendChild(ta);
+    ta.focus();
     ta.select();
-    try { document.execCommand('copy'); } catch {}
+    
+    let result = false;
+    try { 
+      result = document.execCommand('copy');
+      console.log('[execCommandCopy] execCommand result:', result);
+    } catch (err) {
+      console.error('[execCommandCopy] execCommand failed:', err);
+    }
+    
     document.body.removeChild(ta);
+    return result;
   }
 
   function escHtml(str) {

@@ -49,6 +49,10 @@ var DamageMapper = {
     'left rear quarter':    'Quarter Panel - Left',
     'right quarter panel':  'Quarter Panel - Right',
     'right rear quarter':   'Quarter Panel - Right',
+    'quarter panel left':   'Quarter Panel - Left',
+    'quarter panel right':  'Quarter Panel - Right',
+    'qtr panel right':      'Quarter Panel - Right',
+    'qtr panel left':       'Quarter Panel - Left',
     'left rocker panel':    'Rocker Panel - Left',
     'right rocker panel':   'Rocker Panel - Right',
     'windshield':           'Windshield',
@@ -216,6 +220,17 @@ var DamageMapper = {
     'deep scratch':         'Scratch',
     'prev repair':          'Other',
     'prev repaired':        'Other',
+    'previous repair':      'Other',
+    'prior repair':         'Other',
+    'substandard repair':   'Other',
+    'poor repair':          'Other',
+    'bad repair':           'Other',
+    'repair needed':        'Other',
+    'needs repair':         'Other',
+    'aftermarket':          'Other',
+    'aftermarket part':     'Other',
+    'replaced':             'Other',
+    'replacement':          'Other',
     'misaligned':           'Other',
     'curb rash':            'Scuff',
     'paint dmg':            'Paint Damage',
@@ -294,7 +309,19 @@ var DamageMapper = {
   _mapPanel(panel, panelMap) {
     if (!panel) return '';
     const key = panel.toLowerCase().trim();
+    
+    // Exact match first
     if (panelMap[key]) return panelMap[key];
+    
+    // Special handling for quarter panels to avoid left/right confusion
+    if (key.includes('quarter') && key.includes('panel')) {
+      if (key.includes('right') || key.includes(' r ') || key.endsWith(' r')) {
+        return 'Quarter Panel - Right';
+      }
+      if (key.includes('left') || key.includes(' l ') || key.endsWith(' l')) {
+        return 'Quarter Panel - Left';
+      }
+    }
 
     // Fuzzy: find the closest key
     let bestMatch = panel; // fallback to original
@@ -310,37 +337,35 @@ var DamageMapper = {
   },
 
   _mapType(type, validTypes) {
-    if (!type) return 'Other';
+    if (!type) return type; // Return empty/null as-is
     const key = type.toLowerCase().trim();
-
-    // Check normalize map
+    
+    // Handle multiple/multi scratch variations
+    if (key.includes('multiple') && key.includes('scratch')) {
+      return 'Scratch';
+    }
+    if (key.includes('mult') && key.includes('scratch')) {
+      return 'Scratch';
+    }
+    if (key === 'scratch multiple' || key === 'scratches multiple') {
+      return 'Scratch';
+    }
+    
+    // Check normalize map for standard damage types
     if (this.TYPE_NORMALIZE[key]) {
       const normalized = this.TYPE_NORMALIZE[key];
       // Verify it's in the valid types list
       if (validTypes.includes(normalized)) return normalized;
-      // Close enough — find partial match in valid types
-      for (const vt of validTypes) {
-        if (vt.toLowerCase().includes(normalized.toLowerCase()) ||
-            normalized.toLowerCase().includes(vt.toLowerCase())) {
-          return vt;
-        }
-      }
-      return normalized;
     }
-
+    
     // Direct match in valid types
     for (const vt of validTypes) {
       if (vt.toLowerCase() === key) return vt;
     }
-
-    // Partial match
-    for (const vt of validTypes) {
-      if (key.includes(vt.toLowerCase()) || vt.toLowerCase().includes(key)) {
-        return vt;
-      }
-    }
-
-    return 'Other';
+    
+    // For everything else, preserve exact user input (like "substandard repair")
+    // Don't auto-map to 'Other'
+    return type;
   },
 
   _matchScore(a, b) {
