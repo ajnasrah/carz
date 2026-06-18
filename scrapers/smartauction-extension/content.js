@@ -589,13 +589,19 @@ async function fillDamagesAndTires(data) {
              'seat belt', 'gauge', 'instrument', 'warning light'].some(p => panelLower.includes(p));
         setSelectValue(addTypeEl, isInterior ? 'Interior' : 'Exterior');
 
+        // Map the damage once using DamageMapper
+        const mappedDamage = DamageMapper.mapForSA(dmg);
+        
         const locEl = document.getElementById('add-damage-location');
-        if (locEl) setFieldValue(locEl, (dmg.panel || 'Other').substring(0, 40));
+        if (locEl) {
+          const panelValue = mappedDamage.panel || dmg.panel || 'Other';
+          setFieldValue(locEl, panelValue.substring(0, 40));
+        }
 
         const descEl = document.getElementById('add-damage-description');
         if (descEl) {
-          const rawDesc = (dmg.description || '').trim();
-          const type = dmg.type && dmg.type !== 'Other' ? dmg.type : '';
+          const rawDesc = (mappedDamage.description || dmg.description || '').trim();
+          const type = mappedDamage.type && mappedDamage.type !== 'Other' ? mappedDamage.type : '';
           const startsWithType = type && rawDesc.toLowerCase().startsWith(type.toLowerCase());
           const prefix = type && !startsWithType ? `${type}${rawDesc ? ' - ' : ''}` : '';
           const descText = (prefix + rawDesc).substring(0, 50);
@@ -731,11 +737,20 @@ async function fillFromInspection(payload) {
         const typeEl = document.getElementById('add-damage-type');
         if (typeEl) setSelectValue(typeEl, dmg.category === 'Interior' ? 'Interior' : 'Exterior');
 
+        // Map the damage once using DamageMapper
+        const mappedDamage = DamageMapper.mapForSA(dmg);
+        
         const locEl = document.getElementById('add-damage-location');
-        if (locEl) setFieldValue(locEl, (dmg.panel || '').substring(0, 40));
+        if (locEl) {
+          const panelValue = mappedDamage.panel || dmg.panel || '';
+          setFieldValue(locEl, panelValue.substring(0, 40));
+        }
 
         const descEl = document.getElementById('add-damage-description');
-        if (descEl) setFieldValue(descEl, dmg.description.substring(0, 50));
+        if (descEl) {
+          const descText = (mappedDamage.description || dmg.description || '').substring(0, 50);
+          setFieldValue(descEl, descText);
+        }
 
         const noRadio = document.getElementById('chargeable-no');
         if (noRadio) noRadio.click();

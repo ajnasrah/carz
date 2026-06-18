@@ -69,6 +69,18 @@ var DamageMapper = {
     'right wheel':          'Wheel - Right Front',
     'interior':             'Interior',
     'dashboard':            'Dashboard',
+    'dash':                 'Dashboard',
+    'tpms light':           'Warning Light',
+    'tpms':                 'Warning Light', 
+    'check engine light':   'Warning Light',
+    'check engine':         'Warning Light',
+    'warning light':        'Warning Light',
+    'warning lights':       'Warning Light',
+    'abs light':            'Warning Light',
+    'airbag light':         'Warning Light',
+    'service light':        'Warning Light',
+    'tire pressure light':  'Warning Light',
+    'tire pressure':        'Warning Light',
     'steering wheel':       'Steering Wheel',
     'driver seat':          'Seat - Driver',
     'passenger seat':       'Seat - Passenger',
@@ -77,6 +89,12 @@ var DamageMapper = {
     'carpet':               'Carpet/Floor',
     'console':              'Console',
     'tailgate':             'Tailgate',
+    'tail gate':            'Tailgate',
+    'lift gate':            'Tailgate',
+    'liftgate':             'Tailgate',
+    'hatch':                'Tailgate',
+    'rear hatch':           'Tailgate',
+    'rear gate':            'Tailgate',
 
     // Manheim CR abbreviations
     'f bumper':             'Bumper - Front',
@@ -115,9 +133,7 @@ var DamageMapper = {
     'l headlight':          'Headlight - Left',
     'front bumper':         'Bumper - Front',
     'deck lid':             'Trunk Lid',
-    'f tow hook cover':     'Bumper - Front',
-    'r qtr panel':          'Quarter Panel - Right',
-    'l qtr panel':          'Quarter Panel - Left'
+    'f tow hook cover':     'Bumper - Front'
   },
 
   // ── VIW Panel mapping (VIW uses slightly different labels) ──
@@ -157,7 +173,22 @@ var DamageMapper = {
     'left taillight':       'Left Taillamp',
     'right taillight':      'Right Taillamp',
     'grille':               'Grille',
-    'tailgate':             'Tailgate'
+    'tailgate':             'Tailgate',
+    'tail gate':            'Tailgate',
+    'liftgate':             'Tailgate',
+    'dashboard':            'Dashboard',
+    'dash':                 'Dashboard',
+    'tpms light':           'Warning Light',
+    'tpms':                 'Warning Light',
+    'check engine light':   'Warning Light', 
+    'check engine':         'Warning Light',
+    'warning light':        'Warning Light',
+    'warning lights':       'Warning Light',
+    'abs light':            'Warning Light',
+    'airbag light':         'Warning Light',
+    'service light':        'Warning Light',
+    'tire pressure light':  'Warning Light',
+    'tire pressure':        'Warning Light'
   },
 
   // ── Type Normalization ──
@@ -243,13 +274,26 @@ var DamageMapper = {
 
   // Map a single damage entry for SmartAuction Vehicle Entry
   mapForSA(damage) {
+    const mappedPanel = this._mapPanel(damage.panel, this.PANEL_MAP);
+    let description = damage.description || '';
+    
+    // Clean up description for warning lights
+    if (mappedPanel === 'Warning Light' || (damage.panel && damage.panel.toLowerCase().includes('light'))) {
+      // Remove redundant "is on" or "on" from description
+      description = description.replace(/\s*is\s+on\s*$/i, '').replace(/\s*on\s*$/i, '');
+      // If the description is empty after cleaning, use the original panel name
+      if (!description && damage.panel) {
+        description = damage.panel.replace(/\s*light\s*$/i, '').toUpperCase();
+      }
+    }
+    
     return {
-      panel: this._mapPanel(damage.panel, this.PANEL_MAP),
+      panel: mappedPanel,
       type: this._mapType(damage.type, this.SA_DAMAGE_TYPES),
       severity: damage.severity || 'Minor',
       chargeable: damage.chargeable === 'Yes' || damage.chargeable === true,
       estimatedCost: damage.estimatedCost || 0,
-      description: damage.description || ''
+      description: description
     };
   },
 
@@ -314,13 +358,32 @@ var DamageMapper = {
     if (panelMap[key]) return panelMap[key];
     
     // Special handling for quarter panels to avoid left/right confusion
-    if (key.includes('quarter') && key.includes('panel')) {
-      if (key.includes('right') || key.includes(' r ') || key.endsWith(' r')) {
-        return 'Quarter Panel - Right';
-      }
-      if (key.includes('left') || key.includes(' l ') || key.endsWith(' l')) {
+    if (key.includes('quarter') || key.includes('qtr')) {
+      // More specific checks for left quarter panel
+      if (key.includes('left') || key.includes(' l ') || key.startsWith('l ') || 
+          key.includes('lf ') || key.includes('lr ') || key === 'l quarter' ||
+          key === 'l qtr' || key === 'left quarter' || key === 'lf quarter' ||
+          key === 'lr quarter') {
         return 'Quarter Panel - Left';
       }
+      // More specific checks for right quarter panel  
+      if (key.includes('right') || key.includes(' r ') || key.startsWith('r ') ||
+          key.includes('rf ') || key.includes('rr ') || key === 'r quarter' ||
+          key === 'r qtr' || key === 'right quarter' || key === 'rf quarter' ||
+          key === 'rr quarter') {
+        return 'Quarter Panel - Right';
+      }
+      // Default to checking if it contains 'panel' for generic quarter panel
+      // Don't default to either side - let it fall through to fuzzy matching
+      // which will preserve the original panel name if no good match is found
+    }
+
+    // Special handling for tailgate variations
+    if (key.includes('tailgate') || key.includes('tail gate') || 
+        key.includes('liftgate') || key.includes('lift gate') ||
+        key === 'hatch' || key.includes('rear hatch') || 
+        key.includes('rear gate') || key.includes('hatch door')) {
+      return 'Tailgate';
     }
 
     // Fuzzy: find the closest key
