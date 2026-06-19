@@ -179,6 +179,27 @@ def remove_vehicle(vin6: str, delete_folder: bool = True) -> dict | None:
     return queue["vehicles"][vin6]
 
 
+def hold_vehicle(vin6: str) -> dict | None:
+    """Mark a vehicle as on hold."""
+    queue = load_queue()
+    if vin6 not in queue["vehicles"]:
+        return None
+    queue["vehicles"][vin6]["status"] = "hold"
+    save_queue(queue)
+    return queue["vehicles"][vin6]
+
+
+def unhold_vehicle(vin6: str) -> dict | None:
+    """Return a held vehicle back to queued status."""
+    queue = load_queue()
+    if vin6 not in queue["vehicles"]:
+        return None
+    if queue["vehicles"][vin6]["status"] == "hold":
+        queue["vehicles"][vin6]["status"] = "queued"
+        save_queue(queue)
+    return queue["vehicles"][vin6]
+
+
 def get_queued() -> list:
     """Get only queued (pending listing) vehicles."""
     queue = load_queue()
@@ -195,6 +216,22 @@ def get_all() -> list:
     """Get all vehicles regardless of status."""
     queue = load_queue()
     return list(queue["vehicles"].values())
+
+
+def get_vehicle(vin6: str) -> dict | None:
+    """Get a specific vehicle from queue by VIN6."""
+    queue = load_queue()
+    return queue["vehicles"].get(vin6)
+
+
+def update_photo_count(vin6: str, count: int) -> bool:
+    """Update the photo count for a vehicle."""
+    queue = load_queue()
+    if vin6 in queue["vehicles"]:
+        queue["vehicles"][vin6]["photo_count"] = count
+        save_queue(queue)
+        return True
+    return False
 
 
 def get_stats() -> dict:

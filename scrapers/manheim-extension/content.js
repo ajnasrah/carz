@@ -138,25 +138,70 @@ async function scrapeAdesaPage() {
       }
     }
     
-    // Extract damage information from the table visible in screenshot
-    const damageRows = document.querySelectorAll('tr[class*="damage"], [data-damage-row], tbody tr');
-    damageRows.forEach(row => {
-      const cells = row.querySelectorAll('td');
-      if (cells.length >= 3) {
-        const part = cells[0]?.textContent?.trim();
-        const type = cells[1]?.textContent?.trim();
-        const severity = cells[2]?.textContent?.trim();
+    // Extract damage information - handle Edge Pipeline format
+    const siteType = getSiteType(window.location.hostname);
+    
+    if (siteType === 'edge') {
+      // Edge Pipeline format: "Part| Type" with severity on next line
+      const damageSection = document.querySelector('section:has(> h2:first-child), div:has(> h2:first-child), [class*="damage"]');
+      if (damageSection) {
+        const damageElements = damageSection.querySelectorAll('div, p, span');
+        let currentDamage = null;
         
-        if (part && type) {
+        damageElements.forEach(el => {
+          const text = el.textContent?.trim();
+          if (text && text.includes('|')) {
+            // This is a damage line like "RR Tail Lamp| Broken"
+            const [part, type] = text.split('|').map(s => s.trim());
+            currentDamage = { part, type, description: text };
+          } else if (text && text.toLowerCase().includes('severity:') && currentDamage) {
+            // This is the severity line
+            currentDamage.severity = text.replace(/severity:/i, '').trim();
+            data.damages.push(currentDamage);
+            currentDamage = null;
+          }
+        });
+      }
+      
+      // Alternative Edge Pipeline format - look for text patterns
+      const allText = document.body.innerText;
+      const damagePattern = /([^|\n]+)\|\s*([^|\n]+)\s*\n\s*severity:\s*([^\n]+)/gi;
+      let match;
+      while ((match = damagePattern.exec(allText)) !== null) {
+        const [, part, type, severity] = match;
+        const duplicate = data.damages.find(d => 
+          d.part === part.trim() && d.type === type.trim()
+        );
+        if (!duplicate) {
           data.damages.push({
-            part,
-            type,
-            severity,
-            description: `${type} on ${part}`
+            part: part.trim(),
+            type: type.trim(),
+            severity: severity.trim(),
+            description: `${type.trim()} on ${part.trim()}`
           });
         }
       }
-    });
+    } else {
+      // Original logic for Manheim/ADESA
+      const damageRows = document.querySelectorAll('tr[class*="damage"], [data-damage-row], tbody tr');
+      damageRows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 3) {
+          const part = cells[0]?.textContent?.trim();
+          const type = cells[1]?.textContent?.trim();
+          const severity = cells[2]?.textContent?.trim();
+          
+          if (part && type) {
+            data.damages.push({
+              part,
+              type,
+              severity,
+              description: `${type} on ${part}`
+            });
+          }
+        }
+      });
+    }
     
     // Extract images
     const imageElements = document.querySelectorAll('img[src*="vehicle"], img[src*="car"], img[class*="gallery"], img[class*="photo"]');

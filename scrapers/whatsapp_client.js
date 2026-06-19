@@ -10,6 +10,14 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+// Enable CORS for browser extensions
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    next();
+});
+
 const PORT = 7750;
 const PYTHON_SERVER = 'http://localhost:7749';
 
@@ -36,9 +44,10 @@ const client = new Client({
 let isConnected = false;
 let groupChats = {};
 const GROUP_NAMES = {
-    'seller': 'Seller Group',
-    'bodyshop': 'Body Shop Group',  // Change to actual group name
-    'mechanic': 'Mechanic Shop Group'  // Change to actual group name
+    'seller': 'Carz inc',
+    'bodyshop': 'Body shop',
+    'mechanic': 'Mechanic',
+    'ready': 'Ready to sell'
 };
 
 // Generate QR code for authentication
@@ -280,8 +289,24 @@ app.post('/send-test', async (req, res) => {
     }
 });
 
+// Shutdown endpoint
+app.post('/shutdown', async (req, res) => {
+    console.log('🛑 Shutdown request received');
+    res.json({ message: 'WhatsApp client shutting down' });
+    
+    // Close WhatsApp connection
+    if (client) {
+        await client.destroy();
+    }
+    
+    // Exit after response is sent
+    setTimeout(() => {
+        process.exit(0);
+    }, 100);
+});
+
 // Start Express server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`📡 WhatsApp client API running on port ${PORT}`);
     console.log(`📝 Monitoring groups:`, Object.values(GROUP_NAMES).join(', '));
     console.log(`🔗 Python server expected at: ${PYTHON_SERVER}`);

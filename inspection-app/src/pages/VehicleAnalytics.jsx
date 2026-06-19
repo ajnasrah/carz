@@ -600,7 +600,7 @@ export default function VehicleAnalytics() {
                     </thead>
                     <tbody>
                       {filteredData.sold.slice(0, 20).map(sale => {
-                        const cost = (parseFloat(sale.total_cost) || 0) + (parseFloat(sale.added_costs) || 0);
+                        const cost = (parseFloat(sale.total_cost) || 0);
                         const roi = cost > 0 ? ((parseFloat(sale.profit_on_sale) || 0) / cost * 100) : 0;
                         
                         return (

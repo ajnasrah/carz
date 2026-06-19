@@ -171,51 +171,141 @@ def update_vehicle_location(vin_last6, location, updated_by='WhatsApp'):
 
 def parse_vehicle_entry(text):
     """
-    Parse a vehicle inspection message into structured data.
-    Expected format:
-        [last 6 of VIN]
-        [miles]
-        [condition]
-        [tire score]
-        [optional notes...]
+    Parse WhatsApp messages for vehicle information.
+    Handles both structured format (line by line) and conversational format.
     """
-    cleaned = re.sub(r'^[^\x20-\x7E]+', '', text.strip())
-    lines = [l.strip() for l in cleaned.strip().split('\n') if l.strip()]
-    if len(lines) < 3:
-        return None
-
-    first_line = re.sub(r'[^A-Za-z0-9]', '', lines[0])
+    lines = text.strip().split('\n')
     
-    vin6_match = re.match(r'^([A-Z0-9]{5,7})$', first_line, re.IGNORECASE)
-    if not vin6_match:
-        return None
-
-    vin_last6 = vin6_match.group(1).upper()
-    if len(vin_last6) == 7:
-        vin_last6 = vin_last6[-6:]
-    elif len(vin_last6) == 5:
-        vin_last6 = '0' + vin_last6
-
-    miles_line = lines[1].replace(',', '').replace('miles', '').strip()
-    miles_match = re.search(r'(\d+)', miles_line)
-    if not miles_match:
-        return None
-    miles = int(miles_match.group(1))
-
-    condition = lines[2] if len(lines) > 2 else ""
+    # Try structured format first (VIN on line 1, miles on line 2, etc)
+    if len(lines) >= 3:
+        # Check if first line is a VIN
+        first_line = re.sub(r'[^A-Za-z0-9]', '', lines[0].strip()).upper()
+        
+        # Must be 5-7 alphanumeric AND contain at least one digit
+        if re.match(r'^[A-Z0-9]{5,7}$', first_line) and re.search(r'\d', first_line):
+            # Exclude common English words
+            exclude_words = ['DETAIL', 'PEELED', 'CLOSED', 'TRYING', 'WORKS', 'BRING', 
+                           'OSAMA', 'JORGE', 'TODAY', 'PLEASE', 'BUMPER', 'PAINT',
+                           'DOESNT', 'TOUCH', 'FINISH', 'ALREADY', 'PULLED']
+            
+            if first_line not in exclude_words:
+                vin_last6 = first_line
+                if len(vin_last6) == 7:
+                    # Keep first char if it's a letter (like F in F021216)
+                    if first_line[0].isalpha():
+                        vin_last6 = first_line[:6]  # Take first 6 chars
+                    else:
+                        vin_last6 = vin_last6[-6:]  # Take last 6 chars
+                elif len(vin_last6) == 5:
+                    vin_last6 = '0' + vin_last6
+                
+                # Parse miles from second line - must be a number
+                miles = 0
+                if len(lines) > 1:
+                    miles_match = re.search(r'^(\d{3,6})$', lines[1].replace(',', '').strip())
+                    if miles_match:
+                        miles = int(miles_match.group(1))
+                    else:
+                        # If second line isn't a number, this isn't a vehicle entry
+                        return None
+                
+                # Get condition from third line
+                condition = lines[2].strip() if len(lines) > 2 else "Unknown"
+                
+                # Get tire score from fourth line
+                tire_condition = ""
+                if len(lines) > 3:
+                    tire_match = re.search(r'(\d+(?:\.\d+)?)', lines[3])
+                    if tire_match:
+                        tire_condition = float(tire_match.group(1))
+                
+                # Remaining lines as notes
+                notes = ' '.join(lines[4:]) if len(lines) > 4 else ""
+                
+                return {
+                    'vin6': vin_last6,
+                    'miles': miles,
+                    'condition': condition,
+                    'tire_condition': tire_condition,
+                    'notes': notes[:100],
+                    'photo_count': 0
+                }
     
-    tire_line = lines[3] if len(lines) > 3 else ""
-    tire_match = re.search(r'(\d+(?:\.\d+)?)', tire_line)
-    tire_condition = float(tire_match.group(1)) if tire_match else ""
-
-    notes = '\n'.join(lines[4:]) if len(lines) > 4 else ""
+    # Fallback to conversational format parsing
+    # Look for VIN last 6 pattern (5-7 alphanumeric characters)
+    vin6_patterns = [
+        r'\b([A-Z0-9]{6})\b',  # Exactly 6 chars
+        r'\b([A-Z0-9]{5})\b',   # 5 chars (will pad with 0)
+        r'\b([A-Z0-9]{7})\b',   # 7 chars (take last 6)
+    ]
+    
+    vin_last6 = None
+    for pattern in vin6_patterns:
+        match = re.search(pattern, text.upper())
+        if match:
+            candidate = match.group(1)
+            # Must contain at least one digit
+            if not re.search(r'\d', candidate):
+                continue
+            # Filter out common words
+            exclude_words = ['DETAIL', 'PEELED', 'CLOSED', 'TRYING', 'WORKS', 'BRING',
+                           'OSAMA', 'JORGE', 'TODAY', 'PLEASE', 'BUMPER', 'PAINT',
+                           'DOESNT', 'TOUCH', 'FINISH', 'ALREADY', 'PULLED', 'PHOTOS',
+                           'BLACK', 'AYHAM', 'GLUED', 'LISTED']
+            if candidate not in exclude_words:
+                vin_last6 = candidate
+                if len(vin_last6) == 7:
+                    if vin_last6[0].isalpha():
+                        vin_last6 = vin_last6[:6]
+                    else:
+                        vin_last6 = vin_last6[-6:]
+                elif len(vin_last6) == 5:
+                    vin_last6 = '0' + vin_last6
+                break
+    
+    if not vin_last6:
+        return None
+    
+    # Extract mileage if mentioned
+    miles = None
+    # Look for patterns like "75000 miles", "75,000 mi", "mileage: 75000"
+    miles_patterns = [
+        r'(\d{1,3},?\d{3})\s*(?:mi|miles|mileage)',  # With unit
+        r'(?:mileage|miles|mi)[:=\s]+(\d{1,3},?\d{3})',  # Unit first
+        r'\b(\d{4,6})\s*(?:mi|miles)\b',  # 4-6 digits with mi/miles
+    ]
+    for pattern in miles_patterns:
+        miles_match = re.search(pattern, text, re.IGNORECASE)
+        if miles_match:
+            miles_str = miles_match.group(1).replace(',', '')
+            # Make sure it's reasonable for mileage (1000-999999)
+            candidate = int(miles_str)
+            if 1000 <= candidate <= 999999:
+                miles = candidate
+                break
+    
+    # Look for condition keywords
+    condition = "Unknown"
+    if re.search(r'\b(good|excellent|great|clean)\b', text, re.IGNORECASE):
+        condition = "Good"
+    elif re.search(r'\b(okay|ok|fair|average)\b', text, re.IGNORECASE):
+        condition = "Fair"
+    elif re.search(r'\b(bad|poor|rough|damage)\b', text, re.IGNORECASE):
+        condition = "Poor"
+    
+    # Extract tire info if mentioned
+    tire_condition = ""
+    tire_match = re.search(r'tire[s]?\s*[:=]?\s*(\d+(?:\.\d+)?)', text, re.IGNORECASE)
+    if tire_match:
+        tire_condition = float(tire_match.group(1))
 
     return {
         'vin6': vin_last6,
-        'miles': miles,
+        'miles': miles or 0,
         'condition': condition,
         'tire_condition': tire_condition,
-        'notes': notes
+        'notes': text[:100],  # Store first 100 chars of message as notes
+        'photo_count': 0  # Will be updated when photos are processed
     }
 
 
@@ -247,10 +337,13 @@ def process_whatsapp_message(message_data):
     
     message_cache.append(message_data)
     
-    # Parse text messages for vehicle data
-    if message_data.get('type') == 'text':
+    # Parse text, chat, and image messages for vehicle data (image captions contain VIN info)
+    if message_data.get('type') in ['text', 'chat', 'image']:
         text = message_data.get('body', '')
         group_type = message_data.get('groupType', 'seller')
+        
+        # Debug log the message
+        print(f"📨 Processing message from {group_type} group: {text[:100]}...")
         
         # For Body shop and Mechanic groups, update location
         if group_type in ['bodyshop', 'mechanic']:
@@ -271,11 +364,12 @@ def process_whatsapp_message(message_data):
                 print(f"📍 Location Update: {vin_last6} moved to {location}")
                 return vin_last6
         
-        # For seller group, process as inspection
-        else:
+        # For seller AND ready groups, process as vehicle entry
+        if group_type in ['seller', 'ready']:
             vehicle_data = parse_vehicle_entry(text)
             
             if vehicle_data:
+                print(f"✅ Found vehicle: {vehicle_data['vin6']} - {vehicle_data.get('miles', '?')} miles")
                 # Add metadata
                 vehicle_data['message_date'] = message_data.get('timestamp', datetime.now().isoformat())
                 vehicle_data['sender'] = message_data.get('author', 'Unknown')
@@ -292,6 +386,9 @@ def process_whatsapp_message(message_data):
                 
                 # Store for photo association
                 return vehicle_data['vin6']
+            else:
+                if len(text.strip()) > 10:  # Only log non-trivial messages
+                    print(f"❌ Could not parse vehicle from: {text[:50]}...")
     
     return None
 
@@ -318,39 +415,38 @@ def _reset_sa_photos_dir():
 def trigger_whatsapp_scrape(start_date=None, end_date=None):
     """Trigger the WhatsApp Node.js client to fetch messages."""
     try:
-        # If no start date, use last scrape time
-        if not start_date:
-            last_scrape = load_last_scrape()
-            if last_scrape:
-                start_date = last_scrape
-                print(f"📅 Scraping from last checkpoint: {start_date.isoformat()}")
+        # Get messages from Ready to sell group ONLY
+        params = {
+            'limit': 200,  # Reasonable limit for Ready group
+            'groupType': 'ready'  # Only scrape Ready to sell group
+        }
         
-        params = {'limit': 1000}  # Get more messages
-        if start_date:
-            params['start'] = start_date.isoformat()
-        if end_date:
-            params['end'] = end_date.isoformat()
+        print(f"🔄 Fetching messages from Ready to sell group...")
         
         response = requests.post(
             f'http://localhost:{NODE_PORT}/scrape',
             json=params,
-            timeout=60  # Increase timeout for more messages
+            timeout=30  # Longer timeout for more messages
         )
         
         if response.status_code == 200:
             data = response.json()
             messages = data.get('messages', [])
             
+            print(f"📨 Received {len(messages)} messages from WhatsApp")
+            
             # Process each message
             current_vin6 = None
             photo_index = 1
             location_updates = 0
             vehicle_updates = 0
+            vehicles_found = 0
             
             for msg in messages:
                 group_type = msg.get('groupType', 'seller')
                 
-                if msg.get('type') == 'text':
+                # Handle text, chat, and image message types (images have VIN info in captions)
+                if msg.get('type') in ['text', 'chat', 'image']:
                     text = msg.get('body', '')
                     
                     # Handle Body Shop and Mechanic location updates
@@ -369,8 +465,8 @@ def trigger_whatsapp_scrape(start_date=None, end_date=None):
                             if update_vehicle_location(vin_last6, location, author):
                                 location_updates += 1
                     
-                    # Handle seller group inspection messages
-                    elif group_type == 'seller':
+                    # Handle seller AND ready group inspection messages
+                    elif group_type in ['seller', 'ready']:
                         vehicle_data = parse_vehicle_entry(text)
                         if vehicle_data:
                             current_vin6 = vehicle_data['vin6']
@@ -380,8 +476,21 @@ def trigger_whatsapp_scrape(start_date=None, end_date=None):
                             vehicle_data['sender'] = msg.get('author', 'Unknown')
                             vehicle_data['source'] = 'whatsapp'
                             
-                            queue_manager.add_vehicle(current_vin6, vehicle_data)
-                            vehicle_updates += 1
+                            # Check if already in queue
+                            existing = queue_manager.get_vehicle(current_vin6)
+                            if not existing:
+                                queue_manager.add_vehicle(current_vin6, vehicle_data)
+                                vehicle_updates += 1
+                                print(f"  ✅ Added {current_vin6} to queue")
+                            else:
+                                print(f"  ⏭️ Skipping {current_vin6} - already in queue")
+                            
+                            # If this is an image message with VIN caption, save the image
+                            if msg.get('type') == 'image' and msg.get('media'):
+                                save_whatsapp_photo(msg.get('media'), current_vin6, 1)
+                                # Update photo count in queue
+                                queue_manager.update_photo_count(current_vin6, 1)
+                                print(f"  📷 Saved photo for {current_vin6}")
                 
                 elif msg.get('type') == 'image' and current_vin6:
                     # Save associated photo
@@ -465,9 +574,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             else:
                 vehicles = queue['vehicles']
             
+            # Convert vehicles dict to array for extension compatibility
+            vehicles_array = list(vehicles.values()) if isinstance(vehicles, dict) else vehicles
+            
             self.send_json({
                 'updated_at': queue.get('updated_at'),
-                'vehicles': vehicles
+                'vehicles': vehicles_array
             })
         
         # Get queue stats
@@ -492,38 +604,107 @@ class RequestHandler(BaseHTTPRequestHandler):
                 
                 # Handle photo request
                 if len(parts) > 3 and parts[3] == 'photos':
-                    folder = os.path.join(OUTPUT_DIR, vin6)
-                    if not os.path.isdir(folder):
+                    # Search for photos in multiple locations
+                    search_locations = [
+                        # WhatsApp scraped folders
+                        os.path.join(OUTPUT_DIR, vin6),
+                        os.path.join(OUTPUT_DIR, 'ready', vin6),
+                        os.path.join(OUTPUT_DIR, 'seller', vin6),
+                        # Downloads folders (SA and manual downloads)
+                        os.path.join(DOWNLOADS_DIR, f'SA/{vin6}'),
+                        os.path.join(DOWNLOADS_DIR, vin6),
+                        # Try with full VIN if provided
+                    ]
+                    
+                    # If this looks like a full VIN (17 chars), also search by last 6
+                    if len(vin6) == 6:
+                        # Search for any folder containing this VIN pattern
+                        for base_dir in [OUTPUT_DIR, os.path.join(OUTPUT_DIR, 'ready'), 
+                                        os.path.join(OUTPUT_DIR, 'seller'), DOWNLOADS_DIR]:
+                            if os.path.isdir(base_dir):
+                                for item in os.listdir(base_dir):
+                                    if vin6 in item:
+                                        search_locations.append(os.path.join(base_dir, item))
+                    
+                    # Find the first folder that exists and has photos
+                    folder = None
+                    for location in search_locations:
+                        if os.path.isdir(location):
+                            # Check if it has photos
+                            photo_files = [f for f in os.listdir(location) 
+                                         if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                            if photo_files:
+                                folder = location
+                                print(f"📁 Found photos in: {folder}")
+                                break
+                    
+                    # Reset SA Photos and prepare for copying
+                    _reset_sa_photos_dir()
+                    os.makedirs(SA_PHOTOS_DIR, exist_ok=True)
+                    
+                    if not folder:
+                        print(f"❌ No photos found for VIN: {vin6}")
                         self.send_json({'photos': []})
                         return
                     
                     photos = []
-                    for fname in sorted(os.listdir(folder)):
-                        if fname.startswith('photo_') and fname.endswith('.jpg'):
-                            photo_path = os.path.join(folder, fname)
-                            with open(photo_path, 'rb') as f:
-                                photo_data = base64.b64encode(f.read()).decode('utf-8')
-                                photos.append({
-                                    'filename': fname,
-                                    'data': f'data:image/jpeg;base64,{photo_data}'
-                                })
+                    photo_count = 0
+                    
+                    # Get all image files from the folder
+                    image_files = []
+                    for fname in os.listdir(folder):
+                        if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+                            image_files.append(fname)
+                    
+                    # Sort to ensure consistent ordering
+                    image_files.sort()
+                    
+                    for fname in image_files:
+                        photo_path = os.path.join(folder, fname)
+                        
+                        # Copy to SA Photos with sequential naming
+                        photo_count += 1
+                        ext = os.path.splitext(fname)[1]
+                        sa_photo_path = os.path.join(SA_PHOTOS_DIR, f'{vin6}_{photo_count:02d}{ext}')
+                        shutil.copy2(photo_path, sa_photo_path)
+                        print(f"📷 Copied: {fname} → SA Photos/{os.path.basename(sa_photo_path)}")
+                        
+                        with open(photo_path, 'rb') as f:
+                            photo_data = base64.b64encode(f.read()).decode('utf-8')
+                            mimetype = 'image/jpeg' if ext.lower() in ['.jpg', '.jpeg'] else 'image/png'
+                            photos.append({
+                                'filename': fname,
+                                'data': f'data:{mimetype};base64,{photo_data}'
+                            })
+                    
+                    print(f"✅ Copied {photo_count} photos to {SA_PHOTOS_DIR} for VIN {vin6}")
                     self.send_json({'photos': photos})
                 
                 else:
-                    # Get vehicle info
-                    folder = os.path.join(OUTPUT_DIR, vin6)
-                    if not os.path.isdir(folder):
-                        self.send_error(404, 'Vehicle not found')
-                        return
-                    
-                    info_file = os.path.join(folder, 'info.json')
-                    if os.path.exists(info_file):
-                        with open(info_file, 'r') as f:
-                            info = json.load(f)
-                            info['vin6'] = vin6
-                            self.send_json(info)
+                    # Get vehicle info from queue
+                    vehicle = queue_manager.get_vehicle(vin6)
+                    if vehicle:
+                        # Also check for folder with photos
+                        folder = os.path.join(OUTPUT_DIR, vin6)
+                        if os.path.isdir(folder):
+                            photo_count = len([f for f in os.listdir(folder) 
+                                             if f.startswith('photo_') and f.endswith('.jpg')])
+                            vehicle['photo_count'] = photo_count
+                        self.send_json(vehicle)
                     else:
-                        self.send_json({'vin6': vin6, 'error': 'No info file'})
+                        # Fallback to checking folder
+                        folder = os.path.join(OUTPUT_DIR, vin6)
+                        if os.path.isdir(folder):
+                            info_file = os.path.join(folder, 'info.json')
+                            if os.path.exists(info_file):
+                                with open(info_file, 'r') as f:
+                                    info = json.load(f)
+                                    info['vin6'] = vin6
+                                    self.send_json(info)
+                            else:
+                                self.send_json({'vin6': vin6, 'info': 'Vehicle folder exists but no info'})
+                        else:
+                            self.send_error(404, 'Vehicle not found')
         
         # WhatsApp status
         elif path == '/whatsapp/status':
@@ -551,6 +732,22 @@ class RequestHandler(BaseHTTPRequestHandler):
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             data = {}
+        
+        # Shutdown endpoint
+        if path == '/shutdown':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'message': 'Python server shutting down'}).encode())
+            
+            # Schedule shutdown after response is sent
+            def shutdown_server():
+                time.sleep(0.1)
+                print("Shutdown requested via API")
+                os._exit(0)
+            
+            threading.Thread(target=shutdown_server, daemon=True).start()
+            return
         
         # Trigger scrape
         if path == '/scrape':
@@ -583,6 +780,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif path.startswith('/queue/remove/'):
                 vin6 = path.split('/')[-1].upper()
                 queue_manager.remove_vehicle(vin6)
+                self.send_json({'success': True})
+            
+            elif path.startswith('/queue/hold/'):
+                vin6 = path.split('/')[-1].upper()
+                queue_manager.hold_vehicle(vin6)
+                self.send_json({'success': True})
+            
+            elif path.startswith('/queue/unhold/'):
+                vin6 = path.split('/')[-1].upper()
+                queue_manager.unhold_vehicle(vin6)
                 self.send_json({'success': True})
             
             elif path == '/queue/rebuild':

@@ -409,7 +409,7 @@ export default function Inventory() {
     () =>
       filtered.reduce((sum, r) => {
         const c = costMap.get(r.stock_number) || {};
-        return sum + toInt(c.total_cost) + toInt(c.added_costs);
+        return sum + toInt(c.total_cost);
       }, 0),
     [filtered, costMap],
   );
@@ -1042,7 +1042,7 @@ export default function Inventory() {
               const c = costMap.get(r.stock_number) || {};
               const loc = locMap.get(r.stock_number) || {};
               
-              const cost = toInt(c.total_cost) + toInt(c.added_costs);
+              const cost = toInt(c.total_cost);
               const sl = STALENESS_STYLES[staleness(r.effective_days_since)];
               const physLoc = loc.physical_location;
               const locCode = c.location_code;

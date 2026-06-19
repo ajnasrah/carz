@@ -120,10 +120,9 @@
 
       <!-- Actions -->
       <div class="queue-actions">
-        <button id="runCrossCheck" class="btn btn-small" style="background:#f57c00;">Cross-Check</button>
+        <button id="scrapeWhatsAppBtn" class="btn btn-small" style="background:#25D366;">Scrape WhatsApp</button>
         <button id="refreshQueue" class="btn btn-small">Refresh Queue</button>
-        <button id="scrapeSoldBtn" class="btn btn-small" style="background:#7b1fa2;">Scrape Texts</button>
-        <button id="syncChatLocationsBtn" class="btn btn-small" style="background:#00695c;">Sync Chat Locations</button>
+        <button id="prepareListingBtn" class="btn btn-small" style="background:#7b1fa2;">Prepare to List</button>
         <button id="frontLotAgingBtn" class="btn btn-small" style="background:#d32f2f;">Front Lot Aging</button>
       </div>
 
@@ -203,22 +202,12 @@
           <a href="#" id="toggleScrapeDates" class="scraper-toggle">Custom date range</a>
         </div>
         
-        <!-- WhatsApp Server Start Commands -->
+        <!-- WhatsApp Server Start Command -->
         <div style="margin-top:10px;padding:8px;background:#f0f9ff;border:1px solid #25D366;border-radius:4px;">
-          <div style="font-weight:600;margin-bottom:6px;color:#25D366;font-size:11px;">Start WhatsApp Server (2 terminals needed):</div>
-          <div style="margin-bottom:6px;">
-            <div style="font-size:10px;color:#666;margin-bottom:2px;">Terminal 1 - WhatsApp Client:</div>
-            <div style="display:flex;gap:4px;">
-              <code style="flex:1;padding:4px;background:white;border:1px solid #ddd;border-radius:2px;font-family:monospace;font-size:10px;overflow-x:auto;">cd "/Users/abdullahabunasrah/Desktop/carz inc/scrapers" && node whatsapp_client.js</code>
-              <button class="btn btn-small" onclick="navigator.clipboard.writeText('cd \'/Users/abdullahabunasrah/Desktop/carz inc/scrapers\' && node whatsapp_client.js')" style="padding:2px 8px;font-size:10px;background:#25D366;">Copy</button>
-            </div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:#666;margin-bottom:2px;">Terminal 2 - Python Server:</div>
-            <div style="display:flex;gap:4px;">
-              <code style="flex:1;padding:4px;background:white;border:1px solid #ddd;border-radius:2px;font-family:monospace;font-size:10px;overflow-x:auto;">cd "/Users/abdullahabunasrah/Desktop/carz inc/scrapers" && python3 whatsapp_server.py</code>
-              <button class="btn btn-small" onclick="navigator.clipboard.writeText('cd \'/Users/abdullahabunasrah/Desktop/carz inc/scrapers\' && python3 whatsapp_server.py')" style="padding:2px 8px;font-size:10px;background:#25D366;">Copy</button>
-            </div>
+          <div style="font-weight:600;margin-bottom:6px;color:#25D366;font-size:11px;">Start WhatsApp Server:</div>
+          <div style="display:flex;gap:4px;">
+            <code style="flex:1;padding:4px;background:white;border:1px solid #ddd;border-radius:2px;font-family:monospace;font-size:10px;overflow-x:auto;">cd "/Users/abdullahabunasrah/Desktop/carz inc/scrapers" && python3 whatsapp_server.py & node whatsapp_client.js</code>
+            <button class="btn btn-small" onclick="navigator.clipboard.writeText('cd \'/Users/abdullahabunasrah/Desktop/carz inc/scrapers\' && python3 whatsapp_server.py & node whatsapp_client.js')" style="padding:2px 8px;font-size:10px;background:#25D366;">Copy</button>
           </div>
         </div>
       </div>
