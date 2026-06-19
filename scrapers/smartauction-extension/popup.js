@@ -3103,9 +3103,25 @@
 
     // Longest-keyword-wins scan so "front bumper" beats "bumper".
     let panel = '', panelLen = 0, panelKey = '';
-    for (const [key, val] of Object.entries(DamageMapper.PANEL_MAP)) {
-      if (q.includes(key) && key.length > panelLen) { panel = val; panelLen = key.length; panelKey = key; }
+    
+    // Check quarter panel priority list FIRST to avoid left/right confusion
+    if (DamageMapper.QUARTER_PANEL_PRIORITY) {
+      for (const [key, val] of DamageMapper.QUARTER_PANEL_PRIORITY) {
+        if (q.includes(key) && key.length > panelLen) { 
+          panel = val; 
+          panelLen = key.length; 
+          panelKey = key; 
+        }
+      }
     }
+    
+    // If no quarter panel match, check regular panel map
+    if (!panel) {
+      for (const [key, val] of Object.entries(DamageMapper.PANEL_MAP)) {
+        if (q.includes(key) && key.length > panelLen) { panel = val; panelLen = key.length; panelKey = key; }
+      }
+    }
+    
     for (const [key, val] of Object.entries(EXTRA_PANEL_SYNONYMS)) {
       if (q.includes(key) && key.length > panelLen) { panel = val; panelLen = key.length; panelKey = key; }
     }

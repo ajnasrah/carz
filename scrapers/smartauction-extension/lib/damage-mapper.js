@@ -23,8 +23,29 @@ var DamageMapper = {
 
   // ── Panel / Location mapping ──
   // AI might say "Front Bumper" but SA dropdown might say "Bumper - Front"
+  
+  // Priority order for quarter panel matching - check these FIRST
+  QUARTER_PANEL_PRIORITY: [
+    ['quarter panel left', 'Quarter Panel - Left'],
+    ['quarter panel right', 'Quarter Panel - Right'],
+    ['qtr panel left', 'Quarter Panel - Left'],
+    ['qtr panel right', 'Quarter Panel - Right'],
+    ['left quarter panel', 'Quarter Panel - Left'],
+    ['right quarter panel', 'Quarter Panel - Right'],
+    ['left rear quarter', 'Quarter Panel - Left'],
+    ['right rear quarter', 'Quarter Panel - Right']
+  ],
+  
   PANEL_MAP: {
     // AI output → SmartAuction value
+    'quarter panel left':   'Quarter Panel - Left',
+    'quarter panel right':  'Quarter Panel - Right',
+    'left quarter panel':   'Quarter Panel - Left',
+    'right quarter panel':  'Quarter Panel - Right',
+    'qtr panel left':       'Quarter Panel - Left',
+    'qtr panel right':      'Quarter Panel - Right',
+    'left rear quarter':    'Quarter Panel - Left',
+    'right rear quarter':   'Quarter Panel - Right',
     'front bumper':         'Bumper - Front',
     'rear bumper':          'Bumper - Rear',
     'hood':                 'Hood',
@@ -45,14 +66,6 @@ var DamageMapper = {
     'left front fender':    'Fender - Left Front',
     'right fender':         'Fender - Right Front',
     'right front fender':   'Fender - Right Front',
-    'left quarter panel':   'Quarter Panel - Left',
-    'left rear quarter':    'Quarter Panel - Left',
-    'right quarter panel':  'Quarter Panel - Right',
-    'right rear quarter':   'Quarter Panel - Right',
-    'quarter panel left':   'Quarter Panel - Left',
-    'quarter panel right':  'Quarter Panel - Right',
-    'qtr panel right':      'Quarter Panel - Right',
-    'qtr panel left':       'Quarter Panel - Left',
     'left rocker panel':    'Rocker Panel - Left',
     'right rocker panel':   'Rocker Panel - Right',
     'windshield':           'Windshield',
