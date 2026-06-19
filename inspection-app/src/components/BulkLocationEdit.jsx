@@ -133,20 +133,6 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
             );
           } else {
             vehicles.forEach(v => updateResults.success.push(v.stock_number));
-            
-            // If this is a Super Dispatch update, also update the Frazer location code
-            if (selectedLocation === 'super_dispatch') {
-              const stockNumbers = vehicles.map(v => v.stock_number);
-              const { error: inventoryError } = await supabase
-                .from('inventory')
-                .update({ location_code: 'X' })
-                .in('stock_number', stockNumbers)
-                .eq('location_code', 'Z'); // Only update if currently needs dispatch
-              
-              if (inventoryError) {
-                console.error('Failed to update Frazer codes:', inventoryError);
-              }
-            }
           }
         }
       }
