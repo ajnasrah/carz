@@ -1,6 +1,11 @@
 {
+  "functions": {
+    "api/whatsapp.js": {
+      "maxDuration": 10
+    }
+  },
   "rewrites": [
-    { "source": "/((?!training/).*)", "destination": "/index.html" }
+    { "source": "/((?!training/|api/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

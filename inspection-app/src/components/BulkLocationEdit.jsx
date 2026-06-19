@@ -13,6 +13,7 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'uax', label: 'UAX' },
     { value: 'daa', label: 'DAA' },
     { value: 'adesa', label: 'ADESA' },
+    { value: 'super_dispatch', label: 'Super Dispatch (Dispatched)' },
     { value: 'in_transit', label: 'In Transit' },
     { value: 'body_shop', label: 'Body Shop' },
     { value: 'mechanic_section', label: 'Mechanic' },
@@ -101,18 +102,23 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
         // Update locations for found vehicles
         if (vehicles.length > 0) {
           const nowIso = new Date().toISOString();
+          
+          // For Super Dispatch, set location as in_transit
+          const actualLocation = selectedLocation === 'super_dispatch' ? 'in_transit' : location;
+          
           const updates = vehicles.map(v => ({
             stock_number: String(v.stock_number).trim(),
             vin: v.vehicle_vin || v.last_6_vin || '',
-            physical_location: location,
-            physical_source: 'bulk_manual',
+            physical_location: actualLocation,
+            physical_source: selectedLocation === 'super_dispatch' ? 'super_dispatch' : 'bulk_manual',
             location_updated_at: nowIso,
             updated_at: nowIso,
             notes: {
               bulk_update: true,
               updated_at: nowIso,
               selected: selectedLocation,
-              custom_input: selectedLocation === '__other__' ? customLocation : null
+              custom_input: selectedLocation === '__other__' ? customLocation : null,
+              dispatched: selectedLocation === 'super_dispatch' ? true : undefined
             }
           }));
 
@@ -127,6 +133,20 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
             );
           } else {
             vehicles.forEach(v => updateResults.success.push(v.stock_number));
+            
+            // If this is a Super Dispatch update, also update the Frazer location code
+            if (selectedLocation === 'super_dispatch') {
+              const stockNumbers = vehicles.map(v => v.stock_number);
+              const { error: inventoryError } = await supabase
+                .from('inventory')
+                .update({ location_code: 'X' })
+                .in('stock_number', stockNumbers)
+                .eq('location_code', 'Z'); // Only update if currently needs dispatch
+              
+              if (inventoryError) {
+                console.error('Failed to update Frazer codes:', inventoryError);
+              }
+            }
           }
         }
       }
