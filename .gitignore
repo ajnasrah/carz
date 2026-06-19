@@ -7,3 +7,8 @@ node_modules/
 dist/
 .env.local
 scrapers/whatsapp_session/
+
+# WhatsApp session files
+scrapers/whatsapp_session/
+scrapers/.wwebjs_auth/
+scrapers/.wwebjs_cache/
