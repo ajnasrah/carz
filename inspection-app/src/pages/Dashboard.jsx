@@ -16,6 +16,7 @@ export default function Dashboard() {
     needsDispatchCount: null,
     inspectingCount: null,
   })
+  const [showMore, setShowMore] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -165,7 +166,15 @@ export default function Dashboard() {
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
         <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
         <ActionTile to="/reports" emoji="📈" label="Reports" />
-        <ActionTile href="/training/" emoji="🎓" label="Training" />
+        <ActionTile onClick={() => setShowMore((s) => !s)} emoji={showMore ? '✕' : '⋯'} label={showMore ? 'Less' : 'More'} />
+        {showMore && (
+          <>
+            <ActionTile to="/inspections" emoji="📝" label="Inspect" />
+            <ActionTile to="/inbound" emoji="📥" label="Inbound" />
+            <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />
+            <ActionTile href="/training/" emoji="🎓" label="Training" />
+          </>
+        )}
       </div>
 
       {profile?.role === 'admin' && (
@@ -183,7 +192,7 @@ export default function Dashboard() {
   )
 }
 
-function ActionTile({ to, href, emoji, label, primary }) {
+function ActionTile({ to, href, onClick, emoji, label, primary }) {
   const className = `aspect-square rounded-xl p-3 flex flex-col items-center justify-center gap-1 text-center ${
     primary
       ? 'bg-emerald-500 text-slate-900 active:bg-emerald-600'
@@ -195,6 +204,9 @@ function ActionTile({ to, href, emoji, label, primary }) {
       <span className="text-xs font-bold leading-tight">{label}</span>
     </>
   )
+  if (onClick) {
+    return <button onClick={onClick} className={className}>{content}</button>
+  }
   if (href) {
     return <a href={href} className={className} target="_blank" rel="noopener noreferrer">{content}</a>
   }
