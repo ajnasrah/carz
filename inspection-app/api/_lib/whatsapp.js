@@ -66,6 +66,19 @@ export function extractVin6(text) {
   return null;
 }
 
+// Extract EVERY plausible VIN-last-6 in a message (for "one message, many cars").
+export function extractAllVin6(text) {
+  if (!text) return [];
+  const tokens = text.toUpperCase().match(/\b[A-Z0-9]{5,7}\b/g) || [];
+  const out = [], seen = new Set();
+  for (const cand of tokens) {
+    if (!/\d/.test(cand) || EXCLUDE_WORDS.has(cand)) continue;
+    const v = normalizeVin6(cand);
+    if (!seen.has(v)) { seen.add(v); out.push(v); }
+  }
+  return out;
+}
+
 // Parse a seller/ready intake message into a vehicle entry, or null.
 // Ported from parse_vehicle_entry() in whatsapp_server.py (structured first,
 // then conversational fallback).

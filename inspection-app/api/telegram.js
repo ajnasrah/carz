@@ -12,7 +12,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 import { createClient } from '@supabase/supabase-js';
-import { parseVehicleEntry, extractVin6 } from './_lib/whatsapp.js';
+import { parseVehicleEntry, extractVin6, extractAllVin6 } from './_lib/whatsapp.js';
 
 export const config = { runtime: 'edge' };
 
@@ -93,19 +93,28 @@ async function processUpdate(update) {
   let vin6 = null, mediaPath = null, parsed = null;
 
   if (chat.station === 'transport') {
-    // Destination is in the message ("086793 pro auto", "086793 back").
-    vin6 = extractVin6(text);
-    const dest = vin6 ? await matchDestination(db, text) : null;
-    if (vin6 && dest) {
-      await updateLocation(db, vin6, dest, eventIso);
-      await setSession(db, fromId, vin6, chat.station);
-    } else if (vin6) {
-      console.warn('transport: no destination matched in', JSON.stringify(text).slice(0, 60));
+    // Destination may be in the message ("086793 pro auto") or sent once before a
+    // list of VINs ("back pro" then 086047, 378249, ...). Handles many VINs too.
+    const dest = await matchDestination(db, text);
+    const vins = extractAllVin6(text);
+    if (vins.length === 0 && dest) {
+      // destination-only line → remember it for the VINs that follow
+      await setDestSession(db, fromId, dest);
+    } else if (vins.length) {
+      const useDest = dest || (await getDestSession(db, fromId));
+      if (useDest) {
+        for (const v of vins) await updateLocation(db, v, useDest, eventIso);
+        await setDestSession(db, fromId, useDest); // keep it for more VINs
+        vin6 = vins[0];
+      } else {
+        console.warn('transport: VINs but no destination known for', fromId);
+      }
     }
   } else if (chat.station === 'body_shop' || chat.station === 'mechanic') {
-    vin6 = extractVin6(text);
-    if (vin6 && chat.location_code) {
-      await updateLocation(db, vin6, chat.location_code, eventIso);
+    const vins = extractAllVin6(text);
+    if (vins.length && chat.location_code) {
+      for (const v of vins) await updateLocation(db, v, chat.location_code, eventIso);
+      vin6 = vins[0];
       await setSession(db, fromId, vin6, chat.station);
     }
   } else {
@@ -223,6 +232,22 @@ async function setSession(db, from, vin6, station) {
     expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'wa_from' });
+}
+
+async function setDestSession(db, from, dest) {
+  await db.from('wa_sessions').upsert({
+    wa_from: from, last_destination: dest,
+    expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'wa_from' });
+}
+
+async function getDestSession(db, from) {
+  const { data } = await db.from('wa_sessions')
+    .select('last_destination, expires_at').eq('wa_from', from).maybeSingle();
+  if (!data?.last_destination) return null;
+  if (data.expires_at && new Date(data.expires_at) < new Date()) return null;
+  return data.last_destination;
 }
 
 async function getSessionVin(db, from) {
