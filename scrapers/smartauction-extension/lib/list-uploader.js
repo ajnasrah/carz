@@ -1922,12 +1922,20 @@
       const upserts = dispatchedMatches.map(({car, dispatch}) => {
         const existing = existingLoc.get(car.stock_number);
         const sameSource = existing && existing.physical_source === 'super_dispatch' && existing.location_updated_at;
+        // Stamp the REAL date the car went in transit, not "now". A dispatch row
+        // can be a month old; stamping now() would make it look freshly in
+        // transit and (under newest-wins) wrongly beat a more recent location.
+        // Priority: actually picked up > scheduled pickup > dispatch created.
+        const eventISO = toDateISO(dispatch['Pickup Completed At'])
+          || toDateISO(dispatch['Pickup Scheduled At'])
+          || dispatch._createdISO
+          || now;
         return {
           stock_number: car.stock_number,
           vin: car.vehicle_vin || '',
           physical_location: 'in_transit',
           physical_source: 'super_dispatch',
-          location_updated_at: sameSource ? existing.location_updated_at : now,
+          location_updated_at: sameSource ? existing.location_updated_at : eventISO,
           updated_at: now,
           notes: {
             status: dispatch.Status || null,

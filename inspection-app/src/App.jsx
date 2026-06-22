@@ -26,6 +26,8 @@ import VehicleAnalytics from './pages/VehicleAnalytics'
 import FrontLotAging from './pages/FrontLotAging'
 import UnmatchedVehicles from './pages/UnmatchedVehicles'
 import ExecutiveDashboard from './pages/ExecutiveDashboard'
+import BuyerMatch from './pages/BuyerMatch'
+import Listings from './pages/Listings'
 // Inbound Inspection Pages
 import InboundDashboard from './pages/InboundDashboard'
 import InboundStart from './pages/InboundStart'
@@ -100,6 +102,9 @@ function AppRoutes() {
       {/* Sold Reports — profit trends + recommendations */}
       <Route path="/sold-reports" element={<ProtectedRoute><SoldReports /></ProtectedRoute>} />
 
+      {/* Buyer Match — top-3 likely buyers per active car (SmartAuction) */}
+      <Route path="/buyer-match" element={<ProtectedRoute><BuyerMatch /></ProtectedRoute>} />
+
       {/* Pull List — sold cars that need to be removed from auctions */}
       <Route path="/pull-list" element={<ProtectedRoute><PullList /></ProtectedRoute>} />
       
@@ -122,6 +127,7 @@ function AppRoutes() {
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
 
       {/* Public marketplace — no auth required, shareable links */}
+      <Route path="/listings" element={<Listings />} />
       <Route path="/marketplace" element={<Marketplace />} />
       <Route path="/marketplace/:id" element={<MarketplaceListing />} />
 

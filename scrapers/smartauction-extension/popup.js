@@ -650,6 +650,14 @@
       });
     }
 
+    // Wire the Buyer Match uploader (active + sold → sa_active_cars / sa_sold_sales)
+    if (typeof window.BuyerMatchUploader !== 'undefined') {
+      window.BuyerMatchUploader.bindUI({
+        supabaseUrl: SUPABASE_URL,
+        supabaseKey: SUPABASE_ANON_KEY,
+      });
+    }
+
     // Power Apps sync was removed — Supabase Live Sync replaces it.
 
     // Load saved inventory

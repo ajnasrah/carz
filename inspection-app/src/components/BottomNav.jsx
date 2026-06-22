@@ -4,6 +4,7 @@ const TABS = [
   { to: '/',            emoji: '🏠', label: 'Home' },
   { to: '/inventory',   emoji: '🚗', label: 'Cars' },
   { to: '/sold-reports', emoji: '💰', label: 'Sold' },
+  { to: '/buyer-match', emoji: '🎯', label: 'Buyers' },
   { to: '/inspections', emoji: '📝', label: 'Insp.' },
 ]
 
@@ -13,12 +14,13 @@ export default function BottomNav() {
   if (pathname.startsWith('/inspect/')) return null
   // Hide on the public marketplace pages.
   if (pathname.startsWith('/marketplace')) return null
+  if (pathname.startsWith('/listings')) return null
   if (pathname === '/login') return null
   if (pathname === '/setup') return null
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur border-t border-slate-800">
-      <div className="max-w-lg mx-auto grid grid-cols-4">
+      <div className="max-w-lg mx-auto grid grid-cols-5">
         {TABS.map((t) => (
           <NavLink
             key={t.to}

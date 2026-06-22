@@ -37,9 +37,19 @@ echo -e "${YELLOW}Step 3: Get WhatsApp Credentials${NC}"
 echo "In your app dashboard:"
 echo "1. Go to WhatsApp > API Setup"
 echo "2. You'll see a test phone number or can add your business number"
-echo "3. Copy the 'Temporary access token' (starts with EAAI...)"
+echo "3. Use a PERMANENT System User token (NOT the 24h temporary one)"
+echo "   Business Settings > Users > System Users > Admin > Generate token"
+echo "   with whatsapp_business_messaging + whatsapp_business_management"
 echo ""
 read -p "Enter your WhatsApp Access Token: " WA_TOKEN
+
+echo ""
+echo "Also grab your App Secret: App > Settings > Basic > App Secret"
+read -p "Enter your WhatsApp App Secret: " WA_APP_SECRET
+if [ ! -z "$WA_APP_SECRET" ]; then
+    echo "$WA_APP_SECRET" | vercel env add WHATSAPP_APP_SECRET production
+    echo -e "${GREEN}✓ Added WHATSAPP_APP_SECRET to Vercel${NC}"
+fi
 
 if [ ! -z "$WA_TOKEN" ]; then
     echo "$WA_TOKEN" | vercel env add WHATSAPP_ACCESS_TOKEN production
@@ -61,7 +71,7 @@ echo -e "${YELLOW}Step 4: Configure Webhook${NC}"
 echo "1. In your app, go to WhatsApp > Configuration"
 echo "2. Click 'Edit' next to Webhook"
 echo "3. Enter these details:"
-echo "   Callback URL: https://carzinc.ai/api/webhook/whatsapp"
+echo "   Callback URL: https://carzinc.ai/api/whatsapp"
 echo "   Verify Token: carz_whatsapp_verify_2024"
 echo "4. Click 'Verify and Save'"
 echo "5. Subscribe to 'messages' webhook field"
@@ -76,7 +86,7 @@ vercel --prod --yes
 echo ""
 echo -e "${GREEN}✅ Setup Complete!${NC}"
 echo ""
-echo "Your webhook is live at: https://carzinc.ai/api/webhook/whatsapp"
+echo "Your webhook is live at: https://carzinc.ai/api/whatsapp"
 echo ""
 echo "To test:"
 echo "1. Send a WhatsApp message to your business number with:"

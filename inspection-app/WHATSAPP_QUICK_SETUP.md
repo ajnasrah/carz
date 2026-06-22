@@ -1,84 +1,65 @@
-# WhatsApp Business API - Quick Setup Guide
+# WhatsApp Cloud API — Quick Setup
 
-## ✅ What I've Done:
-1. Created webhook endpoint at `https://carzinc.ai/api/webhook/whatsapp`
-2. Added verify token to Vercel: `carz_whatsapp_verify_2024`
-3. Deployed to production
+Official Cloud API, **one dedicated number per station** (no groups, no scraping).
+Full granular checklist: `../WHATSAPP_API_MIGRATION_CHECKLIST.md`.
 
-## 🔴 What You Need to Do Now:
+> Callback URL is **`https://carzinc.ai/api/whatsapp`** (the function is `api/whatsapp.js`).
+> The old `/api/webhook/whatsapp` path does NOT exist and will 404.
 
-### 1. Get Supabase Service Key (2 minutes)
-**Tab opened**: https://supabase.com/dashboard/project/yprihgygmreibcuybwoy/settings/api
-
-1. Look for **"service_role (secret)"** section
-2. Click "Reveal" 
-3. Copy the key (starts with `eyJ...`)
-4. Run this command:
+## 1. Vercel env vars (set all five)
 ```bash
-echo "YOUR_SERVICE_KEY_HERE" | vercel env add SUPABASE_SERVICE_KEY production
+vercel env add WHATSAPP_VERIFY_TOKEN production   # your invented string
+vercel env add WHATSAPP_APP_SECRET production     # Meta App → Settings → Basic
+vercel env add WHATSAPP_ACCESS_TOKEN production    # PERMANENT system-user token
+vercel env add SUPABASE_URL production
+vercel env add SUPABASE_SERVICE_KEY production      # service_role, NOT anon
+```
+Repeat with `preview` if you test on preview deploys. See `.env.whatsapp.example`.
+
+> ⚠️ Do NOT use the dev-console **temporary** token (expires in 24h). Create a
+> System User (Business Settings → Users) and generate a permanent token with
+> `whatsapp_business_messaging` + `whatsapp_business_management`.
+
+## 2. Run the migration
+Apply `supabase/migrations/20260621000002_whatsapp_inbound.sql`, then seed your
+real numbers and workers:
+```sql
+INSERT INTO wa_station_numbers (phone_number_id, display_number, station, location_code, label) VALUES
+  ('<PHONE_NUMBER_ID_1>', '+1 901 555 0101', 'body_shop', 'body_shop',        'Carz Body Shop'),
+  ('<PHONE_NUMBER_ID_2>', '+1 901 555 0102', 'mechanic',  'mechanic_section', 'Carz Mechanic'),
+  ('<PHONE_NUMBER_ID_3>', '+1 901 555 0103', 'ready',     NULL,               'Carz Ready'),
+  ('<PHONE_NUMBER_ID_4>', '+1 901 555 0104', 'seller',    NULL,               'Carz Seller Intake');
+
+INSERT INTO wa_allowed_senders (wa_phone, worker_name, station) VALUES
+  ('19015551234', 'Osama', 'body_shop');   -- E.164 digits, no '+'
 ```
 
-### 2. Create WhatsApp Business App (5 minutes)
-**Tab opened**: https://developers.facebook.com
+## 3. Configure the webhook in Meta
+WhatsApp → Configuration → Webhook → Edit:
+- **Callback URL**: `https://carzinc.ai/api/whatsapp`
+- **Verify Token**: the value you set for `WHATSAPP_VERIFY_TOKEN`
+- Click **Verify and Save** → subscribe to the **messages** field.
 
-1. Click **"My Apps"** → **"Create App"**
-2. Choose **"Business"** type
-3. App name: **"Carz Inc WhatsApp"**
-4. Click **"Set Up"** under WhatsApp
-
-### 3. Get WhatsApp Credentials (2 minutes)
-In the WhatsApp dashboard:
-
-1. You'll see a **test phone number** like `+1 555 025 3483`
-2. Copy the **"Temporary access token"** (starts with `EAAI...`)
-3. Copy the **"Phone number ID"** (like `123456789012345`)
-
-Run these commands:
-```bash
-# Add access token
-echo "YOUR_ACCESS_TOKEN" | vercel env add WHATSAPP_ACCESS_TOKEN production
-
-# Add phone number ID  
-echo "YOUR_PHONE_NUMBER_ID" | vercel env add WHATSAPP_PHONE_NUMBER_ID production
-```
-
-### 4. Configure Webhook (3 minutes)
-In Meta dashboard → WhatsApp → Configuration:
-
-1. Click **"Edit"** next to Webhook
-2. Enter:
-   - **Callback URL**: `https://carzinc.ai/api/webhook/whatsapp`
-   - **Verify Token**: `carz_whatsapp_verify_2024`
-3. Click **"Verify and Save"**
-4. Subscribe to: **"messages"**
-
-### 5. Deploy Final Version
+## 4. Deploy
 ```bash
 cd "/Users/abdullahabunasrah/Desktop/carz inc/inspection-app"
-vercel --prod --yes
+vercel --prod --archive=tgz
 ```
 
-## 📱 Test It!
-Send a WhatsApp message to your test number:
+## 5. Test
+From an **allow-listed** number, message the **seller** number:
 ```
 021216
 75000
 Good
 8.5
-Ready
 ```
+Then check Supabase `wa_inbound_messages` for a row with `vin6=021216`,
+`processed=true`. Send a photo to a **body_shop**/**mechanic** number with the
+VIN in the caption → check `vehicle_locations.physical_location` updated.
 
-Check Supabase → inspections table for the new entry!
-
-## 🚨 Troubleshooting
-
-**Webhook won't verify?**
-- Make sure you deployed after adding env variables
-- Check token is exactly: `carz_whatsapp_verify_2024`
-
-**Messages not saving?**
-- Check all 4 env variables are set in Vercel
-- Redeploy: `vercel --prod --yes`
-
-**Need the test number to work?**
-- Add your personal WhatsApp as a test user in Meta dashboard
+## Troubleshooting
+- **Webhook won't verify** → token mismatch, or you didn't deploy after adding env. Verify token is read from env now.
+- **POSTs rejected (401)** → `WHATSAPP_APP_SECRET` missing/wrong (signature check).
+- **Message ignored** → sender not in `wa_allowed_senders`, or `phone_number_id` not in `wa_station_numbers`.
+- **Photo not saved** → no VIN in caption and no recent VIN message from that sender (10-min session window).
