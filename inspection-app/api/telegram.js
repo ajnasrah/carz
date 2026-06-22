@@ -75,6 +75,7 @@ async function processUpdate(update) {
     (Array.isArray(msg.photo) && msg.photo.length) ? msg.photo[msg.photo.length - 1].file_id
     : (msg.document && (msg.document.mime_type || '').startsWith('image/')) ? msg.document.file_id
     : null;
+  const mediaGroupId = msg.media_group_id || null; // album id (photos sent together)
   const isIntake = chat.station === 'seller' || chat.station === 'ready';
 
   // Idempotency claim — duplicate delivery returns no row.
@@ -149,24 +150,37 @@ async function processUpdate(update) {
   // Photos. Intake (ready/seller) -> wa-photos, which feeds the SmartAuction
   // listing / marketplace. Location & transport groups -> car-history, a
   // separate bucket kept for backend reference ONLY (never shown on marketplace).
+  let pendingFileId = null;
   if (photoFileId) {
+    // Album photos share media_group_id; the caption can arrive in any order.
+    // Resolve the VIN from a sibling that already carried it.
+    if (!vin6 && mediaGroupId) {
+      const { data: sib } = await db.from('wa_inbound_messages')
+        .select('vin6').eq('media_group_id', mediaGroupId).not('vin6', 'is', null).limit(1).maybeSingle();
+      if (sib?.vin6) vin6 = sib.vin6;
+    }
     if (!vin6) vin6 = extractVin6(text) || (await getSessionVin(db, fromId));
+
+    const bucket = isIntake ? 'wa-photos' : 'car-history';
     if (vin6) {
-      const bucket = isIntake ? 'wa-photos' : 'car-history';
       const { buf, ext, mime } = await downloadTelegramPhoto(photoFileId);
-      // Name by content hash so a byte-identical re-send maps to the same path
-      // (stored once) and shows once on the listing.
       const hash = await sha256Hex(buf);
       mediaPath = `${vin6}/${hash}.${ext}`;
       const up = await db.storage.from(bucket).upload(mediaPath, buf, { contentType: mime, upsert: true });
       if (up.error) throw new Error(`storage: ${up.error.message}`);
+      // Now that the VIN is known, pull in any album siblings that were parked.
+      if (mediaGroupId) await resolvePendingAlbum(db, mediaGroupId, vin6, bucket);
+    } else if (mediaGroupId) {
+      // No VIN yet — park this photo's file_id; a captioned sibling will claim it.
+      pendingFileId = photoFileId;
     } else {
       console.warn('telegram photo with no resolvable VIN in', chatId);
     }
   }
 
   await db.from('wa_inbound_messages').update({
-    vin6, media_path: mediaPath, parsed, processed: true, error: null,
+    vin6, media_path: mediaPath, parsed, media_group_id: mediaGroupId,
+    pending_file_id: pendingFileId, processed: true, error: null,
   }).eq('message_id', msgKey);
 }
 
@@ -239,6 +253,26 @@ async function checkMileage(db, chatId, replyTo, vin6, postedMiles, senderName) 
 async function sha256Hex(buf) {
   const h = await crypto.subtle.digest('SHA-256', buf);
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Download + store any album photos that were parked (pending) before the VIN
+// was known. Idempotent: hashed path + clears pending_file_id once stored.
+async function resolvePendingAlbum(db, mediaGroupId, vin6, bucket) {
+  const { data: pend } = await db.from('wa_inbound_messages')
+    .select('message_id, pending_file_id')
+    .eq('media_group_id', mediaGroupId).is('media_path', null).not('pending_file_id', 'is', null);
+  for (const p of pend || []) {
+    try {
+      const { buf, ext, mime } = await downloadTelegramPhoto(p.pending_file_id);
+      const hash = await sha256Hex(buf);
+      const path = `${vin6}/${hash}.${ext}`;
+      const up = await db.storage.from(bucket).upload(path, buf, { contentType: mime, upsert: true });
+      if (up.error) throw new Error(up.error.message);
+      await db.from('wa_inbound_messages')
+        .update({ vin6, media_path: path, pending_file_id: null })
+        .eq('message_id', p.message_id);
+    } catch (e) { console.error('resolve pending album failed', p.message_id, e?.message || e); }
+  }
 }
 
 async function setSession(db, from, vin6, station) {
