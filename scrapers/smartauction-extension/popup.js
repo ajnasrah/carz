@@ -999,17 +999,10 @@
       }
       await restoreDashUploads();
       
-      // Update stats from queue data
-      const queued = queueData.filter(v => v.status === 'queued').length;
-      const listed = queueData.filter(v => v.status === 'listed').length;
-      const sold = queueData.filter(v => v.status === 'sold').length;
-      const ready = queueData.filter(v => v.status === 'queued' && v.photo_count > 0).length;
-      
-      document.getElementById('statQueued').textContent = queued || 0;
-      document.getElementById('statListed').textContent = listed || 0;
-      document.getElementById('statSold').textContent = sold || 0;
-      document.getElementById('statTotal').textContent = queueData.length || 0;
-      
+      // Counts come from Supabase (inventory + sa_active_cars), not the local
+      // scraper queue — so they populate even when the local server is offline.
+      await updateSaCounts();
+
       renderDashList();
     }
     if (mode === 'info') {
@@ -2326,16 +2319,9 @@
           : 'No new vehicles found in WhatsApp';
         statusDiv.className = 'status success';
         
-        // Update stats and render
-        const queued = queueData.filter(v => v.status === 'queued').length;
-        const listed = queueData.filter(v => v.status === 'listed').length;
-        const sold = queueData.filter(v => v.status === 'sold').length;
-        
-        document.getElementById('statQueued').textContent = queued || 0;
-        document.getElementById('statListed').textContent = listed || 0;
-        document.getElementById('statSold').textContent = sold || 0;
-        document.getElementById('statTotal').textContent = queueData.length || 0;
-        
+        // Counts come from Supabase (inventory + sa_active_cars), not the local queue.
+        await updateSaCounts();
+
         renderDashList();
       } catch (err) {
         statusDiv.textContent = err.name === 'TimeoutError'
@@ -2831,6 +2817,35 @@
     };
   }
 
+  // Dashboard counts computed entirely from Supabase — no local scraper server needed.
+  //   In Inv   = current Frazer inventory (the `inventory` global, synced from Supabase)
+  //   On SA    = inventory whose VIN matches the SmartAuction active list (sa_active_cars)
+  //   Not on SA= inventory not currently listed on SmartAuction
+  //   SA Active= total SmartAuction active listings (sa_active_cars)
+  async function updateSaCounts() {
+    const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/sa_active_cars?select=vin`, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      const active = res.ok ? await res.json() : [];
+      const saLast6 = new Set((active || [])
+        .map(a => (a.vin || '').toUpperCase().slice(-6)).filter(Boolean));
+      const inv = inventory || [];
+      let onSA = 0;
+      for (const v of inv) {
+        const last6 = (v.last_6_vin || (v.vin || '').slice(-6) || '').toUpperCase();
+        if (last6 && saLast6.has(last6)) onSA++;
+      }
+      const inInv = inv.length;
+      setText('statQueued', inInv);
+      setText('statListed', onSA);
+      setText('statSold', Math.max(0, inInv - onSA));
+      setText('statTotal', (active || []).length);
+    } catch (e) { console.error('[updateSaCounts]', e); }
+  }
+
   async function syncSupabaseInventory(opts = {}) {
     const { silent = false } = opts;
     const badge = document.getElementById('supabaseInvBadge');
@@ -2871,10 +2886,8 @@
         dashInvStatus.textContent = `${mapped.length} vehicles (Supabase)`;
         dashInvStatus.className = 'upload-file-status loaded';
       }
-      // Update the "In Inv" stat card directly — cross-check won't run unless
-      // SA listings are also loaded, but the raw count should always show.
-      const statQueuedEl = document.getElementById('statQueued');
-      if (statQueuedEl) statQueuedEl.textContent = mapped.length;
+      // Refresh all dashboard counts from Supabase (inventory + SA active list).
+      updateSaCounts();
       if (badge) { badge.textContent = `${mapped.length} inv`; badge.className = 'scraper-badge online'; }
       if (result && !silent) { result.textContent = `${mapped.length} inventory rows`; result.className = 'scraper-result ok'; }
       // Re-run the cross-check if SA data is already loaded
