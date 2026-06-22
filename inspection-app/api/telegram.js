@@ -1,5 +1,5 @@
-// Telegram bot webhook — reads station groups and feeds the same Supabase
-// pipeline the WhatsApp webhook does (wa_inbound_messages + wa-photos + queue).
+// Telegram bot webhook — reads station groups and feeds the Supabase intake
+// pipeline (wa_inbound_messages + wa-photos + queue).
 //
 // Telegram pushes every group message here (bot privacy mode OFF, or bot is a
 // group admin). We trust messages from registered groups (tg_chats); the group
@@ -12,7 +12,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 import { createClient } from '@supabase/supabase-js';
-import { parseVehicleEntry, extractVin6, extractAllVin6 } from './_lib/whatsapp.js';
+import { parseVehicleEntry, extractVin6, extractAllVin6 } from './_lib/parse.js';
 
 export const config = { runtime: 'edge' };
 
