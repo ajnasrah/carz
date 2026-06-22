@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Search, ExternalLink, Loader, Clock, X } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
@@ -14,6 +14,7 @@ const SVC_STYLES = {
 
 export default function Lookup() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { user } = useAuth()
   const [vinInput, setVinInput] = useState('')
   const [decoded, setDecoded] = useState(null)
@@ -46,6 +47,12 @@ export default function Lookup() {
     run()
     return () => { cancelled = true }
   }, [])
+
+  // Prefill the VIN when deep-linked from the global search popup (/lookup?vin=…)
+  useEffect(() => {
+    const vin = (searchParams.get('vin') || '').toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '').slice(0, 17)
+    if (vin) setVinInput(vin)
+  }, [searchParams])
 
   async function handleLookup(e) {
     e?.preventDefault()

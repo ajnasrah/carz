@@ -4,6 +4,23 @@ import { Search, ChevronDown, Copy, Check } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { toInt } from '../services/utils'
 
+function exportCsv(cars) {
+  const cols = [
+    ['stock_number', 'Stock'], ['year', 'Year'], ['make', 'Make'], ['model', 'Model'],
+    ['mileage', 'Mileage'], ['vehicle_color', 'Color'], ['vin_last6', 'VIN Last 6'], ['full_vin', 'VIN'],
+  ]
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const lines = [cols.map(([, h]) => esc(h)).join(',')]
+  for (const c of cars) lines.push(cols.map(([k]) => esc(c[k])).join(','))
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `carz-marketplace-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function QuickCopy({ text, label }) {
   const [copied, setCopied] = useState(false)
   return (
@@ -150,7 +167,16 @@ export default function Marketplace() {
           </div>
         </div>
 
-        <p className="text-xs text-slate-500 mb-3">{filtered.length} vehicles</p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs text-slate-500">{filtered.length} vehicles</p>
+          <button
+            onClick={() => exportCsv(filtered)}
+            disabled={!filtered.length}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40"
+          >
+            Export CSV
+          </button>
+        </div>
 
         {loading ? (
           <p className="text-center text-slate-400 py-12">Loading...</p>

@@ -102,7 +102,12 @@ export default function MarketplaceListing() {
   const nextId = currentIdx < allIds.length - 1 ? allIds[currentIdx + 1] : null
 
   if (loading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-400">Loading...</div>
-  if (!car) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-red-400">Not found</div>
+  if (!car) return (
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-4">
+      <p className="text-red-400">Not found</p>
+      <button onClick={() => navigate('/marketplace')} className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm">← Back to marketplace</button>
+    </div>
+  )
 
   const cl = car.checklist || {}
   const vehicle = [car.year, car.make, car.model].filter(Boolean).join(' ')

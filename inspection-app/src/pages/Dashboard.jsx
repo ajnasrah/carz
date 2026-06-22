@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
+import VinSearchBar from '../components/VinSearchBar'
 
 export default function Dashboard() {
   const { user, profile, signOut } = useAuth()
@@ -98,6 +99,9 @@ export default function Dashboard() {
         </button>
       </div>
 
+      {/* Global VIN / stock search — opens a quick-info popup */}
+      <VinSearchBar />
+
       {/* Stat strip */}
       <div className="grid grid-cols-3 gap-2 mb-4">
         <div className="rounded-xl p-3 bg-slate-800 text-center">
@@ -155,7 +159,6 @@ export default function Dashboard() {
       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">What do you want to do?</p>
       <div className="grid grid-cols-3 gap-2">
         <ActionTile to="/lot" emoji="🚶" label="Walk Lot" />
-        <ActionTile to="/vin-check" emoji="🔍" label="Check VIN" />
         <ActionTile to="/inspections" emoji="📝" label={`Inspect${stats.inspectingCount ? ` (${stats.inspectingCount})` : ''}`} primary />
         <ActionTile to="/inbound" emoji="📥" label="Inbound" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
