@@ -73,20 +73,18 @@
   // Serverless: pulls public Supabase URLs straight through chrome.downloads.
   async function downloadCarPhotos(vin6) {
     const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
-    let n = 0;
-    for (let i = 0; i < urls.length; i++) {
-      const ext = (urls[i].split('?')[0].split('.').pop() || 'jpg').toLowerCase();
-      try {
-        await chrome.downloads.download({
-          url: urls[i],
-          filename: `SA Photos/${vin6}/${String(i + 1).padStart(2, '0')}.${ext}`,
-          conflictAction: 'overwrite',
-          saveAs: false,
-        });
-        n++;
-      } catch (e) { console.error('download failed', urls[i], e); }
-    }
-    return n;
+    // Parallel downloads; filename keeps the send order (01, 02, …) so the
+    // SmartAuction folder picker uploads them in order.
+    const results = await Promise.all(urls.map((url, i) => {
+      const ext = (url.split('?')[0].split('.').pop() || 'jpg').toLowerCase();
+      return chrome.downloads.download({
+        url,
+        filename: `SA Photos/${vin6}/${String(i + 1).padStart(3, '0')}.${ext}`,
+        conflictAction: 'overwrite',
+        saveAs: false,
+      }).then(() => true).catch((e) => { console.error('download failed', url, e); return false; });
+    }));
+    return results.filter(Boolean).length;
   }
 
   async function serverFetch(url) {
@@ -1860,7 +1858,6 @@
       const qCar = queueData.find(v => (v.vin6 || '').toUpperCase() === vin6.toUpperCase());
       const expected = qCar?.photo_count || 0;
       const ps = document.getElementById('autoPhotoStatus');
-      await autoLoadPhotosFromFolder(vin6); // preview thumbnails in the wizard
       if (expected > 0) {
         if (ps) { ps.textContent = `📥 Downloading ${expected} photo${expected === 1 ? '' : 's'}…`; ps.className = 'field-status'; }
         const n = await downloadCarPhotos(vin6);
