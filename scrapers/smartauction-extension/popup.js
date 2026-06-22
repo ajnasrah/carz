@@ -73,33 +73,19 @@
   // Serverless: pulls public Supabase URLs straight through chrome.downloads.
   async function downloadCarPhotos(vin6) {
     const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
-    // Download ONE AT A TIME, waiting for each to finish, so files land on disk
-    // in exact send order (names are 001, 002, … too — ordered any way SA sorts).
-    function downloadAndWait(opts) {
-      return new Promise((resolve) => {
-        chrome.downloads.download(opts, (id) => {
-          if (!id) return resolve(false);
-          const onChanged = (delta) => {
-            if (delta.id !== id || !delta.state) return;
-            if (delta.state.current === 'complete') { chrome.downloads.onChanged.removeListener(onChanged); resolve(true); }
-            else if (delta.state.current === 'interrupted') { chrome.downloads.onChanged.removeListener(onChanged); resolve(false); }
-          };
-          chrome.downloads.onChanged.addListener(onChanged);
-        });
-      });
-    }
-    let n = 0;
-    for (let i = 0; i < urls.length; i++) {
-      const ext = (urls[i].split('?')[0].split('.').pop() || 'jpg').toLowerCase();
-      const okDl = await downloadAndWait({
-        url: urls[i],
+    // Parallel for speed. Filenames 001, 002, … carry the send order, and the
+    // SmartAuction Add-Photos picker uploads files in filename order — so order
+    // is preserved without downloading one-at-a-time.
+    const results = await Promise.all(urls.map((url, i) => new Promise((resolve) => {
+      const ext = (url.split('?')[0].split('.').pop() || 'jpg').toLowerCase();
+      chrome.downloads.download({
+        url,
         filename: `SA Photos/${vin6}/${String(i + 1).padStart(3, '0')}.${ext}`,
         conflictAction: 'overwrite',
         saveAs: false,
-      });
-      if (okDl) n++;
-    }
-    return n;
+      }, (id) => resolve(!!id));
+    })));
+    return results.filter(Boolean).length;
   }
 
   async function serverFetch(url) {
