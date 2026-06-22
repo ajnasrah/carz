@@ -200,7 +200,14 @@ export default function BuyerMatch() {
                                 <span className="font-medium text-slate-100 truncate">{rec.buyer_name}</span>
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded border shrink-0 ${CONF[rec.confidence]}`}>{rec.confidence}</span>
                               </div>
-                              <span className="text-emerald-400 font-semibold shrink-0">{money(rec.predicted_price)}</span>
+                              <div className="text-right shrink-0">
+                                <div className="text-emerald-400 font-semibold leading-tight">{money(rec.predicted_price)}</div>
+                                {rec.buyer_avg_price != null && (
+                                  <div className="text-[10px] text-slate-400 leading-tight">
+                                    avg paid {money(rec.buyer_avg_price)} · {rec.buyer_seg_count ? `${rec.buyer_seg_count} ${res.segment}${rec.buyer_seg_count > 1 ? 's' : ''}` : 'overall'}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <p className="text-xs text-slate-400 mt-1 ml-7">{rec.reason}</p>
                             <div className="flex flex-wrap gap-1.5 mt-2 ml-7">

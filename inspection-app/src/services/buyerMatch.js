@@ -130,8 +130,12 @@ export function buildModel(sold) {
     const ageDays = lastSale ? Math.max(0, maxDate - lastSale) : 9999;
     p.lastSale = lastSale;
     p.recencyMult = 0.85 + 0.15 * Math.exp(-ageDays / RECENCY_HALFLIFE);
-    // per-segment premium (how much above/below market this buyer pays), shrunk by sample size
+    // overall average price this buyer actually paid
+    p.avgPrice = p.prices.length ? p.prices.reduce((a, b) => a + b, 0) / p.prices.length : null;
+    // per-segment premium (how much above/below market this buyer pays), shrunk by sample size,
+    // plus the buyer's actual average price within each segment.
     p.prem = {};
+    p.avgBySeg = {};
     const segP = {};
     for (const c of p.cars) if (c._p) (segP[c._seg] ||= []).push(c._p);
     for (const [seg, ps] of Object.entries(segP)) {
@@ -140,6 +144,7 @@ export function buildModel(sold) {
       const ns = ps.length;
       const shrunk = (ns * raw + SHRINK * 1.0) / (ns + SHRINK);
       p.prem[seg] = Math.max(PREM_LO, Math.min(PREM_HI, shrunk));
+      p.avgBySeg[seg] = ps.reduce((a, b) => a + b, 0) / ps.length;
     }
   }
 
@@ -221,9 +226,13 @@ export function recommendForCar(car, model, cfg = DEFAULT_CONFIG) {
         : `Bought ${p.makeCount[car.make] ? `${makeN} ${car.make}` : `${segN} ${seg}s`}; ` +
           `pays ~${(prem * 100 - 100).toFixed(0)}% vs market on ${seg}s. ${p.n} total buys, ${geoStr}.`;
 
+      // What this buyer actually pays on average for this segment (else overall).
+      const buyerAvg = p.avgBySeg[seg] ?? p.avgPrice;
       out.push({
         buyer_name: p.name, buyer_email: p.email, buyer_phone: p.phone, buyer_state: p.state,
         predicted_price: predicted ? Math.round(predicted) : null, miles,
+        buyer_avg_price: buyerAvg ? Math.round(buyerAvg) : null,
+        buyer_seg_count: segN,
         score, baseScore: score, confidence, reason, _aff: makeAff, _n: p.n,
       });
     }
