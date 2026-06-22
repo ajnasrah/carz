@@ -13,7 +13,7 @@ import {
   fmt, profitColor, PERIODS,
 } from '../services/soldReports'
 
-export default function SoldReports() {
+export default function SoldReports({ embedded = false }) {
   const navigate = useNavigate()
   const [allRows, setAllRows] = useState([])
   const [buyerRows, setBuyerRows] = useState([])
@@ -218,7 +218,7 @@ export default function SoldReports() {
 
   return (
     <div className="page pb-12">
-      <Header navigate={navigate} />
+      {!embedded && <Header navigate={navigate} />}
 
       {/* Filter Panel */}
       <div className="bg-slate-800 rounded-lg p-3 mb-4">

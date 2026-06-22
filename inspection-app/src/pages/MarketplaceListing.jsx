@@ -45,17 +45,24 @@ function PhotoGallery({ photos }) {
           </div>
         </>
       )}
-      {/* Thumbnail strip */}
+      {/* Thumbnail strip — windowed around the current photo so it follows along */}
       <div className="absolute bottom-8 left-0 right-0 flex justify-center gap-1 px-2">
-        {photos.slice(0, 12).map((p, i) => (
-          <button
-            key={i}
-            onClick={() => setIdx(i)}
-            className={`w-8 h-8 rounded overflow-hidden border-2 shrink-0 ${i === idx ? 'border-emerald-400' : 'border-transparent opacity-60'}`}
-          >
-            <img src={p.url} alt="" className="w-full h-full object-cover" />
-          </button>
-        ))}
+        {(() => {
+          const WIN = 12
+          const start = Math.max(0, Math.min(idx - Math.floor(WIN / 2), Math.max(0, photos.length - WIN)))
+          return photos.slice(start, start + WIN).map((p, j) => {
+            const i = start + j
+            return (
+              <button
+                key={i}
+                onClick={() => setIdx(i)}
+                className={`w-8 h-8 rounded overflow-hidden border-2 shrink-0 ${i === idx ? 'border-emerald-400' : 'border-transparent opacity-60'}`}
+              >
+                <img src={p.url} alt="" className="w-full h-full object-cover" />
+              </button>
+            )
+          })
+        })()}
       </div>
     </div>
   )
@@ -203,6 +210,28 @@ export default function MarketplaceListing() {
 
         {/* Photo gallery */}
         <PhotoGallery photos={allPhotos} />
+
+        {/* Buy Now price + SmartAuction link */}
+        {(car.buy_now || car.sa_url) && (
+          <div className="flex items-center justify-between mt-3 bg-slate-900 rounded-lg p-3 border border-slate-800">
+            {car.buy_now ? (
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase">Buy It Now</p>
+                <p className="text-emerald-400 font-bold text-2xl">${Number(car.buy_now).toLocaleString()}</p>
+              </div>
+            ) : <span />}
+            {car.sa_url && (
+              <a
+                href={car.sa_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-900 text-sm font-bold"
+              >
+                View on SmartAuction →
+              </a>
+            )}
+          </div>
+        )}
 
         {/* Quick actions */}
         <div className="flex gap-2 mt-3">

@@ -162,14 +162,12 @@ export default function Dashboard() {
         <ActionTile to="/inspections" emoji="📝" label={`Inspect${stats.inspectingCount ? ` (${stats.inspectingCount})` : ''}`} primary />
         <ActionTile to="/inbound" emoji="📥" label="Inbound" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
-        <ActionTile to="/sold-reports" emoji="💰" label="Sold" />
         <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
         <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
-        <ActionTile to="/analytics" emoji="📈" label="Analytics" />
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
         <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
-        <ActionTile to="/reports" emoji="📊" label="Reports" />
+        <ActionTile to="/reports" emoji="📈" label="Reports" />
         <ActionTile href="/training/" emoji="🎓" label="Training" />
       </div>
 

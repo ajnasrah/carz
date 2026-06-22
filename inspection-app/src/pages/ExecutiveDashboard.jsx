@@ -35,7 +35,7 @@ ChartJS.register(
   Filler
 )
 
-export default function ExecutiveDashboard() {
+export default function ExecutiveDashboard({ embedded = false }) {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState('30') // days
@@ -378,15 +378,17 @@ export default function ExecutiveDashboard() {
     <div className="page pb-20">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="p-2 rounded-lg bg-slate-800">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold text-emerald-400">Executive Dashboard</h1>
-            <p className="text-xs text-slate-500">Real-time business metrics</p>
+        {!embedded && (
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate('/')} className="p-2 rounded-lg bg-slate-800">
+              <ArrowLeft size={20} />
+            </button>
+            <div>
+              <h1 className="text-xl font-bold text-emerald-400">Executive Dashboard</h1>
+              <p className="text-xs text-slate-500">Real-time business metrics</p>
+            </div>
           </div>
-        </div>
+        )}
         <select
           value={timeRange}
           onChange={(e) => setTimeRange(e.target.value)}

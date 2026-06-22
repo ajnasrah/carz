@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { supabase, selectAll } from "../services/supabase";
 import { Calendar, TrendingUp, Users, DollarSign, Clock, Filter, ChevronDown, BarChart3, Package, Truck, MapPin, Search } from "lucide-react";
 
-export default function VehicleAnalytics() {
+export default function VehicleAnalytics({ embedded = false }) {
   const [loading, setLoading] = useState(true);
   const [soldData, setSoldData] = useState([]);
   const [inventoryData, setInventoryData] = useState([]);
@@ -266,10 +266,12 @@ export default function VehicleAnalytics() {
     <div className="min-h-screen bg-slate-900 text-white">
       <div className="max-w-7xl mx-auto p-4">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-2">Vehicle Analytics</h1>
-          <p className="text-slate-400">Comprehensive analysis of vehicle performance, sales, and operations</p>
-        </div>
+        {!embedded && (
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold mb-2">Vehicle Analytics</h1>
+            <p className="text-slate-400">Comprehensive analysis of vehicle performance, sales, and operations</p>
+          </div>
+        )}
 
         {/* Filter Panel */}
         <div className="bg-slate-800 rounded-lg p-4 mb-6">

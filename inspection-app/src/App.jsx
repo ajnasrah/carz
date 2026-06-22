@@ -26,6 +26,7 @@ import VehicleAnalytics from './pages/VehicleAnalytics'
 import FrontLotAging from './pages/FrontLotAging'
 import UnmatchedVehicles from './pages/UnmatchedVehicles'
 import ExecutiveDashboard from './pages/ExecutiveDashboard'
+import Reports from './pages/Reports'
 import BuyerMatch from './pages/BuyerMatch'
 import Listings from './pages/Listings'
 // Inbound Inspection Pages
@@ -114,8 +115,10 @@ function AppRoutes() {
       {/* Front Lot Aging — vehicles on lot over 10 days not on SmartAuction */}
       <Route path="/front-lot-aging" element={<ProtectedRoute><FrontLotAging /></ProtectedRoute>} />
 
-      {/* Executive Dashboard */}
-      <Route path="/reports" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
+      {/* Reports hub — Executive metrics · Sold reports · Vehicle Analytics */}
+      <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+      {/* Back-compat: standalone routes still resolve (deep links / bottom nav) */}
+      <Route path="/reports/executive" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
       
       {/* Inbound Inspection System */}
       <Route path="/inbound" element={<ProtectedRoute><InboundDashboard /></ProtectedRoute>} />

@@ -8,6 +8,7 @@ function exportCsv(cars) {
   const cols = [
     ['stock_number', 'Stock'], ['year', 'Year'], ['make', 'Make'], ['model', 'Model'],
     ['mileage', 'Mileage'], ['vehicle_color', 'Color'], ['vin_last6', 'VIN Last 6'], ['full_vin', 'VIN'],
+    ['buy_now', 'Buy Now'], ['sa_url', 'SmartAuction Link'],
   ]
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
   const lines = [cols.map(([, h]) => esc(h)).join(',')]
@@ -229,7 +230,14 @@ export default function Marketplace() {
                     </span>
                   </div>
                   <div className="p-4">
-                    <h2 className="font-bold text-white text-lg">{vehicle}</h2>
+                    <div className="flex items-center justify-between">
+                      <h2 className="font-bold text-white text-lg">{vehicle}</h2>
+                      {car.buy_now && (
+                        <span className="text-emerald-400 font-bold text-lg whitespace-nowrap">
+                          ${Number(car.buy_now).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex gap-4 mt-1 text-sm text-slate-400">
                       <span>{miles.toLocaleString()} mi</span>
                       {car.vehicle_color && <span>{car.vehicle_color}</span>}
