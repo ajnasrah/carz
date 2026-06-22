@@ -92,6 +92,21 @@ async function processUpdate(update) {
   const eventIso = msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString();
   let vin6 = null, mediaPath = null, parsed = null;
 
+  // Mileage correction: a reply to the bot's "confirm mileage" message with the
+  // right number. Update the car's miles instead of treating it as a new car.
+  if (msg.reply_to_message?.from?.is_bot && /confirm mileage/i.test(msg.reply_to_message.text || '')) {
+    const cVin = extractVin6(msg.reply_to_message.text || '');
+    const corrected = (text.match(/\d[\d,]*/g) || [])
+      .map((s) => parseInt(s.replace(/,/g, ''), 10))
+      .find((n) => n >= 1000 && n <= 999999);
+    if (cVin && corrected) {
+      await db.from('wa_inbound_messages').update({
+        vin6: cVin, parsed: { vin6: cVin, miles: corrected, corrected: true }, processed: true, error: null,
+      }).eq('message_id', msgKey);
+    }
+    return; // don't treat the correction as a new car
+  }
+
   if (chat.station === 'transport') {
     // Destination may be in the message ("086793 pro auto") or sent once before a
     // list of VINs ("back pro" then 086047, 378249, ...). Handles many VINs too.
