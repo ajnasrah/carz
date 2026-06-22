@@ -54,7 +54,8 @@ export function parseVehicleEntry(text) {
     if (/^[A-Z0-9]{5,7}$/.test(first) && /\d/.test(first) && !EXCLUDE_WORDS.has(first)) {
       const vin6 = normalizeVin6(first);
 
-      const milesM = lines[1]?.replace(/,/g, '').trim().match(/^(\d{3,6})$/);
+      // Accept a decimal odometer ("81263.1") — use the whole-number part.
+      const milesM = lines[1]?.replace(/,/g, '').trim().match(/^(\d{3,6})(?:\.\d+)?$/);
       if (!milesM) return null;
       const miles = parseInt(milesM[1], 10);
 
