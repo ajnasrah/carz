@@ -24,6 +24,7 @@ INSERT INTO location_keywords (keyword, location_code, label) VALUES
   ('proauto',   'pro_auto',                'Pro Auto'),
   ('summit',    'summit_tire',             'Summit Tire'),
   ('tristate',  'tri_state_glass',         'Tri-State Glass'),
+  ('state',     'tri_state_glass',         'Tri-State Glass'),
   ('bodyshop',  'body_shop',               'Body Shop'),
   ('mechanic',  'mechanic_section',        'Mechanic'),
   ('upholstery','upholstery',              'Upholstery'),

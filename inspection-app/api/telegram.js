@@ -108,16 +108,25 @@ async function processUpdate(update) {
     }
   } else {
     parsed = parseVehicleEntry(text);
-    if (parsed?.vin6) { vin6 = parsed.vin6; await setSession(db, fromId, vin6, chat.station); }
+    if (parsed?.vin6) {
+      vin6 = parsed.vin6;
+      await setSession(db, fromId, vin6, chat.station);
+      // Intake groups can also set a location (e.g. ready-to-sell => front lot)
+      // when location_code is configured on the group.
+      if (chat.location_code) await updateLocation(db, vin6, chat.location_code, eventIso);
+    }
   }
 
-  // Photos: intake stations only (so body/mechanic shots never hit a listing).
-  if (isIntake && photoFileId) {
+  // Photos. Intake (ready/seller) -> wa-photos, which feeds the SmartAuction
+  // listing / marketplace. Location & transport groups -> car-history, a
+  // separate bucket kept for backend reference ONLY (never shown on marketplace).
+  if (photoFileId) {
     if (!vin6) vin6 = extractVin6(text) || (await getSessionVin(db, fromId));
     if (vin6) {
+      const bucket = isIntake ? 'wa-photos' : 'car-history';
       const { buf, ext, mime } = await downloadTelegramPhoto(photoFileId);
       mediaPath = `${vin6}/${msgKey}.${ext}`;
-      const up = await db.storage.from('wa-photos').upload(mediaPath, buf, { contentType: mime, upsert: true });
+      const up = await db.storage.from(bucket).upload(mediaPath, buf, { contentType: mime, upsert: true });
       if (up.error) throw new Error(`storage: ${up.error.message}`);
     } else {
       console.warn('telegram photo with no resolvable VIN in', chatId);
