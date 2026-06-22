@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { supabase } from "../services/supabase";
+import { supabase, selectAll } from "../services/supabase";
 import { Calendar, TrendingUp, Users, DollarSign, Clock, Filter, ChevronDown, BarChart3, Package, Truck, MapPin, Search } from "lucide-react";
 
 export default function VehicleAnalytics() {
@@ -38,13 +38,13 @@ export default function VehicleAnalytics() {
         supabase.from("sold_clean").select("*").order("sale_date", { ascending: false }),
         supabase.from("inventory").select("*"),
         supabase.from("inspections").select("*"),
-        supabase.from("vehicle_locations").select("*")
+        selectAll(() => supabase.from("vehicle_locations").select("*"))
       ]);
 
       const sold = soldRes.data || [];
       const inventory = inventoryRes.data || [];
       const inspections = inspectionRes.data || [];
-      const locations = locationRes.data || [];
+      const locations = locationRes || [];
 
       setSoldData(sold);
       setInventoryData(inventory);

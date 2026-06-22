@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../services/supabase';
+import { supabase, selectAll } from '../services/supabase';
 import { Download, AlertCircle, RefreshCw } from 'lucide-react';
 
 function FrontLotAging() {
@@ -22,16 +22,21 @@ function FrontLotAging() {
         .from('inventory')
         .select('stock_number, last_6_vin, vehicle_vin, vehicle_year, vehicle_make, vehicle_model, location_code, days_on_lot');
       
-      // Query vehicles on front lot over 10 days old not on SmartAuction
-      const { data, error: fetchError } = await supabase
-        .from('vehicle_locations')
-        .select('stock_number, vin, physical_location, location_updated_at, sa_status, notes')
-        .or('sa_status.is.null,sa_status.neq.active')
-        .lte('location_updated_at', tenDaysAgo.toISOString())
-        .is('sold_on', null)
-        .order('location_updated_at', { ascending: true });
-      
-      if (fetchError) throw fetchError;
+      // Query vehicles on front lot over 10 days old not on SmartAuction.
+      // Paginate past the 1000-row PostgREST cap — this filter can match most
+      // of vehicle_locations, so an unbounded read would silently truncate.
+      let data;
+      try {
+        data = await selectAll(() => supabase
+          .from('vehicle_locations')
+          .select('stock_number, vin, physical_location, location_updated_at, sa_status, notes')
+          .or('sa_status.is.null,sa_status.neq.active')
+          .lte('location_updated_at', tenDaysAgo.toISOString())
+          .is('sold_on', null)
+          .order('location_updated_at', { ascending: true }));
+      } catch (fetchError) {
+        throw fetchError;
+      }
       
       // Create inventory lookup maps
       const invByStock = new Map();

@@ -5,7 +5,7 @@ import {
   AlertTriangle, CheckCircle, BarChart3, PieChart, Activity,
   Calendar, MapPin, Users, Truck, Clock, Target, AlertCircle
 } from 'lucide-react'
-import { supabase } from '../services/supabase'
+import { supabase, selectAll } from '../services/supabase'
 import { Line, Bar, Doughnut } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -107,10 +107,12 @@ export default function ExecutiveDashboard() {
           .gte('sale_date', startDate.toISOString())
           .order('sale_date', { ascending: false }),
           
-        // Location distribution
-        supabase
+        // Location distribution (paginate past the 1000-row PostgREST cap —
+        // vehicle_locations has outgrown it; unbounded reads miscount dispatch)
+        selectAll(() => supabase
           .from('vehicle_locations')
-          .select('stock_number, physical_location, location_updated_at'),
+          .select('stock_number, physical_location, location_updated_at'))
+          .then((data) => ({ data })),
           
         // Active inspections
         supabase
