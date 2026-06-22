@@ -138,6 +138,8 @@ async function processUpdate(update) {
     if (parsed?.vin6) {
       vin6 = parsed.vin6;
       await setSession(db, fromId, vin6, chat.station);
+      // Claim any photos this sender already posted before sending the VIN.
+      await resolvePendingForSender(db, fromId, vin6, chat.station);
       // Intake groups can also set a location (e.g. ready-to-sell => front lot)
       // when location_code is configured on the group.
       if (chat.location_code) await updateLocation(db, vin6, chat.location_code, eventIso);
@@ -168,13 +170,12 @@ async function processUpdate(update) {
       mediaPath = `${vin6}/${hash}.${ext}`;
       const up = await db.storage.from(bucket).upload(mediaPath, buf, { contentType: mime, upsert: true });
       if (up.error) throw new Error(`storage: ${up.error.message}`);
-      // Now that the VIN is known, pull in any album siblings that were parked.
-      if (mediaGroupId) await resolvePendingAlbum(db, mediaGroupId, vin6, bucket);
-    } else if (mediaGroupId) {
-      // No VIN yet — park this photo's file_id; a captioned sibling will claim it.
-      pendingFileId = photoFileId;
+      // VIN now known — claim any photos this sender parked earlier.
+      await resolvePendingForSender(db, fromId, vin6, chat.station);
     } else {
-      console.warn('telegram photo with no resolvable VIN in', chatId);
+      // No VIN yet — park this photo's file_id. A later VIN from this sender
+      // (text or caption) will claim it, even if photos arrived first.
+      pendingFileId = photoFileId;
     }
   }
 
@@ -255,12 +256,17 @@ async function sha256Hex(buf) {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Download + store any album photos that were parked (pending) before the VIN
-// was known. Idempotent: hashed path + clears pending_file_id once stored.
-async function resolvePendingAlbum(db, mediaGroupId, vin6, bucket) {
+// Download + store any photos this sender PARKED (sent before the VIN was known
+// — individual photos or albums, any order). Scoped to the same station and a
+// 10-min window so it can't grab a different car's photos. Idempotent.
+async function resolvePendingForSender(db, fromId, vin6, station) {
+  const bucket = (station === 'ready' || station === 'seller') ? 'wa-photos' : 'car-history';
+  const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const { data: pend } = await db.from('wa_inbound_messages')
     .select('message_id, pending_file_id')
-    .eq('media_group_id', mediaGroupId).is('media_path', null).not('pending_file_id', 'is', null);
+    .eq('wa_from', fromId).eq('station', station)
+    .is('media_path', null).not('pending_file_id', 'is', null)
+    .gte('received_at', cutoff);
   for (const p of pend || []) {
     try {
       const { buf, ext, mime } = await downloadTelegramPhoto(p.pending_file_id);
@@ -271,7 +277,7 @@ async function resolvePendingAlbum(db, mediaGroupId, vin6, bucket) {
       await db.from('wa_inbound_messages')
         .update({ vin6, media_path: path, pending_file_id: null })
         .eq('message_id', p.message_id);
-    } catch (e) { console.error('resolve pending album failed', p.message_id, e?.message || e); }
+    } catch (e) { console.error('resolve pending sender failed', p.message_id, e?.message || e); }
   }
 }
 
