@@ -73,18 +73,33 @@
   // Serverless: pulls public Supabase URLs straight through chrome.downloads.
   async function downloadCarPhotos(vin6) {
     const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
-    // Parallel downloads; filename keeps the send order (01, 02, …) so the
-    // SmartAuction folder picker uploads them in order.
-    const results = await Promise.all(urls.map((url, i) => {
-      const ext = (url.split('?')[0].split('.').pop() || 'jpg').toLowerCase();
-      return chrome.downloads.download({
-        url,
+    // Download ONE AT A TIME, waiting for each to finish, so files land on disk
+    // in exact send order (names are 001, 002, … too — ordered any way SA sorts).
+    function downloadAndWait(opts) {
+      return new Promise((resolve) => {
+        chrome.downloads.download(opts, (id) => {
+          if (!id) return resolve(false);
+          const onChanged = (delta) => {
+            if (delta.id !== id || !delta.state) return;
+            if (delta.state.current === 'complete') { chrome.downloads.onChanged.removeListener(onChanged); resolve(true); }
+            else if (delta.state.current === 'interrupted') { chrome.downloads.onChanged.removeListener(onChanged); resolve(false); }
+          };
+          chrome.downloads.onChanged.addListener(onChanged);
+        });
+      });
+    }
+    let n = 0;
+    for (let i = 0; i < urls.length; i++) {
+      const ext = (urls[i].split('?')[0].split('.').pop() || 'jpg').toLowerCase();
+      const okDl = await downloadAndWait({
+        url: urls[i],
         filename: `SA Photos/${vin6}/${String(i + 1).padStart(3, '0')}.${ext}`,
         conflictAction: 'overwrite',
         saveAs: false,
-      }).then(() => true).catch((e) => { console.error('download failed', url, e); return false; });
-    }));
-    return results.filter(Boolean).length;
+      });
+      if (okDl) n++;
+    }
+    return n;
   }
 
   async function serverFetch(url) {
@@ -809,128 +824,29 @@
 
   // ── Scraper ──
   async function checkScraperStatus() {
+    // Serverless — there is no local server. Hide the obsolete scrape/server
+    // controls and just show the queue count.
+    if (scrapeBtn) scrapeBtn.style.display = 'none';
+    if (scraperStatus) scraperStatus.style.display = 'none';
     try {
-      // Add timeout to prevent hanging
-      const res = await serverFetch(`${SCRAPER_URL}/status`, { 
-        signal: AbortSignal.timeout(3000),
-        mode: 'cors'
-      });
-      const data = await res.json();
-      
-      // Check if WhatsApp is connected
-      if (data.whatsapp_connected) {
-        scraperStatus.textContent = 'WhatsApp Connected';
-        scraperStatus.className = 'scraper-badge online';
-        scrapeBtn.disabled = false;
-      } else {
-        scraperStatus.textContent = 'WhatsApp Not Connected';
-        scraperStatus.className = 'scraper-badge offline';
-        scrapeBtn.disabled = false;  // Still allow attempts
-      }
-      
-      // Get queue stats from /queue/stats endpoint
-      try {
-        const qRes = await serverFetch(`${SCRAPER_URL}/queue/stats`, {
-          signal: AbortSignal.timeout(2000)
-        });
-        const stats = await qRes.json();
-        const total = (stats.queued || 0) + (stats.listed || 0) + (stats.sold || 0);
-        setServerOnline(true, { total });
-      } catch {
-        setServerOnline(true);
-      }
-    } catch (err) {
-      console.log('Server check failed:', err.message);
-      scraperStatus.textContent = 'Server offline - Start it first';
-      scraperStatus.className = 'scraper-badge offline';
-      scrapeBtn.disabled = true;
-      setServerOnline(false);
-      
-      // Retry after 2 seconds if it's a connection error
-      if (err.name === 'TypeError' || err.name === 'AbortError') {
-        setTimeout(() => checkScraperStatus(), 2000);
-      }
-    }
+      const qRes = await serverFetch(`${SCRAPER_URL}/queue/stats`);
+      const stats = await qRes.json();
+      const total = (stats.queued || 0) + (stats.listed || 0) + (stats.sold || 0) + (stats.hold || 0);
+      setServerOnline(true, { total });
+    } catch { setServerOnline(true); }
   }
 
   function setServerOnline(online, stats) {
-    scraperServerAvailable = !!online;
-    serverDot.className = `server-dot ${online ? 'online' : 'offline'}`;
-    serverLabel.textContent = online ? (stats ? `${stats.total} vehicles` : 'Online') : 'Offline';
-    serverToggle.textContent = online ? 'Stop' : 'Start';
-    serverToggle.className = `btn btn-small server-btn ${online ? 'stop' : 'start'}`;
+    // Serverless — there is no local server. Repurposed to show the queue count;
+    // the start/stop control is hidden.
+    scraperServerAvailable = true;
+    if (serverDot) serverDot.className = 'server-dot online';
+    if (serverLabel) serverLabel.textContent = stats ? `${stats.total} vehicles` : '';
+    if (serverToggle) serverToggle.style.display = 'none';
   }
 
-  async function toggleServer() {
-    const isOnline = serverDot.classList.contains('online');
-
-    if (isOnline) {
-      // Stop both servers
-      serverToggle.disabled = true;
-      serverLabel.textContent = 'Stopping...';
-      
-      // Try to stop Python server
-      try {
-        await serverFetch(`${SCRAPER_URL}/shutdown`, { method: 'POST' });
-      } catch { /* expected — server shuts down */ }
-      
-      // Try to stop WhatsApp client
-      try {
-        await fetch('http://localhost:7750/shutdown', { method: 'POST' });
-      } catch { /* expected — client shuts down */ }
-      
-      await new Promise(r => setTimeout(r, 1500));
-      setServerOnline(false);
-      serverToggle.disabled = false;
-      statusDiv.textContent = 'Servers stopped';
-      statusDiv.className = 'status';
-    } else {
-      // Can't start from extension — show command
-      serverToggle.disabled = true;
-      serverLabel.textContent = 'Starting...';
-
-      // Try connecting first — maybe it's already running
-      try {
-        const res = await serverFetch(`${SCRAPER_URL}/status`);
-        if (res.ok) {
-          const data = await res.json();
-          setServerOnline(true, data.queue_stats);
-          serverToggle.disabled = false;
-          checkScraperStatus();
-          return;
-        }
-      } catch { /* not running */ }
-
-      // Show the start command with copy button
-      const cmd = 'cd ~/Desktop/carz\\ inc/scrapers && python3 whatsapp_server.py & node whatsapp_client.js';
-      statusDiv.innerHTML = 'Server not running. <button id="copyStartCmd" class="btn btn-small" style="background:#1976d2;margin:0 4px;padding:2px 8px;font-size:10px;">Copy Start Command</button>';
-      statusDiv.className = 'status';
-      document.getElementById('copyStartCmd').addEventListener('click', () => {
-        copyToClipboard(cmd);
-        document.getElementById('copyStartCmd').textContent = 'Copied!';
-        setTimeout(() => { document.getElementById('copyStartCmd').textContent = 'Copy Start Command'; }, 1500);
-      });
-      serverToggle.disabled = false;
-      setServerOnline(false);
-
-      // Poll for it to come online
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        if (attempts > 30) { clearInterval(poll); return; }
-        try {
-          const res = await serverFetch(`${SCRAPER_URL}/status`);
-          if (res.ok) {
-            clearInterval(poll);
-            checkScraperStatus();
-            statusDiv.textContent = 'Server started!';
-            statusDiv.className = 'status success';
-            if (currentMode === 'queue') loadQueue();
-          }
-        } catch { /* still offline */ }
-      }, 2000);
-    }
-  }
+  // Removed — serverless. There is no local server to start or stop.
+  function toggleServer() {}
 
   async function runScrape(body = {}) {
     scrapeBtn.disabled = true;
