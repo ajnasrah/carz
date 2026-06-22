@@ -68,6 +68,27 @@
     return res.ok ? res.json() : null;
   }
 
+  // Download a car's ready-to-sell photos into Downloads/SA Photos/<vin6>/ so
+  // they can be uploaded to SmartAuction via the Add Photos folder picker.
+  // Serverless: pulls public Supabase URLs straight through chrome.downloads.
+  async function downloadCarPhotos(vin6) {
+    const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
+    let n = 0;
+    for (let i = 0; i < urls.length; i++) {
+      const ext = (urls[i].split('?')[0].split('.').pop() || 'jpg').toLowerCase();
+      try {
+        await chrome.downloads.download({
+          url: urls[i],
+          filename: `SA Photos/${vin6}/${String(i + 1).padStart(2, '0')}.${ext}`,
+          conflictAction: 'overwrite',
+          saveAs: false,
+        });
+        n++;
+      } catch (e) { console.error('download failed', urls[i], e); }
+    }
+    return n;
+  }
+
   async function serverFetch(url) {
     const after = url.replace(SCRAPER_URL, '');
     const path = after.split('?')[0];
@@ -1833,7 +1854,24 @@
       goToStep(1);
       lookupVIN();
       await lookupFromMessages();
-      await autoLoadPhotosFromFolder(vin6);
+
+      // Show the photo count up front, then download the images to a folder so
+      // you can upload them to SmartAuction via Add Photos.
+      const qCar = queueData.find(v => (v.vin6 || '').toUpperCase() === vin6.toUpperCase());
+      const expected = qCar?.photo_count || 0;
+      const ps = document.getElementById('autoPhotoStatus');
+      await autoLoadPhotosFromFolder(vin6); // preview thumbnails in the wizard
+      if (expected > 0) {
+        if (ps) { ps.textContent = `📥 Downloading ${expected} photo${expected === 1 ? '' : 's'}…`; ps.className = 'field-status'; }
+        const n = await downloadCarPhotos(vin6);
+        if (ps) {
+          ps.textContent = `📷 ${n} photo${n === 1 ? '' : 's'} saved to Downloads/SA Photos/${vin6} — select that folder in SmartAuction's Add Photos`;
+          ps.className = 'field-status ok';
+        }
+      } else if (ps) {
+        ps.textContent = '⚠️ No photos for this car';
+        ps.className = 'field-status err';
+      }
     }
   };
 
