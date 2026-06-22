@@ -526,7 +526,7 @@
       try {
         for (const vin of yourSoldVins) {
           const last6 = vin.slice(-6);
-          const response = await fetch(`http://localhost:7749/queue/mark-sold/${last6}`, { method: 'POST' });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'sold' }) });
           if (response.ok) {
             removedCount++;
             config.log(`Marked ${last6} as sold - removed from queue and deleted photos`, 'ok');
@@ -979,7 +979,7 @@
       try {
         for (const vin of yourSoldVins) {
           const last6 = vin.slice(-6);
-          const response = await fetch(`http://localhost:7749/queue/mark-sold/${last6}`, { method: 'POST' });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'sold' }) });
           if (response.ok) {
             removedCount++;
             config.log(`Marked ${last6} as sold - removed from queue and deleted photos`, 'ok');
@@ -1497,7 +1497,7 @@
       try {
         for (const vehicle of activeVehicles) {
           const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`http://localhost:7749/queue/mark-listed/${last6}`, { method: 'POST' });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'listed' }) });
           if (response.ok) {
             listedCount++;
             config.log(`Marked ${last6} as listed on SmartAuction`, 'ok');
@@ -1519,7 +1519,7 @@
       try {
         for (const vehicle of holdVehicles) {
           const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`http://localhost:7749/queue/hold/${last6}`, { method: 'POST' });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'hold' }) });
           if (response.ok) {
             holdCount++;
             config.log(`Marked ${last6} as on hold`, 'ok');
@@ -1541,10 +1541,10 @@
       try {
         for (const vehicle of soldVehicles) {
           const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`http://localhost:7749/queue/mark-sold/${last6}`, { 
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reason: 'smart_auction_sale' })
+            headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ p_vin6: last6, p_status: 'sold' })
           });
           if (response.ok) {
             soldMarkedCount++;
@@ -1567,7 +1567,7 @@
       try {
         for (const vehicle of removedVehicles) {
           const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`http://localhost:7749/queue/remove/${last6}`, { method: 'POST' });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'removed' }) });
           if (response.ok) {
             removedCount++;
             config.log(`Removed ${last6} from queue (removed from SA)`, 'ok');

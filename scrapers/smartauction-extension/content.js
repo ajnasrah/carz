@@ -90,12 +90,8 @@ async function fillPhotos(data) {
   await delay(500);
 
   if (data.photoCount > 0 && data.photoVin6) {
-    let photoCount = 0;
-    try {
-      const res = await fetch(`http://localhost:7749/open-folder/${data.photoVin6}`, { method: 'POST' });
-      const json = await res.json();
-      photoCount = json.count || 0;
-    } catch {}
+    // Serverless: photos come from Supabase, not a local folder.
+    const photoCount = data.photoCount || 0;
     addLog(`${photoCount} photos ready for ${data.photoVin6}`, 'log-ok');
     // Wait for macOS to fully register the copied files before opening file dialog
     await delay(2500);

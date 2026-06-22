@@ -56,6 +56,74 @@
   let supabaseCompleted = []; // completed inspections pulled from the PWA
   let inventoryCostByLast6 = new Map(); // last_6_vin → { totalCost, addedCosts, daysOnLot }
 
+  // ── Serverless adapter ──────────────────────────────────────────────────
+  // The old local server (localhost:7749) is gone. This emulates its responses
+  // straight from Supabase RPCs so the rest of the extension works unchanged.
+  async function sbRpc(name, body) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    return res.ok ? res.json() : null;
+  }
+
+  async function serverFetch(url) {
+    const after = url.replace(SCRAPER_URL, '');
+    const path = after.split('?')[0];
+    const query = new URLSearchParams(after.split('?')[1] || '');
+    const ok = (data) => ({ ok: true, status: 200, json: async () => data, text: async () => JSON.stringify(data) });
+
+    if (path === '/status' || path === '/whatsapp/status') return ok({ online: true, connected: true, whatsapp_connected: true });
+
+    if (path === '/queue/all' || path === '/queue') {
+      const rows = (await sbRpc('ready_to_sell_queue')) || [];
+      const vehicles = (path === '/queue' ? rows.filter((r) => r.status === 'queued') : rows)
+        .map((r) => ({ vin6: r.vin6, miles: r.miles, condition: r.condition, notes: r.notes,
+                       photo_count: r.photo_count, status: r.status, message_date: r.message_date }));
+      return ok({ vehicles, updated_at: new Date().toISOString() });
+    }
+    if (path === '/queue/stats') {
+      const rows = (await sbRpc('ready_to_sell_queue')) || [];
+      const stats = { queued: 0, listed: 0, sold: 0, removed: 0, hold: 0 };
+      rows.forEach((r) => { if (stats[r.status] != null) stats[r.status]++; });
+      return ok(stats);
+    }
+
+    if (path.startsWith('/vehicle/')) {
+      const parts = path.split('/'); // ['', 'vehicle', vin6, ('photos')?]
+      const vin6 = (parts[2] || '').toUpperCase();
+      if (parts[3] === 'photos') {
+        const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
+        const limit = parseInt(query.get('limit') || String(urls.length), 10);
+        const offset = parseInt(query.get('offset') || '0', 10);
+        const photos = [];
+        for (const u of urls.slice(offset, offset + limit)) {
+          try {
+            const blob = await fetch(u).then((r) => r.blob());
+            const dataUrl = await new Promise((res2) => { const fr = new FileReader(); fr.onload = () => res2(fr.result); fr.readAsDataURL(blob); });
+            photos.push({ dataUrl, base64: String(dataUrl).split(',')[1] });
+          } catch { /* skip unreadable */ }
+        }
+        return ok({ photos });
+      }
+      const rows = (await sbRpc('ready_to_sell_queue')) || [];
+      const v = rows.find((r) => (r.vin6 || '').toUpperCase() === vin6);
+      return v ? ok({ vin6: v.vin6, miles: v.miles, condition: v.condition, notes: v.notes, photo_count: v.photo_count })
+               : { ok: false, status: 404, json: async () => ({}) };
+    }
+
+    const mark = path.match(/^\/queue\/(mark-listed|mark-sold|hold|unhold|remove)\/(.+)$/);
+    if (mark) {
+      const map = { 'mark-listed': 'listed', 'mark-sold': 'sold', hold: 'hold', unhold: 'queued', remove: 'removed' };
+      await sbRpc('sa_queue_set_status', { p_vin6: decodeURIComponent(mark[2]).toUpperCase(), p_status: map[mark[1]] });
+      return ok({ success: true });
+    }
+    if (path === '/scrape') return ok({ success: true, message: 'serverless', vehicle_updates: 0 });
+    return { ok: false, status: 404, json: async () => ({}) };
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Flip `inspections.skipped_at` on the server so the skip is cross-device.
   // Updates the in-memory record so the list re-renders immediately.
   async function setInspectionSkipped(inspId, skipped) {
@@ -78,7 +146,7 @@
   // Tracks whether the local WhatsApp scraper server is running.
   // Flipped by setServerOnline(). When false we short-circuit the localhost
   // fetches so Chrome's console isn't filled with ERR_CONNECTION_REFUSED.
-  let scraperServerAvailable = false;
+  let scraperServerAvailable = true; // serverless: Supabase-backed
 
   // Lists every photo in the inspection's storage bucket folder. This is a
   // fallback for the damage-modal bug that sometimes uploads photos but
@@ -723,7 +791,7 @@
   async function checkScraperStatus() {
     try {
       // Add timeout to prevent hanging
-      const res = await fetch(`${SCRAPER_URL}/status`, { 
+      const res = await serverFetch(`${SCRAPER_URL}/status`, { 
         signal: AbortSignal.timeout(3000),
         mode: 'cors'
       });
@@ -742,7 +810,7 @@
       
       // Get queue stats from /queue/stats endpoint
       try {
-        const qRes = await fetch(`${SCRAPER_URL}/queue/stats`, {
+        const qRes = await serverFetch(`${SCRAPER_URL}/queue/stats`, {
           signal: AbortSignal.timeout(2000)
         });
         const stats = await qRes.json();
@@ -783,7 +851,7 @@
       
       // Try to stop Python server
       try {
-        await fetch(`${SCRAPER_URL}/shutdown`, { method: 'POST' });
+        await serverFetch(`${SCRAPER_URL}/shutdown`, { method: 'POST' });
       } catch { /* expected — server shuts down */ }
       
       // Try to stop WhatsApp client
@@ -803,7 +871,7 @@
 
       // Try connecting first — maybe it's already running
       try {
-        const res = await fetch(`${SCRAPER_URL}/status`);
+        const res = await serverFetch(`${SCRAPER_URL}/status`);
         if (res.ok) {
           const data = await res.json();
           setServerOnline(true, data.queue_stats);
@@ -831,7 +899,7 @@
         attempts++;
         if (attempts > 30) { clearInterval(poll); return; }
         try {
-          const res = await fetch(`${SCRAPER_URL}/status`);
+          const res = await serverFetch(`${SCRAPER_URL}/status`);
           if (res.ok) {
             clearInterval(poll);
             checkScraperStatus();
@@ -857,7 +925,7 @@
         body.limit = 1000;  // Get plenty of messages
       }
       
-      const res = await fetch(`${SCRAPER_URL}/scrape`, {
+      const res = await serverFetch(`${SCRAPER_URL}/scrape`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -904,7 +972,7 @@
     msgLookupResult.className = 'msg-lookup-result visible';
 
     try {
-      const res = await fetch(`${SCRAPER_URL}/vehicle/${vin6}`);
+      const res = await serverFetch(`${SCRAPER_URL}/vehicle/${vin6}`);
       if (!res.ok) {
         msgLookupResult.textContent = `No match for "${vin6}" in WhatsApp queue`;
         msgLookupResult.className = 'msg-lookup-result visible err';
@@ -977,7 +1045,7 @@
 
   async function openPhotoFolder(vin6) {
     try {
-      await fetch(`${SCRAPER_URL}/open-folder/${vin6}`, { method: 'POST' });
+      await serverFetch(`${SCRAPER_URL}/open-folder/${vin6}`, { method: 'POST' });
     } catch {
       // Server not running — ignore
     }
@@ -1302,7 +1370,7 @@
       queueList.querySelectorAll('.queue-unhold-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const vin6 = btn.dataset.vin6;
-          try { await fetch(`${SCRAPER_URL}/queue/unhold/${vin6}`, { method: 'POST' }); } catch {}
+          try { await serverFetch(`${SCRAPER_URL}/queue/unhold/${vin6}`, { method: 'POST' }); } catch {}
           btn.closest('.queue-card').remove();
           statusDiv.textContent = `${vin6} back in queue`;
         });
@@ -1310,7 +1378,7 @@
       queueList.querySelectorAll('.queue-remove-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const vin6 = btn.dataset.vin6;
-          try { await fetch(`${SCRAPER_URL}/queue/remove/${vin6}`, { method: 'POST' }); } catch {}
+          try { await serverFetch(`${SCRAPER_URL}/queue/remove/${vin6}`, { method: 'POST' }); } catch {}
           const qv = queueData.find(v => v.vin6 === vin6);
           if (qv) qv.status = 'removed';
           btn.closest('.queue-card').remove();
@@ -1357,7 +1425,7 @@
       queueList.querySelectorAll('.queue-undo-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const vin6 = btn.dataset.vin6;
-          try { await fetch(`${SCRAPER_URL}/queue/unhold/${vin6}`, { method: 'POST' }); } catch {}
+          try { await serverFetch(`${SCRAPER_URL}/queue/unhold/${vin6}`, { method: 'POST' }); } catch {}
           btn.closest('.queue-card').remove();
           statusDiv.textContent = `${vin6} back in queue`;
         });
@@ -1693,7 +1761,7 @@
       queueList.querySelectorAll('.queue-hold-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const vin6 = btn.dataset.vin6;
-          try { await fetch(`${SCRAPER_URL}/queue/hold/${vin6}`, { method: 'POST' }); } catch {}
+          try { await serverFetch(`${SCRAPER_URL}/queue/hold/${vin6}`, { method: 'POST' }); } catch {}
           btn.closest('.queue-card').remove();
           statusDiv.textContent = `${vin6} on hold`;
         });
@@ -1701,7 +1769,7 @@
       queueList.querySelectorAll('.queue-skip-btn').forEach(btn => {
         btn.addEventListener('click', async () => {
           const vin6 = btn.dataset.vin6;
-          try { await fetch(`${SCRAPER_URL}/queue/remove/${vin6}`, { method: 'POST' }); } catch {}
+          try { await serverFetch(`${SCRAPER_URL}/queue/remove/${vin6}`, { method: 'POST' }); } catch {}
           // Update local state so vehicle doesn't reappear on re-render
           const qv = queueData.find(v => v.vin6 === vin6);
           if (qv) qv.status = 'removed';
@@ -1775,7 +1843,7 @@
     photoStatus.className = 'field-status';
     try {
       // First get count only (fast)
-      const infoRes = await fetch(`${SCRAPER_URL}/vehicle/${vin6}`);
+      const infoRes = await serverFetch(`${SCRAPER_URL}/vehicle/${vin6}`);
       if (!infoRes.ok) { photoStatus.textContent = 'No photos found'; return; }
       const info = await infoRes.json();
       const total = info.photo_count || 0;
@@ -1785,7 +1853,7 @@
       exteriorPhotos = [];
       const batchSize = 5;
       for (let offset = 0; offset < total; offset += batchSize) {
-        const res = await fetch(`${SCRAPER_URL}/vehicle/${vin6}/photos?limit=${batchSize}&offset=${offset}`);
+        const res = await serverFetch(`${SCRAPER_URL}/vehicle/${vin6}/photos?limit=${batchSize}&offset=${offset}`);
         if (!res.ok) break;
         const data = await res.json();
         for (const p of (data.photos || [])) {
@@ -2024,7 +2092,7 @@
       // Copy photos to ~/Desktop/SA Photos/ via server (for SA file dialog)
       const vin = vin6Input.value.trim();
       if (vin.length === 17) {
-        try { await fetch(`${SCRAPER_URL}/manheim/open-folder/${vin}`, { method: 'POST' }); }
+        try { await serverFetch(`${SCRAPER_URL}/manheim/open-folder/${vin}`, { method: 'POST' }); }
         catch { /* server not running — photos still in extension memory */ }
       }
 
@@ -2054,7 +2122,7 @@
   async function loadQueue() {
     // Always try to load queue, regardless of scraperServerAvailable
     try {
-      const res = await fetch(`${SCRAPER_URL}/queue/all`, { 
+      const res = await serverFetch(`${SCRAPER_URL}/queue/all`, { 
         signal: AbortSignal.timeout(3000),
         mode: 'cors'
       });
@@ -2306,7 +2374,7 @@
       statusDiv.textContent = 'Scraping WhatsApp messages...';
       statusDiv.className = 'status';
       try {
-        const scrapeRes = await fetch(`${SCRAPER_URL}/scrape`, { 
+        const scrapeRes = await serverFetch(`${SCRAPER_URL}/scrape`, { 
           method: 'POST', 
           signal: AbortSignal.timeout(60000) 
         });
@@ -3883,7 +3951,7 @@
       const vin6 = data.vin6;
       if (vin6 && scraperServerAvailable) {
         try {
-          await fetch(`${SCRAPER_URL}/queue/mark-listed/${vin6}`, { method: 'POST' });
+          await serverFetch(`${SCRAPER_URL}/queue/mark-listed/${vin6}`, { method: 'POST' });
           queueData = queueData.filter(v => v.vin6 !== vin6);
           if (crossCheckData?.readyToList) {
             crossCheckData.readyToList = crossCheckData.readyToList.filter(v => v.vin6 !== vin6);
@@ -3945,7 +4013,7 @@
         const vin6 = data.vin6;
         if (vin6) {
           try {
-            await fetch(`${SCRAPER_URL}/queue/mark-listed/${vin6}`, { method: 'POST' });
+            await serverFetch(`${SCRAPER_URL}/queue/mark-listed/${vin6}`, { method: 'POST' });
             log(`Marked ${vin6} as listed in queue`, 'log-ok');
           } catch { /* non-critical */ }
         }
