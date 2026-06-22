@@ -80,7 +80,8 @@
       const rows = (await sbRpc('ready_to_sell_queue')) || [];
       const vehicles = (path === '/queue' ? rows.filter((r) => r.status === 'queued') : rows)
         .map((r) => ({ vin6: r.vin6, miles: r.miles, condition: r.condition, notes: r.notes,
-                       photo_count: r.photo_count, status: r.status, message_date: r.message_date }));
+                       photo_count: r.photo_count, status: r.status, message_date: r.message_date,
+                       stock_number: r.stock_number, in_inventory: r.in_inventory }));
       return ok({ vehicles, updated_at: new Date().toISOString() });
     }
     if (path === '/queue/stats') {
@@ -1489,7 +1490,7 @@
           return `
             <div class="queue-card">
               <div class="queue-card-info">
-                <div class="queue-card-vin">${v.vin6}</div>
+                <div class="queue-card-vin">${v.vin6}${v.in_inventory === false ? ' <span style="font-size:9px;background:#ffebee;color:#c62828;padding:1px 5px;border-radius:3px;font-weight:700;">⚠ NOT IN INVENTORY</span>' : ''}</div>
                 <div class="queue-card-details">${v.miles || '?'} mi | ${v.condition || ''} | Tires: ${v.tire_condition || '?'} | ${v.photo_count} photos</div>
                 ${v.notes ? `<div class="queue-card-details" style="color:#999;font-style:italic;">${escHtml(v.notes.substring(0, 60))}</div>` : ''}
               </div>
