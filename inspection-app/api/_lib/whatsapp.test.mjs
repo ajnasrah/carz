@@ -50,6 +50,10 @@ await t('plain VIN', () => {
 await t('7-char numeric -> last 6', () => {
   assert.equal(extractVin6('1234567'), '234567');
 });
+await t('letter-prefixed 7-char -> last 6 (team right-aligns to last digit)', () => {
+  assert.equal(extractVin6('P086793'), '086793');
+  assert.equal(parseVehicleEntry('P086793\n88264\nGood').vin6, '086793');
+});
 
 console.log('verifySignature (cross-checked vs Node HMAC = what Meta sends)');
 const secret = 'test_app_secret_123';

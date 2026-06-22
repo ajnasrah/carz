@@ -46,73 +46,71 @@ class FrontLotTracker {
             tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
             const tenDaysAgoISO = tenDaysAgo.toISOString();
 
-            // Query vehicles on front lot (not location Z) over 10 days old without SA listing
-            const query = new URLSearchParams({
-                select: 'stock_number,vin,physical_location,location_updated_at,sa_status,notes',
-                or: '(sa_status.is.null,sa_status.neq.active)',
-                sold_on: 'is.null',
-                location_updated_at: `lte.${tenDaysAgoISO}`,
-                order: 'location_updated_at.asc'
+            // Start from CURRENT inventory, NOT vehicle_locations. The locations
+            // table carries thousands of dead historical rows (sold/gone cars,
+            // Frazer stock-number reuse) — querying it directly floods the report
+            // with ghost cars showing "unknown". Only current, non-transport (Z)
+            // inventory can be aging on the front lot.
+            const invResp = await fetch(`${this.SUPABASE_URL}/rest/v1/inventory?select=stock_number,vehicle_vin,last_6_vin,vehicle_year,vehicle_make,vehicle_model,location_code,days_on_lot`, {
+                headers: { 'apikey': this.SUPABASE_KEY }
             });
+            if (!invResp.ok) {
+                throw new Error(`Failed to fetch inventory: ${invResp.statusText}`);
+            }
+            const inventory = await invResp.json();
+            const invByStock = new Map(inventory.map(c => [c.stock_number, c]));
+            const candidateStocks = inventory
+                .filter(c => c.location_code !== 'Z')
+                .map(c => c.stock_number);
+            if (candidateStocks.length === 0) return [];
 
-            const response = await fetch(`${this.SUPABASE_URL}/rest/v1/vehicle_locations?${query}`, {
-                headers: {
-                    'apikey': this.SUPABASE_KEY
+            // Fetch the location rows for those stocks only, chunked to keep the
+            // .in() URL short. >10 days since last seen, not sold, not on SA.
+            const locRows = [];
+            for (let i = 0; i < candidateStocks.length; i += 150) {
+                const chunk = candidateStocks.slice(i, i + 150);
+                const inList = chunk.map(s => `"${s}"`).join(',');
+                const query = new URLSearchParams({
+                    select: 'stock_number,vin,physical_location,location_updated_at,sa_status,notes',
+                    or: '(sa_status.is.null,sa_status.neq.active)',
+                    sold_on: 'is.null',
+                    location_updated_at: `lte.${tenDaysAgoISO}`
+                });
+                const resp = await fetch(`${this.SUPABASE_URL}/rest/v1/vehicle_locations?${query}&stock_number=in.(${encodeURIComponent(inList)})`, {
+                    headers: { 'apikey': this.SUPABASE_KEY }
+                });
+                if (!resp.ok) {
+                    throw new Error(`Failed to fetch data: ${resp.statusText}`);
                 }
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to fetch data: ${response.statusText}`);
+                locRows.push(...await resp.json());
             }
 
-            const vehicles = await response.json();
+            // Locations that are NOT front lot (body shop, sold, wholesale, etc.)
+            const excludedLocations = ['transport', 'body_shop', 'sold', 'wholesale', 'arbitrated', 'arb_section'];
 
-            // Filter for front lot only
-            // Front lot = vehicles NOT in specific locations like body_shop, transport (Z), etc.
-            const frontLotVehicles = vehicles.filter(v => {
-                const location = v.physical_location?.toLowerCase() || '';
-                
-                // Locations that are NOT considered front lot:
-                // - Location code Z (transport)
-                // - Body shop (being repaired)
-                // - Sold/wholesale locations
-                // - Arbitrated vehicles
-                const excludedLocations = [
-                    'z',
-                    'transport',
-                    'body_shop',
-                    'sold',
-                    'wholesale',
-                    'arbitrated',
-                    'arb_section'
-                ];
-                
-                // Check if vehicle is in an excluded location
-                const isExcluded = excludedLocations.some(loc => 
-                    location === loc || location.includes(loc)
-                );
-                
-                // Vehicle is on front lot if:
-                // - Has no location (empty string or null) OR
-                // - Not in any excluded location
-                const isFrontLot = !location || !isExcluded;
-                
-                // Also check if sold
-                const isSold = v.sold_on !== null && v.sold_on !== undefined;
-                
-                return isFrontLot && !isSold;
-            });
+            const vehiclesWithAge = locRows
+                .filter(v => {
+                    const inv = invByStock.get(v.stock_number);
+                    if (!inv) return false;                 // ghost row, not current inventory
+                    if (inv.location_code === 'Z') return false; // transport
+                    const location = (v.physical_location || '').toLowerCase();
+                    const isExcluded = excludedLocations.some(loc => location.includes(loc));
+                    return !location || !isExcluded;
+                })
+                .map(v => {
+                    const inv = invByStock.get(v.stock_number) || {};
+                    const daysOnLot = Math.floor((new Date() - new Date(v.location_updated_at)) / (1000 * 60 * 60 * 24));
+                    return {
+                        ...v,
+                        vin: v.vin || inv.vehicle_vin || '',
+                        vehicle_info: `${inv.vehicle_year || ''} ${inv.vehicle_make || ''} ${inv.vehicle_model || ''}`.trim(),
+                        days_on_lot: daysOnLot,
+                        needs_smartauction: true
+                    };
+                });
 
-            // Calculate days on lot for each vehicle
-            const vehiclesWithAge = frontLotVehicles.map(v => {
-                const daysOnLot = Math.floor((new Date() - new Date(v.location_updated_at)) / (1000 * 60 * 60 * 24));
-                return {
-                    ...v,
-                    days_on_lot: daysOnLot,
-                    needs_smartauction: true
-                };
-            });
-
+            // Oldest first so the most overdue cars surface at the top
+            vehiclesWithAge.sort((a, b) => b.days_on_lot - a.days_on_lot);
             return vehiclesWithAge;
         } catch (error) {
             console.error('Error fetching front lot aging:', error);
@@ -134,6 +132,7 @@ class FrontLotTracker {
                     <thead>
                         <tr>
                             <th>Stock #</th>
+                            <th>Vehicle</th>
                             <th>VIN (Last 6)</th>
                             <th>Location</th>
                             <th>Days on Lot</th>
@@ -144,6 +143,7 @@ class FrontLotTracker {
                         ${vehicles.map(v => `
                             <tr class="${v.days_on_lot > 30 ? 'critical' : v.days_on_lot > 20 ? 'warning' : ''}">
                                 <td class="stock-number">${v.stock_number}</td>
+                                <td>${v.vehicle_info || ''}</td>
                                 <td>${v.vin ? v.vin.slice(-6) : 'N/A'}</td>
                                 <td>${v.physical_location || 'Front Lot'}</td>
                                 <td class="days-count">${v.days_on_lot} days</td>

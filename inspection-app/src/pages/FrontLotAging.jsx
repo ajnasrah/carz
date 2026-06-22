@@ -70,14 +70,18 @@ function FrontLotAging() {
           }
         }
         
+        // vehicle_locations carries thousands of dead historical rows (sold/gone
+        // cars, Frazer stock-number reuse). Only CURRENT inventory counts — a row
+        // with no inventory match is a ghost and must be dropped, not shown as
+        // a blank/"unknown" car.
+        if (!invMatch) return false;
+
         // Update vehicle with inventory data
-        if (invMatch) {
-          v.stock_number = invMatch.stock_number || v.stock_number;
-          v.vin = invMatch.vehicle_vin || v.vin;
-          v.vehicle_info = `${invMatch.vehicle_year || ''} ${invMatch.vehicle_make || ''} ${invMatch.vehicle_model || ''}`.trim();
-          v.location_code = invMatch.location_code;
-          v.inv_days_on_lot = invMatch.days_on_lot;
-        }
+        v.stock_number = invMatch.stock_number || v.stock_number;
+        v.vin = invMatch.vehicle_vin || v.vin;
+        v.vehicle_info = `${invMatch.vehicle_year || ''} ${invMatch.vehicle_make || ''} ${invMatch.vehicle_model || ''}`.trim();
+        v.location_code = invMatch.location_code;
+        v.inv_days_on_lot = invMatch.days_on_lot;
         
         // Locations that are NOT considered front lot:
         const excludedLocations = [

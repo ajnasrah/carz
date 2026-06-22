@@ -42,14 +42,13 @@ export async function verifySignature(rawBody, signatureHeader, appSecret) {
 
 // ---- VIN helpers ------------------------------------------------------------
 
-// Normalize a 5-7 char candidate to a canonical last-6. Mirrors the Python:
-//  - 7 chars: keep first 6 if it starts with a letter, else take last 6
-//  - 5 chars: left-pad with '0'
+// Normalize to the canonical VIN last-6. The team always right-aligns to the
+// VIN's LAST digit (the final char of what they type = the VIN's last digit),
+// so take the rightmost 6. Anything shorter gets left-padded (dropped leading
+// zeros). This also handles a full 17-char VIN pasted in — last 6 is correct.
 function normalizeVin6(raw) {
-  let v = raw.toUpperCase();
-  if (v.length === 7) v = /[A-Z]/.test(v[0]) ? v.slice(0, 6) : v.slice(-6);
-  else if (v.length === 5) v = '0' + v;
-  return v;
+  const v = raw.toUpperCase();
+  return v.length >= 6 ? v.slice(-6) : v.padStart(6, '0');
 }
 
 // Find a plausible VIN-last-6 anywhere in free text (for location stations).

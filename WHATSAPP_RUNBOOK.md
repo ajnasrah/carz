@@ -84,7 +84,7 @@ vercel --prod --archive=tgz
 
 ### 6. Point Meta at the webhook
 Meta dashboard → WhatsApp → Configuration → Webhook → Edit:
-- **Callback URL**: `https://carzinc.ai/api/whatsapp`   ← note: NOT `/api/webhook/whatsapp`
+- **Callback URL**: `https://www.carzinc.ai/api/whatsapp`   ← note: NOT `/api/webhook/whatsapp`
 - **Verify Token**: your `WHATSAPP_VERIFY_TOKEN`
 - Click **Verify and Save** → subscribe to the **messages** field.
 
@@ -117,7 +117,7 @@ the `phoneNumberId` seeded in `wa_station_numbers`, the `from` in
 cd "/Users/abdullahabunasrah/Desktop/carz inc/inspection-app"
 # against production (after deploy):
 WHATSAPP_APP_SECRET=<secret> node test-whatsapp-webhook.mjs \
-  https://carzinc.ai/api/whatsapp <PHONE_NUMBER_ID> 19015551234 $'021216\n75000\nGood\n8.5'
+  https://www.carzinc.ai/api/whatsapp <PHONE_NUMBER_ID> 19015551234 $'021216\n75000\nGood\n8.5'
 # or locally first:  vercel dev   → target http://localhost:3000/api/whatsapp
 ```
 Then: `select * from wa_inbound_messages order by received_at desc limit 1;`

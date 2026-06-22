@@ -3,7 +3,7 @@
 Official Cloud API, **one dedicated number per station** (no groups, no scraping).
 Full granular checklist: `../WHATSAPP_API_MIGRATION_CHECKLIST.md`.
 
-> Callback URL is **`https://carzinc.ai/api/whatsapp`** (the function is `api/whatsapp.js`).
+> Callback URL is **`https://www.carzinc.ai/api/whatsapp`** (the function is `api/whatsapp.js`).
 > The old `/api/webhook/whatsapp` path does NOT exist and will 404.
 
 ## 1. Vercel env vars (set all five)
@@ -36,7 +36,7 @@ INSERT INTO wa_allowed_senders (wa_phone, worker_name, station) VALUES
 
 ## 3. Configure the webhook in Meta
 WhatsApp → Configuration → Webhook → Edit:
-- **Callback URL**: `https://carzinc.ai/api/whatsapp`
+- **Callback URL**: `https://www.carzinc.ai/api/whatsapp`
 - **Verify Token**: the value you set for `WHATSAPP_VERIFY_TOKEN`
 - Click **Verify and Save** → subscribe to the **messages** field.
 
