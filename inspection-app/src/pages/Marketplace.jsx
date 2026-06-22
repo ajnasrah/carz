@@ -208,7 +208,7 @@ export default function Marketplace() {
               const vehicle = [car.year, car.make, car.model].filter(Boolean).join(' ') || 'Unknown'
               const miles = toInt(car.mileage)
               const vin = car.full_vin || car.vin || car.vin_last6 || ''
-              const photoCount = Object.values(car.checklist?.photos || {}).filter((p) => p?.url).length
+              const photoCount = new Set(Object.values(car.checklist?.photos || {}).map((p) => p?.url).filter(Boolean)).size
               return (
                 <div
                   key={car.id}

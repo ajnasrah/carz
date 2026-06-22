@@ -159,11 +159,8 @@ export default function Dashboard() {
       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">What do you want to do?</p>
       <div className="grid grid-cols-3 gap-2">
         <ActionTile to="/lot" emoji="🚶" label="Walk Lot" />
-        <ActionTile to="/inspections" emoji="📝" label={`Inspect${stats.inspectingCount ? ` (${stats.inspectingCount})` : ''}`} primary />
-        <ActionTile to="/inbound" emoji="📥" label="Inbound" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
         <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
-        <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
         <ActionTile to="/pull-list" emoji="📋" label="Pull List" />

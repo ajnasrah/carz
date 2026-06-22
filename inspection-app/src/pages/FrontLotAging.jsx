@@ -1,128 +1,91 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase, selectAll } from '../services/supabase';
-import { Download, AlertCircle, RefreshCw } from 'lucide-react';
+import { Download, AlertCircle, RefreshCw, Copy, Check, ArrowLeft, Clock } from 'lucide-react';
+
+// A car only counts as "front lot" if it's actually sitting on a sellable lot.
+// Everything else — mechanic, pro auto, body shop, wash, detail, in transit,
+// waiting on parts, sold, etc. — is in-process and must be excluded. We use an
+// allowlist (not a blocklist) so the dozens of ad-hoc location labels in the
+// data can't leak in; an empty/unknown location is treated as front lot.
+const FRONT_LOT = new Set([
+  'front', 'front_lot', 'frontlot', 'front lot',
+  'on_lot', 'onlot', 'on lot', 'gravel',
+]);
+
+function isFrontLot(physical_location) {
+  const loc = (physical_location || '').toLowerCase().trim();
+  return !loc || FRONT_LOT.has(loc);
+}
+
+function prettyLocation(loc) {
+  if (!loc) return 'Front Lot';
+  return loc.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 function FrontLotAging() {
+  const navigate = useNavigate();
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [copied, setCopied] = useState(null);
 
   const fetchFrontLotAging = async () => {
     setLoading(true);
     setError(null);
-    
+
     try {
-      // Calculate date 10 days ago
       const tenDaysAgo = new Date();
       tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
-      
-      // First get inventory to match VINs and get location codes
+
+      // Current inventory — the source of truth for which cars exist + their info
       const { data: inventory } = await supabase
         .from('inventory')
         .select('stock_number, last_6_vin, vehicle_vin, vehicle_year, vehicle_make, vehicle_model, location_code, days_on_lot');
-      
-      // Query vehicles on front lot over 10 days old not on SmartAuction.
-      // Paginate past the 1000-row PostgREST cap — this filter can match most
-      // of vehicle_locations, so an unbounded read would silently truncate.
-      let data;
-      try {
-        data = await selectAll(() => supabase
-          .from('vehicle_locations')
-          .select('stock_number, vin, physical_location, location_updated_at, sa_status, notes')
-          .or('sa_status.is.null,sa_status.neq.active')
-          .lte('location_updated_at', tenDaysAgo.toISOString())
-          .is('sold_on', null)
-          .order('location_updated_at', { ascending: true }));
-      } catch (fetchError) {
-        throw fetchError;
-      }
-      
-      // Create inventory lookup maps
+
+      // Location rows >10 days old, not sold, not on an active SmartAuction listing
+      const data = await selectAll(() => supabase
+        .from('vehicle_locations')
+        .select('stock_number, vin, physical_location, location_updated_at, sa_status, notes')
+        .or('sa_status.is.null,sa_status.neq.active')
+        .lte('location_updated_at', tenDaysAgo.toISOString())
+        .is('sold_on', null)
+        .order('location_updated_at', { ascending: true }));
+
       const invByStock = new Map();
       const invByVin6 = new Map();
       const invByFullVin = new Map();
-      
-      if (inventory) {
-        inventory.forEach(item => {
-          if (item.stock_number) invByStock.set(item.stock_number, item);
-          if (item.last_6_vin) invByVin6.set(item.last_6_vin.toUpperCase(), item);
-          if (item.vehicle_vin) invByFullVin.set(item.vehicle_vin.toUpperCase(), item);
-        });
-      }
-      
-      // Filter for front lot vehicles and match with inventory
-      const frontLotVehicles = (data || []).filter(v => {
-        const location = (v.physical_location || '').toLowerCase();
-        
-        // Try to match with inventory to get Frazer location code
-        let invMatch = null;
-        if (v.stock_number) {
-          invMatch = invByStock.get(v.stock_number);
-        }
-        if (!invMatch && v.vin) {
-          // Try full VIN match
-          invMatch = invByFullVin.get(v.vin.toUpperCase());
-          // Try last 6 match
-          if (!invMatch && v.vin.length >= 6) {
-            const last6 = v.vin.slice(-6).toUpperCase();
-            invMatch = invByVin6.get(last6);
-          }
-        }
-        
-        // vehicle_locations carries thousands of dead historical rows (sold/gone
-        // cars, Frazer stock-number reuse). Only CURRENT inventory counts — a row
-        // with no inventory match is a ghost and must be dropped, not shown as
-        // a blank/"unknown" car.
-        if (!invMatch) return false;
+      (inventory || []).forEach((item) => {
+        if (item.stock_number) invByStock.set(item.stock_number, item);
+        if (item.last_6_vin) invByVin6.set(item.last_6_vin.toUpperCase(), item);
+        if (item.vehicle_vin) invByFullVin.set(item.vehicle_vin.toUpperCase(), item);
+      });
 
-        // Update vehicle with inventory data
-        v.stock_number = invMatch.stock_number || v.stock_number;
-        v.vin = invMatch.vehicle_vin || v.vin;
-        v.vehicle_info = `${invMatch.vehicle_year || ''} ${invMatch.vehicle_make || ''} ${invMatch.vehicle_model || ''}`.trim();
-        v.location_code = invMatch.location_code;
-        v.inv_days_on_lot = invMatch.days_on_lot;
-        
-        // Locations that are NOT considered front lot:
-        const excludedLocations = [
-          'transport',
-          'in_transit',
-          'in transit',
-          'body_shop',
-          'body shop',
-          'sold',
-          'wholesale',
-          'arbitrated',
-          'arb_section'
-        ];
-        
-        // Check if vehicle is in an excluded location
-        const isExcluded = excludedLocations.some(loc => 
-          location.includes(loc.replace('_', ' ').replace('-', ' '))
-        );
-        
-        // IMPORTANT: Check Frazer location code Z (transport)
-        // This is the key check - if location_code is Z, it's in transport
-        const isTransport = v.location_code === 'Z';
-        
-        // Vehicle is on front lot if:
-        // 1. NOT in transport (location code Z)
-        // 2. NOT in any excluded physical location
-        // 3. Empty location is considered front lot
-        const isFrontLot = !isTransport && (!location || !isExcluded);
-        
-        return isFrontLot;
-      });
-      
-      // Calculate days on lot
-      const vehiclesWithAge = frontLotVehicles.map(v => {
-        const daysOnLot = Math.floor(
-          (new Date() - new Date(v.location_updated_at)) / (1000 * 60 * 60 * 24)
-        );
-        return { ...v, days_on_lot: daysOnLot };
-      });
-      
-      setVehicles(vehiclesWithAge);
+      const result = (data || [])
+        .map((v) => {
+          // Match to current inventory (stock first, then VIN, then last 6)
+          let inv = v.stock_number ? invByStock.get(v.stock_number) : null;
+          if (!inv && v.vin) {
+            inv = invByFullVin.get(v.vin.toUpperCase());
+            if (!inv && v.vin.length >= 6) inv = invByVin6.get(v.vin.slice(-6).toUpperCase());
+          }
+          if (!inv) return null; // ghost row, not current inventory
+
+          return {
+            stock_number: inv.stock_number || v.stock_number,
+            vin: inv.vehicle_vin || v.vin || '',
+            vehicle_info: `${inv.vehicle_year || ''} ${inv.vehicle_make || ''} ${inv.vehicle_model || ''}`.trim(),
+            physical_location: v.physical_location,
+            location_code: inv.location_code,
+            location_updated_at: v.location_updated_at,
+            days_on_lot: Math.floor((Date.now() - new Date(v.location_updated_at)) / 86400000),
+          };
+        })
+        .filter((v) => v && v.location_code !== 'Z' && isFrontLot(v.physical_location))
+        .sort((a, b) => b.days_on_lot - a.days_on_lot);
+
+      setVehicles(result);
       setLastRefresh(new Date());
     } catch (err) {
       console.error('Error fetching front lot aging:', err);
@@ -136,25 +99,30 @@ function FrontLotAging() {
     fetchFrontLotAging();
   }, []);
 
+  const copyVin = (vin, key) => {
+    if (!vin) return;
+    navigator.clipboard.writeText(vin);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
+  const copyAllVins = () => {
+    const vins = vehicles.map((v) => v.vin).filter(Boolean).join('\n');
+    if (!vins) return;
+    navigator.clipboard.writeText(vins);
+    setCopied('all');
+    setTimeout(() => setCopied(null), 1500);
+  };
+
   const exportToCSV = () => {
-    const headers = ['Stock Number', 'VIN', 'Vehicle', 'Location', 'Location Code', 'Days on Lot', 'Last Updated'];
-    const rows = vehicles.map(v => [
-      v.stock_number || 'N/A',
-      v.vin || '',
-      v.vehicle_info || '',
-      v.physical_location || 'Front Lot',
-      v.location_code || '',
-      v.days_on_lot,
-      new Date(v.location_updated_at).toLocaleDateString()
+    const headers = ['Stock Number', 'VIN', 'Vehicle', 'Location', 'Days on Lot', 'Last Updated'];
+    const rows = vehicles.map((v) => [
+      v.stock_number || '', v.vin || '', v.vehicle_info || '',
+      prettyLocation(v.physical_location), v.days_on_lot,
+      new Date(v.location_updated_at).toLocaleDateString(),
     ]);
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
+    const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = `front_lot_aging_${new Date().toISOString().split('T')[0]}.csv`;
@@ -162,176 +130,126 @@ function FrontLotAging() {
     URL.revokeObjectURL(url);
   };
 
-  const getRowClass = (daysOnLot) => {
-    if (daysOnLot > 30) return 'bg-red-50 border-red-200';
-    if (daysOnLot > 20) return 'bg-yellow-50 border-yellow-200';
-    return '';
-  };
+  const c1020 = vehicles.filter((v) => v.days_on_lot <= 20).length;
+  const c2030 = vehicles.filter((v) => v.days_on_lot > 20 && v.days_on_lot <= 30).length;
+  const c30 = vehicles.filter((v) => v.days_on_lot > 30).length;
+
+  const daysColor = (d) => (d > 30 ? 'text-red-400' : d > 20 ? 'text-amber-400' : 'text-emerald-400');
+  const daysBg = (d) => (d > 30 ? 'bg-red-500/10 border-red-500/30' : d > 20 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-slate-800 border-slate-700');
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex justify-between items-center mb-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Front Lot Aging Report</h1>
-              <p className="text-gray-600 mt-1">
-                Vehicles on front lot over 10 days old not listed on SmartAuction
-              </p>
-              <p className="text-gray-500 text-sm mt-1">
-                Excludes vehicles with location code Z (in transport)
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={fetchFrontLotAging}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Refresh
-              </button>
-              <button
-                onClick={exportToCSV}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
-            </div>
-          </div>
-
-          {lastRefresh && (
-            <div className="mb-4 text-sm text-gray-600">
-              Last updated: {lastRefresh.toLocaleTimeString()}
-            </div>
-          )}
-
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-800">
-              <AlertCircle className="w-5 h-5" />
-              <span>Error: {error}</span>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex justify-center items-center h-64">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            </div>
-          ) : vehicles.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <p className="text-lg">No vehicles found</p>
-              <p className="text-sm mt-2">
-                All front lot vehicles are either:
-              </p>
-              <ul className="text-sm mt-2 space-y-1">
-                <li>• Listed on SmartAuction</li>
-                <li>• Less than 10 days old</li>
-                <li>• In transport (location code Z)</li>
-              </ul>
-            </div>
-          ) : (
-            <div>
-              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-blue-800 font-semibold">
-                  Found {vehicles.length} vehicles needing SmartAuction listing
-                </p>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-100 border-b">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
-                        Stock #
-                      </th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
-                        VIN (Last 6)
-                      </th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
-                        Vehicle
-                      </th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
-                        Location
-                      </th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
-                        Days on Lot
-                      </th>
-                      <th className="px-4 py-3 text-left text-sm font-semibold text-gray-900">
-                        Last Updated
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vehicles.map((vehicle, index) => (
-                      <tr
-                        key={vehicle.stock_number || vehicle.vin || index}
-                        className={`border-b ${getRowClass(vehicle.days_on_lot)}`}
-                      >
-                        <td className="px-4 py-3 font-medium text-gray-900">
-                          {vehicle.stock_number || 'N/A'}
-                        </td>
-                        <td className="px-4 py-3 text-gray-700 font-mono">
-                          {vehicle.vin ? vehicle.vin.slice(-6).toUpperCase() : 'N/A'}
-                        </td>
-                        <td className="px-4 py-3 text-gray-700 text-sm">
-                          {vehicle.vehicle_info || ''}
-                        </td>
-                        <td className="px-4 py-3 text-gray-700">
-                          <div>
-                            {vehicle.physical_location || 'Front Lot'}
-                            {vehicle.location_code && vehicle.location_code !== 'Z' && (
-                              <span className="ml-2 text-xs text-gray-500">
-                                (Code: {vehicle.location_code})
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`font-bold ${
-                              vehicle.days_on_lot > 30
-                                ? 'text-red-600'
-                                : vehicle.days_on_lot > 20
-                                ? 'text-yellow-600'
-                                : 'text-gray-700'
-                            }`}
-                          >
-                            {vehicle.days_on_lot} days
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-gray-600 text-sm">
-                          {new Date(vehicle.location_updated_at).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="mt-6 grid grid-cols-3 gap-4">
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">10-20 Days</p>
-                  <p className="text-2xl font-bold text-gray-900">
-                    {vehicles.filter(v => v.days_on_lot <= 20).length}
-                  </p>
-                </div>
-                <div className="p-4 bg-yellow-50 rounded-lg">
-                  <p className="text-sm text-yellow-800">20-30 Days</p>
-                  <p className="text-2xl font-bold text-yellow-900">
-                    {vehicles.filter(v => v.days_on_lot > 20 && v.days_on_lot <= 30).length}
-                  </p>
-                </div>
-                <div className="p-4 bg-red-50 rounded-lg">
-                  <p className="text-sm text-red-800">Over 30 Days</p>
-                  <p className="text-2xl font-bold text-red-900">
-                    {vehicles.filter(v => v.days_on_lot > 30).length}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
+    <div className="page">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-4">
+        <button onClick={() => navigate('/')} className="p-2 rounded-lg bg-slate-800">
+          <ArrowLeft size={20} />
+        </button>
+        <div className="flex-1">
+          <h1 className="text-lg font-bold text-emerald-400">Front Lot Aging</h1>
+          <p className="text-xs text-slate-400">On the lot 10+ days · not on SmartAuction</p>
         </div>
+        <button
+          onClick={fetchFrontLotAging}
+          className="p-2 rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
+        >
+          <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+        </button>
       </div>
+
+      {error && (
+        <div className="card border-red-500/40 bg-red-500/10 flex items-center gap-2 text-red-300 text-sm mb-4">
+          <AlertCircle size={18} /> <span>{error}</span>
+        </div>
+      )}
+
+      {/* Summary chips */}
+      <div className="grid grid-cols-3 gap-2 mb-4">
+        <Stat label="10–20 days" value={c1020} className="bg-slate-800 text-white" />
+        <Stat label="20–30 days" value={c2030} className="bg-amber-500/15 text-amber-300" />
+        <Stat label="30+ days" value={c30} className="bg-red-500/15 text-red-300" />
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={copyAllVins}
+          disabled={!vehicles.length}
+          className="btn-secondary flex-1 flex items-center justify-center gap-2 text-sm disabled:opacity-40"
+        >
+          {copied === 'all' ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+          {copied === 'all' ? 'Copied!' : `Copy ${vehicles.length} VINs`}
+        </button>
+        <button
+          onClick={exportToCSV}
+          disabled={!vehicles.length}
+          className="btn-secondary flex-1 flex items-center justify-center gap-2 text-sm disabled:opacity-40"
+        >
+          <Download size={14} /> Export CSV
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <RefreshCw size={32} className="animate-spin text-emerald-400" />
+        </div>
+      ) : vehicles.length === 0 ? (
+        <div className="text-center py-16">
+          <Clock size={48} className="mx-auto text-slate-600 mb-4" />
+          <p className="text-slate-300 font-semibold">No front-lot cars aging</p>
+          <p className="text-slate-500 text-xs mt-1">
+            Every front-lot car is either listed on SmartAuction or under 10 days old.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {vehicles.map((v, i) => {
+            const key = v.stock_number || v.vin || i;
+            const last6 = v.vin ? v.vin.slice(-6).toUpperCase() : '—';
+            return (
+              <div key={key} className={`rounded-xl border p-3 flex items-center gap-3 ${daysBg(v.days_on_lot)}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-white truncate">{v.vehicle_info || 'Unknown Vehicle'}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    <span className="font-mono">{v.stock_number}</span>
+                    <span className="text-slate-600"> · </span>
+                    <span className="font-mono">…{last6}</span>
+                  </p>
+                  <span className="inline-block mt-1.5 px-2 py-0.5 rounded-md bg-slate-700/60 text-[10px] font-semibold text-slate-300">
+                    {prettyLocation(v.physical_location)}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end gap-1.5">
+                  <div className={`text-lg font-bold leading-none ${daysColor(v.days_on_lot)}`}>
+                    {v.days_on_lot}<span className="text-xs font-semibold">d</span>
+                  </div>
+                  <button
+                    onClick={() => copyVin(v.vin, key)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-700 text-slate-300 text-[11px] font-semibold active:bg-slate-600"
+                  >
+                    {copied === key ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                    {copied === key ? 'Copied' : 'VIN'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {lastRefresh && (
+        <p className="text-center text-[10px] text-slate-600 mt-4">
+          Updated {lastRefresh.toLocaleTimeString()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, className }) {
+  return (
+    <div className={`rounded-xl p-3 text-center ${className}`}>
+      <div className="text-2xl font-bold">{value}</div>
+      <div className="text-[10px] uppercase tracking-wide opacity-80 mt-0.5">{label}</div>
     </div>
   );
 }

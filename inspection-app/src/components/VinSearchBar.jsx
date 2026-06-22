@@ -1,13 +1,11 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Search, Loader, X, Package, TrendingUp } from 'lucide-react'
+import { Search, Loader, X, Package } from 'lucide-react'
 import { searchVin } from '../services/vinSearch'
 import VehicleQuickInfo from './VehicleQuickInfo'
 
 // Global VIN/stock search: an always-visible bar that opens a result popup
 // instead of navigating to a separate page. Replaces the old "Check VIN" tile.
 export default function VinSearchBar() {
-  const navigate = useNavigate()
   const inputRef = useRef(null)
   const [input, setInput] = useState('')
   const [open, setOpen] = useState(false)
@@ -41,8 +39,6 @@ export default function VinSearchBar() {
     setLoading(false)
     setTerm('')
   }
-
-  const vin = result?.vehicle?.vehicle_vin || ''
 
   return (
     <>
@@ -94,13 +90,7 @@ export default function VinSearchBar() {
             {!loading && result && (
               <>
                 <VehicleQuickInfo result={result} />
-                <button
-                  onClick={() => { const v = vin; close(); navigate(`/lookup${v ? `?vin=${encodeURIComponent(v)}` : ''}`) }}
-                  className="btn-secondary w-full flex items-center justify-center gap-2 text-sm mt-3"
-                >
-                  <TrendingUp size={14} /> Get MMR / Black Book value
-                </button>
-                <button onClick={() => { close(); inputRef.current?.focus() }} className="btn-secondary w-full text-sm mt-2">
+                <button onClick={() => { close(); inputRef.current?.focus() }} className="btn-secondary w-full text-sm mt-3">
                   Search another
                 </button>
               </>

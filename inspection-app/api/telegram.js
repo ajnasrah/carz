@@ -130,7 +130,10 @@ async function processUpdate(update) {
     if (vin6) {
       const bucket = isIntake ? 'wa-photos' : 'car-history';
       const { buf, ext, mime } = await downloadTelegramPhoto(photoFileId);
-      mediaPath = `${vin6}/${msgKey}.${ext}`;
+      // Name by content hash so a byte-identical re-send maps to the same path
+      // (stored once) and shows once on the listing.
+      const hash = await sha256Hex(buf);
+      mediaPath = `${vin6}/${hash}.${ext}`;
       const up = await db.storage.from(bucket).upload(mediaPath, buf, { contentType: mime, upsert: true });
       if (up.error) throw new Error(`storage: ${up.error.message}`);
     } else {
@@ -207,6 +210,11 @@ async function checkMileage(db, chatId, replyTo, vin6, postedMiles, senderName) 
     `Mileage you sent: ${postedMiles.toLocaleString()}\n` +
     `Please confirm mileage is correct.`,
     replyTo);
+}
+
+async function sha256Hex(buf) {
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function setSession(db, from, vin6, station) {

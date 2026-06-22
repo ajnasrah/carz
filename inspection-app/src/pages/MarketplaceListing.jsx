@@ -144,6 +144,9 @@ export default function MarketplaceListing() {
   for (const [zoneId, zone] of Object.entries(cl.interior || {})) {
     collectDamagePhotos(zone.damages, zoneId)
   }
+  // Drop byte-identical duplicates (same URL = same content hash)
+  const seenUrls = new Set()
+  const dedupedPhotos = allPhotos.filter((p) => (seenUrls.has(p.url) ? false : seenUrls.add(p.url)))
 
   // Startup findings
   const startupItems = STARTUP_ITEMS.map((item) => ({
@@ -209,7 +212,7 @@ export default function MarketplaceListing() {
         </div>
 
         {/* Photo gallery */}
-        <PhotoGallery photos={allPhotos} />
+        <PhotoGallery photos={dedupedPhotos} />
 
         {/* Buy Now price + SmartAuction link */}
         {(car.buy_now || car.sa_url) && (
