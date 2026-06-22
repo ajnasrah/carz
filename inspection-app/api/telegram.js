@@ -66,6 +66,8 @@ async function processUpdate(update) {
 
   const text = msg.text || msg.caption || '';
   const fromId = msg.from?.id != null ? `tg:${msg.from.id}` : 'tg:unknown';
+  const senderName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ')
+    || (msg.from?.username ? '@' + msg.from.username : 'whoever sent this');
   const msgKey = `tg_${chatId}_${msg.message_id}`;
   // Grab the image whether sent COMPRESSED (msg.photo) or "as file" (msg.document),
   // so it doesn't matter how a worker sends it.
@@ -114,6 +116,9 @@ async function processUpdate(update) {
       // Intake groups can also set a location (e.g. ready-to-sell => front lot)
       // when location_code is configured on the group.
       if (chat.location_code) await updateLocation(db, vin6, chat.location_code, eventIso);
+      // Sanity-check the odometer against Frazer; ask the team to confirm if it
+      // isn't higher than what we have on record.
+      if (parsed.miles) await checkMileage(db, chatId, msg.message_id, vin6, parsed.miles, senderName);
     }
   }
 
@@ -173,6 +178,35 @@ async function matchDestination(db, text) {
     if (norm.includes(k.keyword) && (!best || k.keyword.length > best.keyword.length)) best = k;
   }
   return best ? best.location_code : null;
+}
+
+// Send a message back into the Telegram group (bots can post anytime).
+async function sendTelegramMessage(chatId, text, replyTo) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const body = { chat_id: chatId, text };
+  if (replyTo) body.reply_to_message_id = replyTo;
+  try {
+    await fetch(`${TG}/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+  } catch (e) { console.error('sendMessage failed:', e?.message || e); }
+}
+
+// If posted mileage isn't higher than what's in inventory (Frazer), ask the
+// team to confirm — naming who sent it, the system mileage, and what they sent.
+async function checkMileage(db, chatId, replyTo, vin6, postedMiles, senderName) {
+  const { data: rows } = await db.rpc('lookup_vin_by_last6', { last6: vin6 });
+  const v = Array.isArray(rows) ? rows[0] : rows;
+  if (!v?.stock_number) return;                      // not in inventory — handled elsewhere
+  const stored = parseInt(String(v.mileage || '').replace(/[^0-9]/g, ''), 10);
+  if (!Number.isFinite(stored) || stored === 0) return;
+  if (postedMiles > stored) return;                   // normal: higher, all good
+  await sendTelegramMessage(chatId,
+    `⚠️ ${senderName} — VIN ${vin6}\n` +
+    `Mileage in system: ${stored.toLocaleString()}\n` +
+    `Mileage you sent: ${postedMiles.toLocaleString()}\n` +
+    `Please confirm mileage is correct.`,
+    replyTo);
 }
 
 async function setSession(db, from, vin6, station) {

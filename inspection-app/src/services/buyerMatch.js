@@ -108,11 +108,14 @@ export function buildModel(sold) {
   for (const r of rows) {
     const b = (r.buyer_name || '').trim();
     if (!b) continue;
-    if (!prof.has(b)) prof.set(b, { name: b, cars: [], makeCount: {}, segCount: {} });
+    if (!prof.has(b)) prof.set(b, { name: b, cars: [], makeCount: {}, segCount: {}, makeSegCount: {} });
     const p = prof.get(b);
     p.cars.push(r);
     p.makeCount[r.make] = (p.makeCount[r.make] || 0) + 1;
     p.segCount[r._seg] = (p.segCount[r._seg] || 0) + 1;
+    // bought THIS make IN THIS segment — the most specific "will they buy this car" signal
+    const ms = `${r.make}|${r._seg}`;
+    p.makeSegCount[ms] = (p.makeSegCount[ms] || 0) + 1;
     p.email = r.buyer_email; p.phone = r.buyer_phone; p.state = r.buyer_state;
   }
 
@@ -178,7 +181,7 @@ function cmv(car, model) {
 }
 
 // ---- scoring one car -------------------------------------------------------
-export function recommendForCar(car, model, cfg = DEFAULT_CONFIG) {
+export function recommendForCar(car, model) {
   const { profiles, segMed } = model;
   const seg = car.segment || segment(car.make, car.model);
   const value = cmv(car, model);
@@ -203,36 +206,51 @@ export function recommendForCar(car, model, cfg = DEFAULT_CONFIG) {
 
       const prem = p.prem[seg] ?? 1.0;
       const predicted = value ? value * prem : null;
+      const buyerAvg = p.avgBySeg[seg] ?? p.avgPrice;   // what they actually pay for this kind of car
 
-      // RANKING PRIORITY (business decision): 1) top dollar  2) proven buyer  3) spread.
-      // Score = predicted price DISCOUNTED by trust × recency, so price leads but a lone or
-      // stale overpayer can't outrank an active proven buyer at a similar price.
       const makeN = p.makeCount[car.make] || 0;
       const segN = p.segCount[seg] || 0;
-      const evidence = makeN * 2 + segN;                         // absolute evidence (not ratio)
-      const trust = relaxed ? 0 : evidence / (evidence + cfg.trustK);
-      const trustMult = cfg.trustFloor + (1 - cfg.trustFloor) * trust;
+      const makeInSeg = p.makeSegCount[`${car.make}|${seg}`] || 0;  // bought THIS make IN THIS segment
 
-      // Geography: closer buyer = cheaper transport = stronger lead (likelier, may pay more).
-      // geoMult ∈ [0.90, 1.05]; neutral (1.0) when either state is unknown.
+      // MATCH SCORE — how likely is THIS buyer to buy a car LIKE THIS? A weighted blend of
+      // real predictors, so a pick isn't decided by make alone:
+      //   • price fit (40%) — does the car's value sit where this buyer actually buys?
+      //   • segment volume (22%) — do they buy this body type, and how much?
+      //   • make-in-segment (28%) — have they bought THIS make IN THIS segment? (most specific)
+      //   • make anywhere (10%) — weak brand signal (a Ford-truck buyer ≠ Ford-SUV buyer)
+      const ln = (x, cap) => Math.log10(1 + x) / Math.log10(1 + cap);
+      const priceFit = buyerAvg && value
+        ? Math.exp(-0.5 * Math.pow((value - buyerAvg) / (0.6 * buyerAvg), 2))   // 1 at match, decays with gap
+        : 0.5;
+      const segVol = ln(segN, 40);
+      const makeSegVol = ln(makeInSeg, 12);
+      const makeVol = ln(makeN, 40);
+      let match = 0.40 * priceFit + 0.22 * segVol + 0.28 * makeSegVol + 0.10 * makeVol;
+      if (relaxed) match = 0.5 * priceFit + 0.1;                  // cold-start: price/mileage only
+      match = Math.max(0.02, match);
+
+      // Geography: closer buyer = cheaper transport = stronger lead. geoMult ∈ [0.90, 1.05].
       const miles = carState && p.state ? milesBetween(carState, p.state.toUpperCase()) : null;
       const geoMult = miles == null ? 1.0 : 1.05 - 0.15 * Math.min(1, miles / 1500);
-      const score = (predicted ?? 0) * trustMult * p.recencyMult * geoMult;
+
+      // Final: predicted price (top-dollar lever) × how-good-a-match × recency × geography.
+      const score = (predicted ?? 0) * match * p.recencyMult * geoMult;
 
       const geoStr = miles == null ? (p.state || '?') : `${p.state}, ~${miles}mi`;
-      const confidence = relaxed ? 'low' : (p.n >= 8 && makeAff > 0 ? 'high' : p.n >= 3 ? 'medium' : 'low');
+      const confidence = relaxed ? 'low'
+        : (makeInSeg >= 3 || (segN >= 8 && priceFit > 0.5)) ? 'high'
+        : (makeInSeg >= 1 || segN >= 3) ? 'medium' : 'low';
+      const fitPct = Math.round(priceFit * 100);
       const reason = relaxed
         ? `No ${car.make}/${seg} history — price & mileage match. ${p.n} total buys, ${geoStr}.`
-        : `Bought ${p.makeCount[car.make] ? `${makeN} ${car.make}` : `${segN} ${seg}s`}; ` +
-          `pays ~${(prem * 100 - 100).toFixed(0)}% vs market on ${seg}s. ${p.n} total buys, ${geoStr}.`;
+        : `${makeInSeg ? `Bought ${makeInSeg} ${car.make} ${seg}${makeInSeg > 1 ? 's' : ''}; ` : `Buys ${seg}s (${segN}); `}` +
+          `avg ${buyerAvg ? '$' + Math.round(buyerAvg).toLocaleString() : '?'} vs this ${value ? '$' + Math.round(value).toLocaleString() : '?'} (${fitPct}% price fit). ${p.n} buys, ${geoStr}.`;
 
-      // What this buyer actually pays on average for this segment (else overall).
-      const buyerAvg = p.avgBySeg[seg] ?? p.avgPrice;
       out.push({
         buyer_name: p.name, buyer_email: p.email, buyer_phone: p.phone, buyer_state: p.state,
         predicted_price: predicted ? Math.round(predicted) : null, miles,
         buyer_avg_price: buyerAvg ? Math.round(buyerAvg) : null,
-        buyer_seg_count: segN,
+        buyer_seg_count: segN, make_in_seg: makeInSeg, price_fit: Math.round(priceFit * 100),
         score, baseScore: score, confidence, reason, _aff: makeAff, _n: p.n,
       });
     }
@@ -266,7 +284,7 @@ export function recommendAll(activeCars, soldRows, config = {}) {
   const model = buildModel(soldRows);
 
   // Pass 1: score every car's candidates (price-primary, trust-discounted).
-  const scored = activeCars.map((car) => recommendForCar(car, model, cfg));
+  const scored = activeCars.map((car) => recommendForCar(car, model));
 
   // Pass 2: SPREAD. Count provisional #1 picks, then penalize over-used buyers so the
   // next-best (often also a strong-dollar buyer) can take #1 on some cars.
