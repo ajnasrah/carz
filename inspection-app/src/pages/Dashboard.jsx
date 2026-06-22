@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
-import { supabase } from '../services/supabase'
+import { supabase, selectAll } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 
 export default function Dashboard() {
@@ -19,17 +19,16 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const [lotRes, costRes, locRes, inspRes] = await Promise.all([
+      const [lotRes, costRes, locs, inspRes] = await Promise.all([
         supabase.from('vehicle_lot_status').select('stock_number, last_seen_at, days_on_lot'),
         supabase.from('inventory').select('stock_number, total_cost, added_costs, location_code, days_on_lot'),
-        supabase.from('vehicle_locations').select('stock_number, physical_location, location_updated_at'),
+        selectAll(() => supabase.from('vehicle_locations').select('stock_number, physical_location, location_updated_at')),
         supabase.from('inspections').select('id', { count: 'exact', head: true }).eq('status', 'in_progress'),
       ])
       if (cancelled) return
 
       const lotRows = lotRes.data || []
       const costs = costRes.data || []
-      const locs = locRes.data || []
       const now = Date.now()
 
       const locMap = new Map(locs.map((l) => [l.stock_number, l]))
@@ -161,6 +160,7 @@ export default function Dashboard() {
         <ActionTile to="/inbound" emoji="📥" label="Inbound" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
         <ActionTile to="/sold-reports" emoji="💰" label="Sold" />
+        <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
         <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
         <ActionTile to="/analytics" emoji="📈" label="Analytics" />
