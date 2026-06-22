@@ -68,15 +68,32 @@ export default function Marketplace() {
   const [makeFilter, setMakeFilter] = useState('')
   const [yearRange, setYearRange] = useState('')
   const [mileRange, setMileRange] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [hidden, setHidden] = useState(() => new Set())
 
-  useEffect(() => {
-    async function load() {
-      const { data } = await supabase.rpc('marketplace_listings')
-      setCars(data || [])
-      setLoading(false)
+  async function load() {
+    const [listRes, hiddenRes, userRes] = await Promise.all([
+      supabase.rpc('marketplace_listings'),
+      supabase.from('marketplace_hidden').select('stock_number'),
+      supabase.auth.getUser(),
+    ])
+    setCars(listRes.data || [])
+    setHidden(new Set((hiddenRes.data || []).map((h) => h.stock_number)))
+    const user = userRes.data?.user
+    if (user) {
+      const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle()
+      setIsAdmin(prof?.role === 'admin')
     }
-    load()
-  }, [])
+    setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+
+  async function removeCar(stock) {
+    if (!confirm(`Remove ${stock} from the marketplace?`)) return
+    const { error } = await supabase.rpc('hide_marketplace_car', { p_stock: stock })
+    if (error) { alert('Could not remove: ' + error.message); return }
+    setHidden((h) => new Set(h).add(stock))
+  }
 
   const makes = useMemo(() => {
     const set = new Set(cars.map((c) => c.make).filter(Boolean))
@@ -84,7 +101,7 @@ export default function Marketplace() {
   }, [cars])
 
   const filtered = useMemo(() => {
-    let result = cars
+    let result = cars.filter((c) => !hidden.has(c.stock_number))
     if (makeFilter) result = result.filter((c) => c.make === makeFilter)
     if (yearRange) {
       const [lo, hi] = yearRange.split('-').map(Number)
@@ -104,7 +121,7 @@ export default function Marketplace() {
       )
     }
     return result
-  }, [cars, search, makeFilter, yearRange, mileRange])
+  }, [cars, hidden, search, makeFilter, yearRange, mileRange])
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -221,9 +238,17 @@ export default function Marketplace() {
                     <div className="flex items-center gap-2 mt-3">
                       <QuickCopy text={vin} label="Copy VIN" />
                       <QuickCopy text={String(miles)} label="Copy Miles" />
+                      {isAdmin && (
+                        <button
+                          onClick={() => removeCar(car.stock_number)}
+                          className="ml-auto px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold"
+                        >
+                          Remove
+                        </button>
+                      )}
                       <Link
                         to={`/marketplace/${car.id}`}
-                        className="ml-auto px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-900 text-xs font-bold"
+                        className={`${isAdmin ? '' : 'ml-auto'} px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-900 text-xs font-bold`}
                       >
                         View Details
                       </Link>
