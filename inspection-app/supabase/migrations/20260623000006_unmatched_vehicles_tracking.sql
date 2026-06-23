@@ -1,6 +1,17 @@
 -- Track vehicles found during lot walk that aren't in inventory
 -- These could be new arrivals, customer cars, or data entry issues
 
+-- Shared updated_at trigger helper. Defined here (CREATE OR REPLACE, idempotent)
+-- so this migration is self-contained: an earlier migration nominally creates it
+-- but it was missing from prod, which broke the trigger below.
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Create table for unmatched vehicles
 CREATE TABLE IF NOT EXISTS unmatched_vehicles (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
