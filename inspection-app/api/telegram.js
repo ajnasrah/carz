@@ -165,7 +165,17 @@ async function processUpdate(update) {
 
     const bucket = bucketForStation(chat.station);
     if (vin6) {
-      mediaPath = await storePhoto(db, bucket, vin6, photoFileId);
+      try {
+        mediaPath = await storePhoto(db, bucket, vin6, photoFileId);
+      } catch (e) {
+        // Transient download/upload failure — common when a worker fires 40
+        // photos at once and Supabase storage throttles. DON'T drop it: park
+        // the file_id so the post-commit recheck and later sweeps retry it.
+        // This is the "random cars lose a few photos" failure mode.
+        console.error('store failed, parking for retry', vin6, e?.message || e);
+        pendingFileId = photoFileId;
+        mediaPath = null;
+      }
       // VIN now known — claim any photos this sender parked earlier.
       await resolvePendingForSender(db, fromId, vin6, chat.station);
     } else {
@@ -188,8 +198,11 @@ async function processUpdate(update) {
   // sibling, then session). Whichever of {this photo, the VIN message} commits
   // last sees the other and claims the pile. No background job, no drops.
   if (pendingFileId) {
-    let lateVin = null;
-    if (mediaGroupId) {
+    // If we already know this car's VIN (e.g. the store failed and we parked for
+    // retry), use it directly. Otherwise resolve by time+sender: album sibling,
+    // then the sender's session.
+    let lateVin = vin6 || null;
+    if (!lateVin && mediaGroupId) {
       const { data: sib } = await db.from('wa_inbound_messages')
         .select('vin6').eq('media_group_id', mediaGroupId).not('vin6', 'is', null).limit(1).maybeSingle();
       lateVin = sib?.vin6 || null;
