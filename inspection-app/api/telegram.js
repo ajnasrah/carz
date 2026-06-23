@@ -13,6 +13,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { parseVehicleEntry, extractVin6, extractAllVin6 } from './_lib/parse.js';
+import { storePhoto, bucketForStation } from './_lib/photos.js';
 
 export const config = { runtime: 'edge' };
 
@@ -76,7 +77,6 @@ async function processUpdate(update) {
     : (msg.document && (msg.document.mime_type || '').startsWith('image/')) ? msg.document.file_id
     : null;
   const mediaGroupId = msg.media_group_id || null; // album id (photos sent together)
-  const isIntake = chat.station === 'seller' || chat.station === 'ready';
 
   // Idempotency claim — duplicate delivery returns no row.
   const { data: claimed } = await db.from('wa_inbound_messages')
@@ -163,13 +163,9 @@ async function processUpdate(update) {
     }
     if (!vin6) vin6 = extractVin6(text) || (await getSessionVin(db, fromId));
 
-    const bucket = isIntake ? 'wa-photos' : 'car-history';
+    const bucket = bucketForStation(chat.station);
     if (vin6) {
-      const { buf, ext, mime } = await downloadTelegramPhoto(photoFileId);
-      const hash = await sha256Hex(buf);
-      mediaPath = `${vin6}/${hash}.${ext}`;
-      const up = await db.storage.from(bucket).upload(mediaPath, buf, { contentType: mime, upsert: true });
-      if (up.error) throw new Error(`storage: ${up.error.message}`);
+      mediaPath = await storePhoto(db, bucket, vin6, photoFileId);
       // VIN now known — claim any photos this sender parked earlier.
       await resolvePendingForSender(db, fromId, vin6, chat.station);
     } else {
@@ -183,29 +179,24 @@ async function processUpdate(update) {
     vin6, media_path: mediaPath, parsed, media_group_id: mediaGroupId,
     pending_file_id: pendingFileId, processed: true, error: null,
   }).eq('message_id', msgKey);
-}
 
-// Telegram media: file_id -> getFile -> download from the file endpoint.
-async function downloadTelegramPhoto(fileId, attempts = 3) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  let lastErr;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const metaRes = await fetch(`${TG}/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
-      const meta = await metaRes.json();
-      if (!meta.ok || !meta.result?.file_path) throw new Error('getFile failed');
-      const path = meta.result.file_path;
-      const binRes = await fetch(`${TG}/file/bot${token}/${path}`);
-      if (!binRes.ok) throw new Error(`file ${binRes.status}`);
-      const buf = await binRes.arrayBuffer();
-      const ext = (path.split('.').pop() || 'jpg').toLowerCase() === 'png' ? 'png' : 'jpg';
-      return { buf, ext, mime: ext === 'png' ? 'image/png' : 'image/jpeg' };
-    } catch (e) {
-      lastErr = e;
-      if (i < attempts - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+  // Closes the simultaneous-burst race. Workers fire the VIN text and every
+  // photo at once, so each lands as a concurrent webhook with no ordering
+  // guarantee. A photo can park (no VIN visible yet) the instant AFTER the VIN
+  // message already ran its sweep — leaving it orphaned. So once our own parked
+  // row is committed above, re-check for the sender's VIN by time+sender (album
+  // sibling, then session). Whichever of {this photo, the VIN message} commits
+  // last sees the other and claims the pile. No background job, no drops.
+  if (pendingFileId) {
+    let lateVin = null;
+    if (mediaGroupId) {
+      const { data: sib } = await db.from('wa_inbound_messages')
+        .select('vin6').eq('media_group_id', mediaGroupId).not('vin6', 'is', null).limit(1).maybeSingle();
+      lateVin = sib?.vin6 || null;
     }
+    if (!lateVin) lateVin = await getSessionVin(db, fromId);
+    if (lateVin) await resolvePendingForSender(db, fromId, lateVin, chat.station);
   }
-  throw lastErr;
 }
 
 // Match a destination keyword anywhere in the message → location_code.
@@ -251,16 +242,11 @@ async function checkMileage(db, chatId, replyTo, vin6, postedMiles, senderName) 
     replyTo);
 }
 
-async function sha256Hex(buf) {
-  const h = await crypto.subtle.digest('SHA-256', buf);
-  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 // Download + store any photos this sender PARKED (sent before the VIN was known
 // — individual photos or albums, any order). Scoped to the same station and a
 // 10-min window so it can't grab a different car's photos. Idempotent.
 async function resolvePendingForSender(db, fromId, vin6, station) {
-  const bucket = (station === 'ready' || station === 'seller') ? 'wa-photos' : 'car-history';
+  const bucket = bucketForStation(station);
   const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const { data: pend } = await db.from('wa_inbound_messages')
     .select('message_id, pending_file_id')
@@ -269,11 +255,7 @@ async function resolvePendingForSender(db, fromId, vin6, station) {
     .gte('received_at', cutoff);
   for (const p of pend || []) {
     try {
-      const { buf, ext, mime } = await downloadTelegramPhoto(p.pending_file_id);
-      const hash = await sha256Hex(buf);
-      const path = `${vin6}/${hash}.${ext}`;
-      const up = await db.storage.from(bucket).upload(path, buf, { contentType: mime, upsert: true });
-      if (up.error) throw new Error(up.error.message);
+      const path = await storePhoto(db, bucket, vin6, p.pending_file_id);
       await db.from('wa_inbound_messages')
         .update({ vin6, media_path: path, pending_file_id: null })
         .eq('message_id', p.message_id);
