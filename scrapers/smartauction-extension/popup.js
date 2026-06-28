@@ -896,24 +896,36 @@
     try {
       const res = await serverFetch(`${SCRAPER_URL}/vehicle/${vin6}`);
       if (!res.ok) {
-        msgLookupResult.textContent = `No match for "${vin6}" in WhatsApp queue`;
+        msgLookupResult.textContent = `No match for "${vin6}" in intake queue`;
         msgLookupResult.className = 'msg-lookup-result visible err';
         return;
       }
 
       const data = await res.json();
+
+      // The serverless shim returns structured JSON from ready_to_sell_queue
+      // ({ miles, condition, notes, photo_count }) — the chat-posted odometer.
+      // The legacy WhatsApp scraper returned an info.txt blob in `data.info`.
+      // Prefer the structured fields; fall back to parsing the text blob so the
+      // old server still works. Without this the structured `miles` was ignored
+      // (data.info was empty) and the inventory odometer never got overridden by
+      // the group-chat reading.
       const info = data.info || '';
+      const miles = (data.miles != null && String(data.miles).trim() !== '')
+        ? String(data.miles).trim()
+        : (info.match(/^Miles:\s*(.+)/m) || [])[1]?.trim();
+      const condition = data.condition
+        || (info.match(/^Overall Condition:\s*(.+)/m) || [])[1]?.trim();
+      const tireCondition = data.tire_condition
+        || (info.match(/^Tire Condition:\s*(.+)/m) || [])[1]?.trim();
+      const notes = data.notes
+        || (info.match(/^Notes:\s*([\s\S]*?)(?=\n\n|Scraped from)/m) || [])[1]?.trim();
 
-      // Parse fields from info.txt
-      const miles = (info.match(/^Miles:\s*(.+)/m) || [])[1]?.trim();
-      const condition = (info.match(/^Overall Condition:\s*(.+)/m) || [])[1]?.trim();
-      const tireCondition = (info.match(/^Tire Condition:\s*(.+)/m) || [])[1]?.trim();
-      const notes = (info.match(/^Notes:\s*([\s\S]*?)(?=\n\n|Scraped from)/m) || [])[1]?.trim();
-
-      // Auto-fill odometer
-      if (miles) {
+      // Auto-fill odometer with the chat miles — overrides the inventory value
+      // set on VIN match. Respect a Manheim listing odometer if one was set.
+      if (miles && !manheimOdoSet) {
         const numericMiles = miles.replace(/[^0-9]/g, '');
-        odometerInput.value = numericMiles;
+        if (numericMiles) odometerInput.value = numericMiles;
       }
 
       // Auto-fill tire condition if we can map it
@@ -1452,8 +1464,23 @@
           fullVinRow.style.display = 'block';
         }
 
-        // Odometer
-        odometerInput.value = data.odometer || '';
+        // Odometer — prefer the miles posted to the Telegram station group over
+        // the inspector's typed mileage. The Telegram value is parsed into
+        // wa_inbound_messages and surfaced by ready_to_sell_queue (the same
+        // source the WhatsApp-queue lookup uses); it's the odometer read at
+        // intake and is more trustworthy than the inspection's mileage field,
+        // which can be stale or mistyped. Fall back to the inspection value when
+        // the car isn't in the Telegram queue.
+        let odo = data.odometer || '';
+        try {
+          const tgRes = await serverFetch(`${SCRAPER_URL}/vehicle/${last6}`);
+          if (tgRes.ok) {
+            const tg = await tgRes.json();
+            const tgMiles = (tg.miles != null ? String(tg.miles) : '').replace(/[^0-9]/g, '');
+            if (tgMiles) odo = tgMiles;
+          }
+        } catch { /* Telegram queue unavailable — keep inspection mileage */ }
+        odometerInput.value = odo;
 
         // Matched vehicle — used by fillVINOnPage as a fallback VIN source
         matchedVehicle = {
@@ -1904,10 +1931,11 @@
       } else if (s) { lastKey = null; }
     }
 
-    // Parse damages — summary has each damage in 3 formats:
-    // Format 1: "Panel (Type)" — parentheses
-    // Format 2: "Panel| Type" — pipe
-    // Format 3: "Panel- Type" — dash (no space before dash)
+    // Parse damages — summary entries come in several formats:
+    // Canonical (current Manheim): "Panel: Condition (Severity) — Repair"
+    // Legacy Format 1: "Panel (Type)" — parentheses
+    // Legacy Format 2: "Panel| Type" — pipe
+    // Legacy Format 3: "Panel- Type" — dash (no space before dash)
     // Plus standalone: "Light scratches", "Multi dents"
     const seen = new Set();
     const damages = [];
@@ -1915,16 +1943,24 @@
     for (const d of rawDamages) {
       let panel = '', dtype = '';
 
-      if (d.includes('(') && d.includes(')')) {
+      if (d.includes(':')) {
+        // Canonical Manheim format: "Front Bumper Cover: Prev Repair (SubStd Dirt) — Repair"
+        // (also the older "Panel: Type" form). Panel is everything before the first
+        // colon; the type is the condition with the parenthesised severity and the
+        // "— Repair" suggested-action suffix stripped off. Must run BEFORE the
+        // parentheses branch — the canonical format contains "(...)" too, but it
+        // does not END with ")", so the old anchored regex dropped every entry.
+        const idx = d.indexOf(':');
+        panel = d.substring(0, idx).trim();
+        let rest = d.substring(idx + 1).trim();
+        rest = rest.replace(/\s*[—–].*$/, '').trim();      // drop "— Repair" suffix (em/en dash)
+        rest = rest.replace(/\s*\([^)]*\)\s*$/, '').trim(); // drop trailing "(Severity)"
+        dtype = rest;
+      } else if (d.includes('(') && d.includes(')')) {
         // Format 1: "R Qtr Panel (Mult Dents/Paint Dmg)"
         const m = d.match(/^(.+?)\s*\((.+?)\)\s*$/);
         if (m) { panel = m[1].trim(); dtype = m[2].trim(); }
         else { panel = d; }
-      } else if (d.includes(':')) {
-        // Format: "F Bumper Cover Lower: Heavy Mult Scratches"
-        const idx = d.indexOf(':');
-        panel = d.substring(0, idx).trim();
-        dtype = d.substring(idx + 1).trim();
       } else if (d.includes('|')) {
         // Format 2: "R Qtr Panel| Mult Dents/Paint Dmg"
         const idx = d.indexOf('|');
@@ -1939,6 +1975,29 @@
       } else {
         // Standalone: "Light scratches", "Multi dents"
         panel = d;
+      }
+
+      // Tire/wheel handling. Tires (tread depth, "RR Tire: Worn") belong to the
+      // dedicated TIRES AND WHEELS section, not the body grid, and otherwise
+      // fuzzy-match to a bumper/quarter panel — always skip them. Wheels/rims
+      // with a curb-type condition ARE body damage, though: expand them the same
+      // way the quick-add box does ("All Wheels: Curb Rash" → one row per
+      // corner; "LF Wheel: Curb Rash" → a single corner). Wheel entries without
+      // a curb-type condition (or with no placeable corner) fall through to skip.
+      if (/\b(tire|tyre|wheel|rim)s?\b/i.test(panel)) {
+        const isWheel = /\b(wheel|rim)s?\b/i.test(panel) && !/\b(tire|tyre)s?\b/i.test(panel);
+        const curbish = /\b(curb|curbed|rash|scuff|scrape|scraped|gouge|scratch)\w*\b/i.test(dtype);
+        if (isWheel && curbish) {
+          const combined = (panel + ' ' + dtype).trim();
+          const corners = expandWheelGroup(combined) || singleWheelCorner(combined);
+          if (corners) {
+            for (const wp of corners) {
+              const wkey = (wp + '|' + dtype).toLowerCase();
+              if (!seen.has(wkey)) { seen.add(wkey); damages.push({ panel: wp, type: dtype }); }
+            }
+          }
+        }
+        continue;
       }
 
       // Skip standalone entries (no type) — these are general observations
@@ -1999,12 +2058,27 @@
           vehicleDisplay.value = info.vehicle;
           vehicleName = info.vehicle;
         }
-        if (parsedDamages.length > 0) {
-          damages = parsedDamages.map(d => ({
-            panel: d.panel, type: d.type, severity: 'Minor', chargeable: 'No',
-          })).sort((a, b) => a.panel.localeCompare(b.panel));
-          renderDamages();
-        }
+        // Always replace the damage list for this CR — never guard on
+        // parsedDamages.length. A clean car (0 damages) or a parse miss must
+        // NOT inherit the previous import's damages: `damages` is module-scoped
+        // and isn't cleared between imports, so leaving the old list in place
+        // uploads car A's damages onto car B's condition report.
+        // Normalize panel + type to SA-standard at import (e.g. "Mult Dents" /
+        // "multiple dents" → "Dent") so the list shows — and we store — the same
+        // value SA gets. Without this the raw Manheim condition is kept and the
+        // list reads "multiple dents" while only the eventual fill maps it. The
+        // quick-add box already normalizes via parseDamageText; match it here.
+        const canMap = typeof DamageMapper !== 'undefined';
+        damages = parsedDamages.map(d => {
+          const m = canMap ? DamageMapper.mapForSA({ panel: d.panel, type: d.type }) : null;
+          return {
+            panel: (m && m.panel) || d.panel,
+            type: (m && m.type) || d.type,
+            description: (m && m.description) || '',
+            severity: 'Minor', chargeable: 'No',
+          };
+        }).sort((a, b) => a.panel.localeCompare(b.panel));
+        renderDamages();
       }
 
       // Load photos
@@ -2951,6 +3025,7 @@
     'Interior', 'Dashboard', 'Steering Wheel',
     'Seat - Driver', 'Seat - Passenger', 'Seat - Rear',
     'Driver Door Panel', 'Passenger Door Panel',
+    'Rear Door Panel - Left', 'Rear Door Panel - Right',
     'Headliner', 'Carpet/Floor', 'Console'
   ]);
 
@@ -2961,10 +3036,6 @@
   const STANDARD_DAMAGES = [
     { panel: 'Bumper - Front',     type: 'Paint Chip', description: 'multiple' },
     { panel: 'Hood',               type: 'Paint Chip', description: 'multiple' },
-    { panel: 'Driver Door Panel',  type: 'Worn',       description: '' },
-    { panel: 'Seat - Driver',      type: 'Worn',       description: '' },
-    { panel: 'Steering Wheel',     type: 'Worn',       description: '' },
-    { panel: 'Dashboard',          type: 'Worn',       description: 'radio/buttons' },
     { panel: 'Console',            type: 'Worn',       description: '' },
   ];
 
@@ -3029,6 +3100,18 @@
     'left running board':  'Running Board - Left',
     'right running board': 'Running Board - Right',
     'step bar':         'Running Board',
+    // Single-corner wheels with the position spelled out ("left front wheel").
+    // PANEL_MAP only has the abbreviations (lf/rf wheel) and the non-contiguous
+    // "left wheel"/"right wheel", so a written-out corner falls through without
+    // these. Longest-match-wins routes each to its corner.
+    'left front wheel':  'Wheel - Left Front',
+    'right front wheel': 'Wheel - Right Front',
+    'left rear wheel':   'Wheel - Left Rear',
+    'right rear wheel':  'Wheel - Right Rear',
+    'front left wheel':  'Wheel - Left Front',
+    'front right wheel': 'Wheel - Right Front',
+    'rear left wheel':   'Wheel - Left Rear',
+    'rear right wheel':  'Wheel - Right Rear',
     // Quarters without the "panel" suffix (the canonical PANEL_MAP key
     // requires it; users don't always type it).
     'left quarter':     'Quarter Panel - Left',
@@ -3193,6 +3276,58 @@
     return parts.length ? parts : [text.trim()];
   }
 
+  // Detect "every wheel" phrasings and return the SA wheel panels they cover,
+  // or null when the text isn't a wheel group. "all wheels curbed" → all four
+  // corners; "front wheels" → the two fronts; "rear wheels" → the two rears.
+  // Single corners ("left front wheel", "lf wheel") return null so they fall
+  // through to parseDamageText's normal one-row path.
+  const WHEEL_FRONT = ['Wheel - Left Front', 'Wheel - Right Front'];
+  const WHEEL_REAR  = ['Wheel - Left Rear', 'Wheel - Right Rear'];
+  function expandWheelGroup(part) {
+    const q = (part || '').toLowerCase();
+    // A single corner is already named (left/right + front/rear, or lf/rf/lr/rr)
+    // — let the normal parser handle it as one row.
+    if (/\b(?:lf|rf|lr|rr)\s+wheel\b/.test(q)) return null;
+    if (/\b(?:left|right)\s+(?:front|rear)\s+wheel\b/.test(q)) return null;
+    if (/\b(?:front|rear)\s+(?:left|right)\s+wheel\b/.test(q)) return null;
+    if (/\b(?:left|right)\s+wheel\b/.test(q)) return null;
+
+    const isGroup = /\ball\s+(?:4|four)?\s*wheels?\b/.test(q)
+      || /\b(?:4|four)\s+wheels?\b/.test(q)
+      || /\bwheels\b/.test(q)
+      || /\brims\b/.test(q);
+    if (!isGroup) return null;
+
+    const hasFront = /\bfront\b/.test(q);
+    const hasRear  = /\b(?:rear|back)\b/.test(q);
+    if (hasFront && !hasRear) return [...WHEEL_FRONT];
+    if (hasRear && !hasFront) return [...WHEEL_REAR];
+    return [...WHEEL_FRONT, ...WHEEL_REAR];
+  }
+
+  // Resolve a single-corner wheel reference ("LF Wheel", "left rear wheel") to
+  // its SA panel. Returns a one-element array, or null when no corner is named.
+  // Used by the Manheim importer to place a single curbed wheel.
+  function singleWheelCorner(text) {
+    const parsed = parseDamageText(text);
+    if (parsed && parsed.panel && /^Wheel - /.test(parsed.panel)) return [parsed.panel];
+    return null;
+  }
+
+  // Strip the wheel-group words out of a description so each expanded row reads
+  // just the condition ("curb rash"), not "all wheels".
+  function stripWheelWords(text) {
+    return (text || '')
+      .replace(/\ball\s+(?:4|four)?\s*wheels?\b/gi, ' ')
+      .replace(/\b(?:4|four)\s+wheels?\b/gi, ' ')
+      .replace(/\b(?:front|rear|back|left|right)\b/gi, ' ')
+      .replace(/\bwheels?\b/gi, ' ')
+      .replace(/\brims?\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s,;.:/-]+|[\s,;.:/-]+$/g, '')
+      .trim();
+  }
+
   function addDamage({ panel, type, description }) {
     const clean = {
       panel: panel || '',
@@ -3237,6 +3372,17 @@
     const parts = splitDamageInput(raw);
     let added = 0;
     for (const part of parts) {
+      // "all wheels curbed" / "front wheels scuffed" → one row per wheel.
+      const wheelPanels = expandWheelGroup(part);
+      if (wheelPanels) {
+        const parsed = parseDamageText(part) || { type: '', description: part };
+        const desc = stripWheelWords(parsed.description || '');
+        for (const wp of wheelPanels) {
+          addDamage({ panel: wp, type: parsed.type || '', description: desc });
+          added++;
+        }
+        continue;
+      }
       const parsed = parseDamageText(part);
       if (parsed) { addDamage(parsed); added++; }
     }
