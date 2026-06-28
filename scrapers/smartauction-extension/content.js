@@ -596,10 +596,21 @@ async function fillDamagesAndTires(data) {
 
         const descEl = document.getElementById('add-damage-description');
         if (descEl) {
-          const rawDesc = (mappedDamage.description || dmg.description || '').trim();
+          // Trust mappedDamage.description — mapForSA already folds in
+          // dmg.description AND strips any type it promoted out of it. Falling
+          // back to dmg.description here would resurrect the raw text (e.g.
+          // "multiple dents") that mapForSA just normalized into the type.
+          const rawDesc = (mappedDamage.description || '').trim();
           const type = mappedDamage.type && mappedDamage.type !== 'Other' ? mappedDamage.type : '';
-          const startsWithType = type && rawDesc.toLowerCase().startsWith(type.toLowerCase());
-          const prefix = type && !startsWithType ? `${type}${rawDesc ? ' - ' : ''}` : '';
+          // Skip the type prefix when the description already names a damage —
+          // either it contains the type word ("light scratches" says "scratch")
+          // or it's a recognized condition phrase ("multiple dings", "ding") —
+          // so a verbatim phrase reads "multiple dings" instead of a redundant
+          // "Dent - multiple dings". Only a description with no damage word at
+          // all (a bare location) still gets the "Type - " prefix.
+          const descHasType = type && (rawDesc.toLowerCase().includes(type.toLowerCase()) ||
+                              DamageMapper.descriptionNamesType(rawDesc));
+          const prefix = type && !descHasType ? `${type}${rawDesc ? ' - ' : ''}` : '';
           const descText = (prefix + rawDesc).substring(0, 50);
           setFieldValue(descEl, descText);
         }
@@ -617,11 +628,10 @@ async function fillDamagesAndTires(data) {
         await delay(60);
 
         // Click "Add Damage" then POLL for the row to land. SA typically
-        // commits in 150-400ms; old code waited a fixed 1200ms per damage
-        // regardless. Fall back to a retry click if the row doesn't appear.
-        const rowCountBefore = damageRowCount();
-        const addBtns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Add Damage');
-        const addBtn = addBtns[addBtns.length - 1];
+        // commits in 150-400ms. Capture the committed-row count BEFORE the
+        // click so we can detect the new row unambiguously.
+        const before = committedDamageRows();
+        const addBtn = findAddDamageButton();
         if (addBtn) {
           addBtn.click();
         } else {
@@ -629,11 +639,20 @@ async function fillDamagesAndTires(data) {
           continue;
         }
 
-        const landed = await waitUntil(() => damageRowCount() > rowCountBefore, { timeoutMs: 1500, intervalMs: 80 });
+        // Landed = a new committed row appeared, OR the add form gave up our
+        // entry (cleared/closed). Earlier code waited ONLY on the form
+        // detaching — but some SA layouts reset the form in place, so that
+        // signal hangs the full timeout (super slow) and the retry then
+        // re-submits the same filled form, duplicating every damage. Because
+        // `addDamageCommitted` already treats a cleared/closed form as landed,
+        // reaching the retry means the form is genuinely still filled — so the
+        // retry click is safe and can't double-add.
+        const landed = await waitUntil(() => addDamageCommitted(before), { timeoutMs: 2500, intervalMs: 80 });
         if (!landed) {
-          addLog(`  Damage ${i + 1} didn't land on first try — retrying`, 'log-warn');
-          addBtn.click();
-          await waitUntil(() => damageRowCount() > rowCountBefore, { timeoutMs: 1800, intervalMs: 100 });
+          addLog(`  Damage ${i + 1} didn't land — retrying`, 'log-warn');
+          const retryBtn = findAddDamageButton();
+          if (retryBtn) retryBtn.click();
+          await waitUntil(() => addDamageCommitted(before), { timeoutMs: 1800, intervalMs: 100 });
         }
         addLog(`  Damage ${i + 1} saved`, 'log-ok');
       }
@@ -744,7 +763,22 @@ async function fillFromInspection(payload) {
 
         const descEl = document.getElementById('add-damage-description');
         if (descEl) {
-          const descText = (mappedDamage.description || dmg.description || '').substring(0, 50);
+          // Prefix the normalized type (SA has no type dropdown — type only
+          // reaches SA via this description prefix) and trust the mapped
+          // description so a description-only damage like "multiple dents"
+          // lands as "Dent", not raw. Same logic as fillDamagesAndTires.
+          const rawDesc = (mappedDamage.description || '').trim();
+          const type = mappedDamage.type && mappedDamage.type !== 'Other' ? mappedDamage.type : '';
+          // Skip the type prefix when the description already names a damage —
+          // either it contains the type word ("light scratches" says "scratch")
+          // or it's a recognized condition phrase ("multiple dings", "ding") —
+          // so a verbatim phrase reads "multiple dings" instead of a redundant
+          // "Dent - multiple dings". Only a description with no damage word at
+          // all (a bare location) still gets the "Type - " prefix.
+          const descHasType = type && (rawDesc.toLowerCase().includes(type.toLowerCase()) ||
+                              DamageMapper.descriptionNamesType(rawDesc));
+          const prefix = type && !descHasType ? `${type}${rawDesc ? ' - ' : ''}` : '';
+          const descText = (prefix + rawDesc).substring(0, 50);
           setFieldValue(descEl, descText);
         }
 
@@ -759,19 +793,23 @@ async function fillFromInspection(payload) {
         // Single settle tick before submitting
         await delay(60);
 
-        // Click "Add Damage" and poll for the row to land (bails at ~200ms
-        // when the row commits; falls back to 1500ms max).
-        const rowCountBefore = damageRowCount();
-        const addBtns = [...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Add Damage' && b.offsetParent !== null);
-        const addBtn = addBtns[addBtns.length - 1];
+        // Click "Add Damage" and poll for the row to land. Landed = a new
+        // committed row appeared OR the add form cleared/closed. Don't wait
+        // solely on the form detaching: some SA layouts reset it in place, so
+        // that signal hangs the full timeout and the retry then re-submits the
+        // same filled form, duplicating every damage. Reaching the retry means
+        // the form is genuinely still filled, so the retry click is safe.
+        const before = committedDamageRows();
+        const addBtn = findAddDamageButton();
         if (!addBtn) { addLog('  "Add Damage" button not found', 'log-err'); break; }
         addBtn.click();
 
-        const landed = await waitUntil(() => damageRowCount() > rowCountBefore, { timeoutMs: 1500, intervalMs: 80 });
+        const landed = await waitUntil(() => addDamageCommitted(before), { timeoutMs: 2500, intervalMs: 80 });
         if (!landed) {
           addLog(`  Damage ${i + 1} didn't land — retrying click`, 'log-warn');
-          addBtn.click();
-          await waitUntil(() => damageRowCount() > rowCountBefore, { timeoutMs: 1800, intervalMs: 100 });
+          const retryBtn = findAddDamageButton();
+          if (retryBtn) retryBtn.click();
+          await waitUntil(() => addDamageCommitted(before), { timeoutMs: 1800, intervalMs: 100 });
         }
         addLog(`  Saved damage row`, 'log-ok');
       }
@@ -941,6 +979,37 @@ async function waitUntil(predicate, { timeoutMs = 1500, intervalMs = 80 } = {}) 
 
 function damageRowCount() {
   return document.querySelectorAll('[data-damage-row], .damage-row, tr[id^="damage"], [id^="damage-location-"]').length;
+}
+
+// Count COMMITTED damage rows. SA gives each saved row a `damage-location-N`
+// input; the open add form is `add-damage-location` (the `add-` prefix keeps it
+// out of this match). A bump in this count is the one unambiguous "the add
+// committed" signal — unlike the add form detaching, which some SA layouts skip
+// (they reset the form in place), and unlike the broad damageRowCount() above.
+function committedDamageRows() {
+  return document.querySelectorAll('[id^="damage-location-"]').length;
+}
+
+// True once the add form has given up the entry we filled — either it committed
+// a new row, or SA cleared/closed the form for the next one. Re-queries live so
+// a stale element reference (SA replaces nodes on re-render) can't report a
+// false "still filled". `before` is committedDamageRows() captured pre-click.
+function addDamageCommitted(before) {
+  if (committedDamageRows() > before) return true;
+  const liveLoc = document.getElementById('add-damage-location');
+  return !liveLoc || !(liveLoc.value || '').trim();
+}
+
+// Find the live, on-screen "Add Damage" button. SA re-renders the Damages
+// section after each add, detaching the previous form/button — so a cached
+// reference goes stale. Clicking a stale submit button whose form is no longer
+// connected triggers Chrome's "Form submission canceled because the form is
+// not connected" warning and does nothing. Always re-query before clicking.
+function findAddDamageButton() {
+  const btns = [...document.querySelectorAll('button')].filter(b =>
+    b.textContent.trim() === 'Add Damage' && b.isConnected && b.offsetParent !== null
+  );
+  return btns[btns.length - 1] || null;
 }
 
 // Wait for a selector to appear, with a fallback delay if it never does

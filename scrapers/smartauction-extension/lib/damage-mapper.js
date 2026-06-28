@@ -62,6 +62,17 @@ var DamageMapper = {
     'left rear door':       'Door - Driver Rear',
     'right front door':     'Door - Passenger Front',
     'right rear door':      'Door - Passenger Rear',
+    // Interior door trim panels — identity maps so mapForSA preserves the
+    // interior value instead of fuzzy-collapsing it to the exterior door.
+    // ("driver door panel" shares 2/3 words with "driver door" → 0.667 score,
+    // over the 0.65 fuzzy threshold → "Door - Driver Front".) The popup stores
+    // these values via EXTRA_PANEL_SYNONYMS; this keeps them intact on fill.
+    'driver door panel':         'Driver Door Panel',
+    'driver front door panel':   'Driver Door Panel',
+    'passenger door panel':      'Passenger Door Panel',
+    'passenger front door panel':'Passenger Door Panel',
+    'rear door panel - left':    'Rear Door Panel - Left',
+    'rear door panel - right':   'Rear Door Panel - Right',
     'left fender':          'Fender - Left Front',
     'left front fender':    'Fender - Left Front',
     'right fender':         'Fender - Right Front',
@@ -277,10 +288,18 @@ var DamageMapper = {
     'replacement':          'Other',
     'misaligned':           'Other',
     'curb rash':            'Scuff',
+    'curbed':               'Scuff',
+    'curb':                 'Scuff',
+    'curbing':              'Scuff',
+    'scraped':              'Scuff',
     'paint dmg':            'Paint Damage',
     'no paint dmg':         'Dent',
     'chipped':              'Chip',
-    'gouge':                'Scratch'
+    'gouge':                'Scratch',
+    // Compound Manheim conditions that don't match a single keyword
+    'prev repair chipped':  'Other',
+    'pitted':               'Other',
+    'pitting':              'Other'
   },
 
   // ── Public API ──
@@ -288,8 +307,38 @@ var DamageMapper = {
   // Map a single damage entry for SmartAuction Vehicle Entry
   mapForSA(damage) {
     const mappedPanel = this._mapPanel(damage.panel, this.PANEL_MAP);
+    let mappedType = this._mapType(damage.type, this.SA_DAMAGE_TYPES);
     let description = damage.description || '';
-    
+
+    // The type field didn't resolve to a standard SA type, but the damage may
+    // have been entered as free text in the description ("multiple dents",
+    // "scratches", "left quarter panel multiple dents/scratches"). SA's
+    // add-damage form has NO type dropdown — the type only reaches SA as the
+    // description prefix the filler prepends — so a description-only damage
+    // lands verbatim ("multiple dents") instead of normalized ("Dent"). Pull a
+    // recognized type out of the description and strip it so the row reads
+    // "Dent — ...". Only runs when the type field gave us nothing usable.
+    if (!this.SA_DAMAGE_TYPES.includes(mappedType) && description) {
+      const ext = this._extractTypeFromText(description, this.SA_DAMAGE_TYPES);
+      if (ext) { mappedType = ext.type; description = ext.remainder; }
+    }
+
+    // Preserve the original condition text verbatim. TYPE_NORMALIZE collapses
+    // rich Manheim phrases ("Multiple Dents And Scratches", "Light Scratches",
+    // "Ding") to a single bare SA type, dropping the count/severity/secondary-
+    // damage detail a buyer reads. Keep the original phrase as the description
+    // whenever it carries more than the bare type word; a description-less,
+    // exactly-bare type ("scratch" / "dents") still lands as the clean "Scratch"
+    // / "Dent". The SA filler skips its type prefix when the text already names a
+    // damage, so this reads back as "multiple dents", not "Dent - multiple dents".
+    if (this.SA_DAMAGE_TYPES.includes(mappedType) && !description && damage.type) {
+      const orig = damage.type.trim();
+      const bare = orig.toLowerCase(), t = mappedType.toLowerCase();
+      const isBareType = bare === t || bare === t + 's' || bare === t + 'es' ||
+                         bare === t.replace(/y$/, 'ies');
+      if (!isBareType) description = orig;
+    }
+
     // Clean up description for warning lights
     if (mappedPanel === 'Warning Light' || (damage.panel && damage.panel.toLowerCase().includes('light'))) {
       // Remove redundant "is on" or "on" from description
@@ -299,10 +348,22 @@ var DamageMapper = {
         description = damage.panel.replace(/\s*light\s*$/i, '').toUpperCase();
       }
     }
-    
+
+    // Conditions that have no standard SA damage type collapse to 'Other'
+    // ("Prev Repair", "Pitted", "Replaced", "Aftermarket"...). SA's add-damage
+    // form has no type dropdown — the type is only surfaced as a description
+    // prefix, and the filler drops it when it's 'Other'. Manheim CR damages
+    // carry only panel + type (no description), so without this the row lands
+    // with just a location and a blank description and the condition is lost.
+    // Carry the original condition text into the description so it survives.
+    if (mappedType === 'Other' && !description && damage.type &&
+        damage.type.trim().toLowerCase() !== 'other') {
+      description = damage.type.trim();
+    }
+
     return {
       panel: mappedPanel,
-      type: this._mapType(damage.type, this.SA_DAMAGE_TYPES),
+      type: mappedType,
       severity: damage.severity || 'Minor',
       chargeable: damage.chargeable === 'Yes' || damage.chargeable === true,
       estimatedCost: damage.estimatedCost || 0,
@@ -359,6 +420,55 @@ var DamageMapper = {
 
     // Only return if reasonable match (>40% of words match)
     return bestScore > 0.4 ? bestMatch : null;
+  },
+
+  // Pull a recognized damage type out of free-text and strip it from the text.
+  // Used when a damage has no explicit type field and the type is embedded in
+  // the description ("multiple dents/scratches" → type "Dent", remainder
+  // "scratches"). Returns { type, remainder } or null when nothing matches.
+  _extractTypeFromText(text, validTypes) {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+    // Append \w* so stripping "dent" also removes the trailing "s" of "dents"
+    // (and "scratch" removes "scratches") instead of leaving an orphan letter.
+    const strip = (phrase) => text
+      .replace(new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\w*', 'gi'), ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s,;.:/_-]+|[\s,;.:/_-]+$/g, '')
+      .trim();
+
+    // Longest known phrase first so "multiple dents" beats "dent".
+    const phrases = Object.keys(this.TYPE_NORMALIZE).sort((a, b) => b.length - a.length);
+    for (const ph of phrases) {
+      if (lower.includes(ph)) {
+        const t = this._mapType(ph, validTypes);
+        if (validTypes.includes(t)) return { type: t, remainder: strip(ph) };
+      }
+    }
+    // Fall back to a bare valid type name appearing in the text ("dent").
+    const direct = [...validTypes].filter(v => v !== 'Other').sort((a, b) => b.length - a.length);
+    for (const vt of direct) {
+      if (lower.includes(vt.toLowerCase())) return { type: vt, remainder: strip(vt.toLowerCase()) };
+    }
+    return null;
+  },
+
+  // True when free text already names a damage — a TYPE_NORMALIZE key ("ding",
+  // "gouge", "curb rash") or a bare SA type word ("scratch", "dent"). The SA
+  // filler uses this to decide whether to prepend the normalized type: "multiple
+  // dings" already reads as damage so it needs no "Dent - " prefix, but a bare
+  // location like "lower valance" does. Substring match, mirroring the mapper's
+  // existing fuzzy tolerance — damage tokens don't collide with real CR text.
+  descriptionNamesType(text) {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    for (const key of Object.keys(this.TYPE_NORMALIZE)) {
+      if (lower.includes(key)) return true;
+    }
+    for (const t of this.SA_DAMAGE_TYPES) {
+      if (t !== 'Other' && lower.includes(t.toLowerCase())) return true;
+    }
+    return false;
   },
 
   // ── Private Helpers ──
@@ -427,18 +537,45 @@ var DamageMapper = {
       return 'Scratch';
     }
     
-    // Check normalize map for standard damage types
+    // Resolve a normalized value to whatever the target list actually calls it.
+    // SA and VIW disagree on a few names (SA: "Paint Chip"/"Hail Damage";
+    // VIW: "Chip"/"Hail"), so a single TYPE_NORMALIZE value must map per-list.
+    const SYNONYMS = {
+      'Chip':        ['Paint Chip'], 'Paint Chip':  ['Chip'],
+      'Hail':        ['Hail Damage'], 'Hail Damage': ['Hail'],
+      'Rust':        ['Corrosion'],  'Corrosion':   ['Rust']
+    };
+    const resolve = (norm) => {
+      if (!norm) return null;
+      if (validTypes.includes(norm)) return norm;
+      for (const alt of (SYNONYMS[norm] || [])) {
+        if (validTypes.includes(alt)) return alt;
+      }
+      return null;
+    };
+
+    // Check normalize map for standard damage types (exact key)
     if (this.TYPE_NORMALIZE[key]) {
-      const normalized = this.TYPE_NORMALIZE[key];
-      // Verify it's in the valid types list
-      if (validTypes.includes(normalized)) return normalized;
+      const r = resolve(this.TYPE_NORMALIZE[key]);
+      if (r) return r;
     }
-    
+
     // Direct match in valid types
     for (const vt of validTypes) {
       if (vt.toLowerCase() === key) return vt;
     }
-    
+
+    // Partial match for compound conditions ("prev repair chipped",
+    // "dent/paint dmg scratches"...). Scan known phrases longest-first so the
+    // most specific phrase wins, and only accept one valid for the target list.
+    const phrases = Object.keys(this.TYPE_NORMALIZE).sort((a, b) => b.length - a.length);
+    for (const ph of phrases) {
+      if (key.includes(ph)) {
+        const r = resolve(this.TYPE_NORMALIZE[ph]);
+        if (r) return r;
+      }
+    }
+
     // For everything else, preserve exact user input (like "substandard repair")
     // Don't auto-map to 'Other'
     return type;
@@ -452,7 +589,14 @@ var DamageMapper = {
     let matches = 0;
     for (const wa of wordsA) {
       for (const wb of wordsB) {
-        if (wa === wb || wa.includes(wb) || wb.includes(wa)) {
+        // Exact word match always counts. Substring matching is restricted to
+        // words of 3+ chars — otherwise a single-letter map token ("l"/"r" for
+        // left/right, or "a"/"c" from "a/c") matches any word that merely
+        // contains that letter ("pAnel", "exteRior"), producing false fuzzy
+        // hits like "A/C Condensor" → "Rocker Panel" or "Hood Release" →
+        // "Bumper - Rear". Short directional codes must match exactly.
+        if (wa === wb) { matches++; break; }
+        if (wa.length >= 3 && wb.length >= 3 && (wa.includes(wb) || wb.includes(wa))) {
           matches++;
           break;
         }
