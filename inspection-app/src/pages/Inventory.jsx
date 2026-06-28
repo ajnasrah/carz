@@ -235,6 +235,7 @@ export default function Inventory() {
     gravel_front_lot: "Memphis - Front Lot",
     jackson: "Jackson",
     pro_auto: "Pro Auto",
+    andys_auto: "Andy's Auto",
     summit_tire: "Summit Tire",
     tri_state: "Tri State",
     tri_state_glass: "Tri State Glass",
@@ -272,6 +273,9 @@ export default function Inventory() {
     gravel_front_lot: "bg-emerald-500",
     jackson: "bg-sky-500",
     pro_auto: "bg-cyan-500",
+    andys_auto: "bg-lime-500",
+    muffler_cs: "bg-fuchsia-500",
+    jim_keras_nissan: "bg-violet-500",
     summit_tire: "bg-amber-500",
   };
 
