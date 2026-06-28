@@ -664,7 +664,7 @@ async function scrapePage() {
     console.log('scrapePage: Found next button, clicking through gallery...');
     
     // Capture initial image before clicking
-    captureMainGalleryImage();
+    captureCurrentImage();
     
     let clickCount = 0;
     const maxClicks = 50;
@@ -1032,8 +1032,70 @@ async function scrapePage() {
     console.error('scrapePage: Error extracting stock number:', e);
   }
 
-  // Extract damages from CONDITION DETAILS table (OVE format)
+  // === Manheim INSIGHT/MABEL chargeables parser =========================
+  // Scoped to Manheim's condition report (table#charges / summary="charges").
+  // Those ids exist ONLY on Manheim MABEL pages, so every other auction
+  // (ADESA, OVE, SmartAuction, etc.) leaves manheimHandled = false and runs
+  // the original extraction logic below completely untouched.
+  //
+  // Why this exists: Manheim rows lead with an IMAGE cell, so the generic
+  // table-walker reads cells[0] (the empty thumbnail) as the description and
+  // skips every real row — then the keyword fallback scoops up layout
+  // sections (abbreviation glossary, address, OPTIONS...) as bogus "damages".
+  // The real line items are the left-aligned mainfont cells:
+  //   [Description, Condition, Severity, Suggested Repair]   (cost is right-aligned)
+  let manheimHandled = false;
   try {
+    const chargesTable = document.querySelector('table#charges, table[summary="charges"]');
+    if (chargesTable) {
+      console.log('scrapePage: Manheim charges table detected — parsing line items');
+      // Header / totals / section-label rows to ignore (matched on the description cell)
+      const sectionRe = /^(TOTALS?|NON-CHARGEABLES?|CHARGEABLES?|DESCRIPTION|ITEM|RECON|ADDITIONAL)\b/i;
+      // `tr` traversal is recursive and the table nests an additional-images block
+      // and the recon-charges block — strip those so only real condition items remain.
+      const imageRowRe = /Picture#|Overall Picture/i;   // additional-images rows
+      const dateRowRe = /^\d{1,2}\/\d{1,2}\/\d{2,4}/;    // recon-charge rows (start with a date)
+      const found = [];
+
+      chargesTable.querySelectorAll('tr').forEach(row => {
+        // Real line items: left-aligned data cells = [Desc, Condition, Severity, Suggested Repair].
+        // Header rows use mainfontbold/mainfontheading and never match `td.mainfont`.
+        const dataCells = Array.from(row.querySelectorAll('td.mainfont[align="left"]'))
+          .map(td => (td.textContent || '').replace(/ /g, ' ').replace(/\s+/g, ' ').trim());
+
+        if (dataCells.length < 2) return; // needs at least Description + Condition
+        const [description, condition = '', severity = '', repair = ''] = dataCells;
+        if (!description || sectionRe.test(description)) return;
+        if (imageRowRe.test(description) || imageRowRe.test(condition)) return; // additional images
+        if (dateRowRe.test(description)) return;                                // recon-charge rows
+
+        // Cost is the right-aligned mainfont cell (last one in the row, e.g. "$.00")
+        const rightCells = Array.from(row.querySelectorAll('td.mainfont[align="right"]'))
+          .map(td => (td.textContent || '').replace(/ /g, ' ').trim());
+        const cost = rightCells.length ? rightCells[rightCells.length - 1] : '';
+
+        let damageStr = description;
+        if (condition) damageStr += `: ${condition}`;
+        if (severity && severity !== '--') damageStr += ` (${severity})`;
+        if (repair && repair !== '--') damageStr += ` — ${repair}`;
+        if (cost && cost !== '$.00' && cost !== '.00') damageStr += ` [${cost}]`;
+
+        if (!found.includes(damageStr)) found.push(damageStr);
+      });
+
+      // Authoritative for Manheim: a charges table is the ground truth. Even when
+      // it has zero line items (genuinely clean car), mark it handled so the
+      // garbage keyword fallback can't manufacture phantom damages.
+      data.damages = found;
+      manheimHandled = true;
+      console.log(`scrapePage: Manheim parser captured ${found.length} damage line item(s)`);
+    }
+  } catch (e) {
+    console.error('scrapePage: Manheim charges parser error:', e);
+  }
+
+  // Extract damages from CONDITION DETAILS table (OVE format)
+  if (!manheimHandled) try {
     console.log('scrapePage: Extracting condition details...');
 
     let foundStructured = false;
@@ -1539,7 +1601,7 @@ async function scrapePage() {
   }
 
   // Extract damages from page
-  try {
+  if (!manheimHandled) try {
     console.log('scrapePage: Extracting damages...');
     
     // Look for DAMAGES section in the page
