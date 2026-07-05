@@ -5,6 +5,14 @@ import { supabase, selectAll } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import VinSearchBar from '../components/VinSearchBar'
 
+// A Frazer-Z car needs dispatch only until we know where it physically is. Once
+// it's tracked at ANY real location (in transit, a shop, an auction, …) it's
+// been handled. Only null / "unknown" counts as un-located. Mirrors the same
+// helper in Inventory.jsx so the dashboard tile and the Needs Dispatch list agree.
+function hasBeenLocated(physLoc) {
+  return !!physLoc && physLoc !== 'unknown'
+}
+
 export default function Dashboard() {
   const { user, profile, signOut } = useAuth()
   const [stats, setStats] = useState({
@@ -55,7 +63,7 @@ export default function Dashboard() {
         if (days == null) missing += 1
         else if (days >= 21) stuck += 1
         const cost = costMap.get(r.stock_number) || {}
-        if (cost.location_code === 'Z' && loc.physical_location !== 'in_transit') needsDispatch += 1
+        if (cost.location_code === 'Z' && !hasBeenLocated(loc.physical_location)) needsDispatch += 1
       }
 
       const num = (v) => Number(String(v || 0).replace(/[^0-9.-]/g, '')) || 0
