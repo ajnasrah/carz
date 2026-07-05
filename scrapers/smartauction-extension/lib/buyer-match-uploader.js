@@ -114,6 +114,23 @@
     return ok;
   }
 
+  // Fire the ghl-lead-sync edge function — pushes never-contacted buyers to GHL.
+  // Best-effort: never throws, returns a short summary string for the log.
+  async function triggerGhlSync() {
+    try {
+      const res = await fetch(`${cfg.supabaseUrl}/functions/v1/ghl-lead-sync`, {
+        method: 'POST',
+        headers: headers(),
+        body: '{}',
+      });
+      const out = await res.json().catch(() => ({}));
+      if (res.ok && out.ok) return `GHL: ${out.pushed} new lead(s) pushed of ${out.candidates}${out.failed ? `, ${out.failed} failed` : ''}`;
+      return `GHL sync failed: ${out.error || res.status}`;
+    } catch (e) {
+      return `GHL sync failed: ${e.message}`;
+    }
+  }
+
   async function clearTable(table) {
     // PostgREST refuses an unfiltered DELETE; `vin=like.*` matches every non-null row.
     const res = await fetch(`${cfg.supabaseUrl}/rest/v1/${table}?vin=like.*`, {
@@ -160,6 +177,11 @@
           const n = await upsert('sa_sold_sales', rows, 'vin');
           setStatus(statusId, `✓ ${n} sold (deduped from ${rows.length})`, 'loaded');
           log(`Sold: upserted ${n} unique VINs from ${rows.length} rows`, 'ok');
+          // New sold rows carry buyer contacts → push never-contacted buyers to GHL.
+          setStatus(statusId, 'Syncing GHL…');
+          const gh = await triggerGhlSync();
+          setStatus(statusId, `✓ ${n} sold · ${gh}`, 'loaded');
+          log(gh, gh.startsWith('GHL sync failed') ? 'err' : 'ok');
         }
       } catch (e) {
         setStatus(statusId, '✗ failed', 'error');

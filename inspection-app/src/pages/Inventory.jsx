@@ -1144,6 +1144,7 @@ export default function Inventory() {
               const loc = locMap.get(r.stock_number) || {};
               
               const cost = toInt(c.total_cost);
+              const added = toInt(c.added_costs);
               const sl = STALENESS_STYLES[staleness(r.effective_days_since)];
               const physLoc = loc.physical_location;
               const locCode = c.location_code;
@@ -1286,6 +1287,11 @@ export default function Inventory() {
                       <p className="text-sm font-bold text-emerald-400">
                         {toMoney(cost)}
                       </p>
+                      {added > 0 && (
+                        <p className="text-[10px] font-semibold text-amber-400/90">
+                          +{toMoney(added)} add
+                        </p>
+                      )}
                       {r.vehicle_color && (
                         <p className="text-[10px] text-slate-500 uppercase">
                           {r.vehicle_color}

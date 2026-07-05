@@ -5,6 +5,7 @@ import {
   parseCSV, mapActiveRow, mapSoldRow, fetchActiveCars, fetchSoldSales,
   saveActive, saveSold, saveRecommendations,
 } from '../services/buyerMatchData'
+import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 const CONF = {
@@ -23,6 +24,7 @@ export default function BuyerMatch() {
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState(null)
   const [copied, setCopied] = useState('')
+  const [ghl, setGhl] = useState('')
 
   useEffect(() => { load() }, [])
 
@@ -58,6 +60,10 @@ export default function BuyerMatch() {
         setSold(nextSold)
         setBusy('Saving sold history…')
         await saveSold(rows).catch(() => {})
+        // New sold rows carry buyer contacts → push any never-contacted buyers to GHL.
+        setBusy('Syncing new leads to GHL…')
+        const r = await triggerGhlSync()
+        setGhl(r.ok ? `GHL: ${r.pushed} new lead${r.pushed === 1 ? '' : 's'} pushed${r.failed ? `, ${r.failed} failed` : ''}` : `GHL sync failed: ${r.error}`)
       }
       // Cache the computed picks so they're queryable (extension / future marketplace surface).
       if (nextActive.length && nextSold.length) {
@@ -65,6 +71,23 @@ export default function BuyerMatch() {
       }
     } catch (e) { setErr(e.message || String(e)) }
     finally { setBusy('') }
+  }
+
+  async function onSeedGhl(file) {
+    if (!file) return
+    setBusy('Seeding existing GHL opportunities…'); setErr(''); setGhl('')
+    try {
+      const { seeded, skipped } = await seedGhlBuyers(await file.text())
+      setGhl(`Seeded ${seeded} existing GHL contact${seeded === 1 ? '' : 's'} (skipped ${skipped} with no phone/email/name).`)
+    } catch (e) { setErr(e.message || String(e)) }
+    finally { setBusy('') }
+  }
+
+  async function syncNow() {
+    setBusy('Syncing new leads to GHL…'); setGhl('')
+    const r = await triggerGhlSync()
+    setGhl(r.ok ? `GHL: ${r.pushed} new lead${r.pushed === 1 ? '' : 's'} pushed of ${r.candidates} candidate${r.candidates === 1 ? '' : 's'}${r.failed ? `, ${r.failed} failed` : ''}` : `GHL sync failed: ${r.error}`)
+    setBusy('')
   }
 
   const results = useMemo(() => {
@@ -125,11 +148,23 @@ export default function BuyerMatch() {
 
       {err && <div className="mb-3 p-2 rounded bg-red-500/15 text-red-300 text-sm border border-red-500/30">{err}</div>}
       {busy && <div className="mb-3 p-2 rounded bg-emerald-500/15 text-emerald-300 text-sm">{busy}</div>}
+      {ghl && <div className="mb-3 p-2 rounded bg-sky-500/15 text-sky-300 text-sm border border-sky-500/30">{ghl}</div>}
 
       {/* Upload zone */}
-      <div className="grid grid-cols-2 gap-2 mb-4">
+      <div className="grid grid-cols-2 gap-2 mb-3">
         <UploadBox label="Active list" sub="InventoryResults.csv" onPick={(f) => onFile('active', f)} done={active.length > 0} />
         <UploadBox label="Sold list" sub="Sold export" onPick={(f) => onFile('sold', f)} done={sold.length > 0} />
+      </div>
+
+      {/* GHL lead sync */}
+      <div className="flex items-center gap-2 mb-4 text-xs">
+        <label className="flex items-center gap-1.5 px-2 py-1.5 rounded border border-slate-600 bg-slate-800/40 text-slate-300 cursor-pointer hover:border-sky-500/50">
+          <Upload size={13} /> Seed GHL opportunities
+          <input type="file" accept=".csv" className="hidden" onChange={(e) => onSeedGhl(e.target.files?.[0])} />
+        </label>
+        <button onClick={syncNow} className="flex items-center gap-1.5 px-2 py-1.5 rounded border border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20">
+          <RefreshCw size={13} /> Sync new leads to GHL
+        </button>
       </div>
 
       {needData ? (
