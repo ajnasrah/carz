@@ -27,6 +27,17 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'summit_tire', label: 'Summit Tire' },
     { value: 'tri_state', label: 'Tri State' },
     { value: 'city_auto', label: 'City Auto' },
+    { value: 'in_transit', label: 'In Transit' },
+    // Denver + West Coast expansion
+    { value: 'otto_body', label: 'Otto Body Shop' },
+    { value: 'manheim_denver', label: 'Manheim Denver' },
+    { value: 'daa_rockies', label: 'DAA Rockies' },
+    { value: 'manheim_sf', label: 'Manheim San Francisco' },
+    { value: 'manheim_riverside', label: 'Manheim Riverside' },
+    { value: 'manheim_little_rock', label: 'Manheim Little Rock' },
+    { value: 'loveland', label: 'Loveland Auto Auction' },
+    { value: 'marc_pdr', label: 'Marc (PDR)' },
+    { value: 'emich_kia', label: 'Emich Kia' },
     { value: '__other__', label: 'Custom Location' },
   ];
 

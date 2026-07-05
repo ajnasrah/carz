@@ -2323,7 +2323,16 @@
             // Auction locations
             if (v.physical_location === 'uax') locLabel = 'UAX';
             else if (v.physical_location === 'daa') locLabel = 'DAA';
+            else if (v.physical_location === 'daa_rockies') locLabel = 'DAA Rockies';
             else if (v.physical_location === 'adesa') locLabel = 'ADESA';
+            else if (v.physical_location === 'manheim_denver') locLabel = 'Manheim Denver';
+            else if (v.physical_location === 'manheim_sf') locLabel = 'Manheim San Francisco';
+            else if (v.physical_location === 'manheim_riverside') locLabel = 'Manheim Riverside';
+            else if (v.physical_location === 'manheim_little_rock') locLabel = 'Manheim Little Rock';
+            else if (v.physical_location === 'loveland') locLabel = 'Loveland Auto Auction';
+            else if (v.physical_location === 'otto_body') locLabel = 'Otto Body Shop';
+            else if (v.physical_location === 'marc_pdr') locLabel = 'Marc (PDR)';
+            else if (v.physical_location === 'emich_kia') locLabel = 'Emich Kia';
             else if (v.physical_location === 'in_transit') locLabel = 'In Transit';
             else if (v.physical_location === 'mechanic') locLabel = 'Mechanic';
             else if (v.physical_location === 'body_shop') locLabel = 'Jorge';
@@ -3211,6 +3220,23 @@
     const q = text.toLowerCase().trim();
     if (!q) return null;
 
+    // Verbatim mode: "panel - damage". A SPACED " - " means you're dictating the
+    // two SA fields word-for-word — everything BEFORE the dash is the LOCATION,
+    // everything AFTER is the DESCRIPTION. No keyword mapping, no type
+    // inference, no severity stripping: what you type is what SA gets. The dash
+    // must be spaced on both sides so hyphenated words ("Left-Front",
+    // "sub-standard") aren't split. Only the FIRST " - " splits; any later dash
+    // stays in the description. `verbatim` tells the filler to skip DamageMapper.
+    const dashIdx = text.indexOf(' - ');
+    if (dashIdx !== -1) {
+      return {
+        panel: text.slice(0, dashIdx).trim(),
+        type: '',
+        description: text.slice(dashIdx + 3).trim(),
+        verbatim: true,
+      };
+    }
+
     // Longest-keyword-wins scan so "front bumper" beats "bumper".
     let panel = '', panelLen = 0, panelKey = '';
     
@@ -3328,15 +3354,19 @@
       .trim();
   }
 
-  function addDamage({ panel, type, description }) {
+  function addDamage({ panel, type, description, verbatim }) {
     const clean = {
       panel: panel || '',
       type: type || '',
       description: description || '',
+      verbatim: !!verbatim,
       chargeable: 'No',
       estimatedCost: 0,
       photos: [],
-      category: INTERIOR_SA_PANELS.has(panel) ? 'Interior' : 'Exterior',
+      // Verbatim rows carry a free-text panel that won't exact-match the
+      // interior panel set, so leave category blank and let the filler's
+      // keyword check decide Interior/Exterior from the panel words.
+      category: verbatim ? '' : (INTERIOR_SA_PANELS.has(panel) ? 'Interior' : 'Exterior'),
     };
     damages.push(clean);
     renderDamages();
@@ -4235,8 +4265,12 @@
 
     const allPhotos = [...exteriorPhotos, ...damagePhotos];
 
-    // Filter out empty damage rows before sending to auto-filler
-    const filledDamages = damages.filter(d => (d.panel || '').trim() || (d.type || '').trim());
+    // Filter out empty damage rows before sending to auto-filler. Verbatim rows
+    // always have an empty type, so also keep any row that carries a
+    // description — otherwise a "- deep scratch" (damage only, no panel) row
+    // would be silently dropped here.
+    const filledDamages = damages.filter(d =>
+      (d.panel || '').trim() || (d.type || '').trim() || (d.description || '').trim());
 
     return {
       vin6: vin6Input.value.trim(),

@@ -1266,6 +1266,126 @@
     renderAuctionRunListPanel(source, [...keepStocks], uploadNotes, soldAtAuction, locUpdatedByStock);
   }
 
+  // Manheim auction inventory export (Vehicles_YYYYMMDD.csv). ONE file lists
+  // every Manheim vehicle — online-only listings AND cars physically on a
+  // Manheim lot — told apart by the first column, AUCTION:
+  //   "Offsite"                → listed online, NOT physically at Manheim → skip
+  //   "Manheim Denver" / "Manheim San Francisco" / "Manheim Riverside" / …
+  //                            → physically at that lot
+  // We ONLY set a physical location for the on-lot cars (per-row, from AUCTION);
+  // Offsite rows are left alone so a car listed online keeps its real location.
+  // physical_source is 'manheim' for every lot, so one daily upload re-marks the
+  // on-lot fleet and clears cars that have left all Manheim lots.
+  const MANHEIM_LOT_CODES = {
+    'manheim denver': 'manheim_denver',
+    'manheim san francisco bay': 'manheim_sf',   // exact string in the export
+    'manheim san francisco': 'manheim_sf',
+    'manheim riverside': 'manheim_riverside',
+    'manheim little rock': 'manheim_little_rock',
+  };
+  function manheimLotCode(auction) {
+    const a = (auction || '').trim().toLowerCase();
+    if (!a || a === 'offsite') return null;          // online listing — not on a lot
+    if (MANHEIM_LOT_CODES[a]) return MANHEIM_LOT_CODES[a];
+    // A physical Manheim lot we haven't hard-coded yet still routes correctly
+    // ("Manheim Nashville" → manheim_nashville) instead of being dropped.
+    if (a.startsWith('manheim ')) {
+      return 'manheim_' + a.slice(8).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    }
+    return null;                                      // non-Manheim / unknown — skip
+  }
+
+  async function handleManheimAuction(file) {
+    const summaryEl = document.getElementById('luSummaryBanner');
+    const panelEl = document.getElementById('luMatchedPanel');
+    if (summaryEl) summaryEl.innerHTML = '';
+    if (panelEl) panelEl.innerHTML = '';
+
+    const text = await file.text();
+    const rows = parseCSV(text);
+    config.log(`Parsed ${rows.length} Manheim rows`);
+
+    // Keep ONLY cars physically at a Manheim lot; drop Offsite/online listings
+    // BEFORE matching so we never touch a car that's just listed online.
+    const lotRows = [];
+    const lotTally = {};
+    for (const r of rows) {
+      const code = manheimLotCode(r.AUCTION);
+      if (!code) continue;
+      lotRows.push({ row: r, code });
+      lotTally[code] = (lotTally[code] || 0) + 1;
+    }
+    const offsiteSkipped = rows.length - lotRows.length;
+    config.log(`${lotRows.length} physically at a Manheim lot · skipped ${offsiteSkipped} Offsite/online`);
+
+    const vins = lotRows.map(({ row }) => (row.VIN || row.Vin || '').toUpperCase()).filter(Boolean);
+    const { byVin, byLast6, last6Conflicts } = await fetchInventoryStocksForVins(vins);
+    config.log(`Matched ${byVin.size} full VINs against inventory`);
+    if (last6Conflicts.size > 0) config.log(`⚠️ ${last6Conflicts.size} last-6 VINs have multiple matches`, 'warn');
+
+    const now = new Date().toISOString();
+    // Pre-resolve stocks so we can pull existing rows to preserve timestamps.
+    const candidateStocks = [];
+    for (const { row } of lotRows) {
+      const vin = (row.VIN || row.Vin || '').toUpperCase();
+      const stock = vin ? (byVin.get(vin) || byLast6.get(last6(vin))) : null;
+      if (stock) candidateStocks.push(stock);
+    }
+    const existingByStock = await fetchExistingLocationRows(candidateStocks);
+
+    const upserts = [];
+    const keepStocks = new Set();
+    let matched = 0, skipped = 0, preserved = 0;
+    for (const { row, code } of lotRows) {
+      const vin = (row.VIN || row.Vin || '').toUpperCase();
+      if (!vin) { skipped++; continue; }
+      let stock = byVin.get(vin);
+      if (!stock) {
+        const l6 = last6(vin);
+        stock = byLast6.get(l6);
+        if (stock && last6Conflicts.has(l6)) {
+          config.log(`⚠️ Multiple vehicles match last-6 ${l6}. Using stock ${stock} for VIN ${vin}`, 'warn');
+        }
+      }
+      if (!stock) { skipped++; continue; }   // not our car — the auction lists everyone's
+      matched++;
+      keepStocks.add(stock);
+      // Preserve the timestamp only when the car is already at THIS Manheim lot,
+      // so "days at Manheim" staleness survives re-uploads but a lot-to-lot move
+      // (Denver → Riverside) resets the clock.
+      const existing = existingByStock.get(stock);
+      const sameSpot = existing && existing.physical_source === 'manheim'
+        && existing.physical_location === code && existing.location_updated_at;
+      if (sameSpot) preserved++;
+      upserts.push({
+        stock_number: stock,
+        vin,
+        physical_location: code,
+        physical_source: 'manheim',
+        location_updated_at: sameSpot ? existing.location_updated_at : now,
+        notes: {
+          auction: row.AUCTION || null,
+          lane: row['LANE NUMBER'] || null,
+          run_number: row['RUN NUMBER'] || null,
+          lot_location: row['LOT LOCATION'] || null,
+        },
+        updated_at: now,
+      });
+    }
+    if (preserved > 0) config.log(`Preserved ${preserved} existing timestamps (cars already at same Manheim lot)`);
+
+    const { ok, err } = await upsertLocations(upserts);
+    const cleared = await clearStaleForSource('manheim', keepStocks);
+    const tallyStr = Object.entries(lotTally).map(([c, n]) => `${c}:${n}`).join(', ');
+    config.log(`Manheim: matched ${matched} of ${lotRows.length} on-lot (skipped ${skipped} non-inventory, ${offsiteSkipped} Offsite), upserted ${ok}, errors ${err}, cleared ${cleared} stale`, 'ok');
+    if (tallyStr) config.log(`On-lot by auction — ${tallyStr}`);
+
+    showSummary('manheim', matched, lotRows.length, ok, err, cleared);
+    const uploadNotes = upserts.map((u) => ({ stock_number: u.stock_number, lane: u.notes?.lane, lot: u.notes?.lot_location, sale_date: null, grade: null }));
+    const locUpdatedByStock = new Map(upserts.map((u) => [u.stock_number, u.location_updated_at]));
+    renderAuctionRunListPanel('manheim', [...keepStocks], uploadNotes, [], locUpdatedByStock);
+  }
+
   // ADESA simulcast run list. Different format — has Lane / Run and
   // Location columns; VIN column is upper-case 'VIN'.
   async function handleAdesa(file) {
@@ -2080,10 +2200,12 @@
 
     bind('luSaInput', 'luSaStatus', handleSmartAuction);
     bind('luManheimInput', 'luManheimStatus', handleManheimOve);
+    bind('luManheimAuctionInput', 'luManheimAuctionStatus', handleManheimAuction);
     bind('luUaxInput', 'luUaxStatus', (f) => handleEdgePipeline(f, 'uax'));
     bind('luUaxPostSaleInput', 'luUaxPostSaleStatus', handleUaxPostSale);
     bind('luDaaInput', 'luDaaStatus', (f) => handleEdgePipeline(f, 'daa'));
     bind('luDaaPostSaleInput', 'luDaaPostSaleStatus', handleDaaPostSale);
+    bind('luDaaRockiesInput', 'luDaaRockiesStatus', (f) => handleEdgePipeline(f, 'daa_rockies'));
     bind('luAdesaInput', 'luAdesaStatus', handleAdesa);
     bind('luDispatchInput', 'luDispatchStatus', handleSuperDispatch);
   }

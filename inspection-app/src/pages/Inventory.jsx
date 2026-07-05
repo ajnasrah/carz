@@ -244,6 +244,16 @@ export default function Inventory() {
     jim_keras_nissan: "Jim Keras Nissan",
     jim_keras_chevy_service: "Jim Keras Chevy Svc",
     muffler_cs: "Muffler C&S",
+    // Denver + West Coast expansion
+    otto_body: "Otto Body Shop",
+    manheim_denver: "Manheim Denver",
+    daa_rockies: "DAA Rockies",
+    manheim_sf: "Manheim San Francisco",
+    manheim_riverside: "Manheim Riverside",
+    manheim_little_rock: "Manheim Little Rock",
+    loveland: "Loveland Auto Auction",
+    marc_pdr: "Marc (PDR)",
+    emich_kia: "Emich Kia",
   };
   // Format any location value for display: use the label if we have one,
   // otherwise prettify the raw slug (snake_case → Title Case) so chat entries
@@ -277,6 +287,16 @@ export default function Inventory() {
     muffler_cs: "bg-fuchsia-500",
     jim_keras_nissan: "bg-violet-500",
     summit_tire: "bg-amber-500",
+    // Denver + West Coast expansion
+    otto_body: "bg-pink-500",
+    manheim_denver: "bg-red-500",
+    daa_rockies: "bg-blue-600",
+    manheim_sf: "bg-red-600",
+    manheim_riverside: "bg-red-400",
+    manheim_little_rock: "bg-red-700",
+    loveland: "bg-sky-600",
+    marc_pdr: "bg-fuchsia-600",
+    emich_kia: "bg-violet-600",
   };
 
   // Frazer location_code → human-readable name

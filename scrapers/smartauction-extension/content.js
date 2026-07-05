@@ -585,8 +585,12 @@ async function fillDamagesAndTires(data) {
              'seat belt', 'gauge', 'instrument', 'warning light'].some(p => panelLower.includes(p));
         setSelectValue(addTypeEl, isInterior ? 'Interior' : 'Exterior');
 
-        // Map the damage once using DamageMapper
-        const mappedDamage = DamageMapper.mapForSA(dmg);
+        // Map the damage once using DamageMapper. Verbatim rows (typed as
+        // "panel - damage") bypass it entirely — panel and description go to SA
+        // word-for-word, no canonicalization, no type prefix.
+        const mappedDamage = dmg.verbatim
+          ? { panel: dmg.panel || '', type: '', description: dmg.description || '' }
+          : DamageMapper.mapForSA(dmg);
         
         const locEl = document.getElementById('add-damage-location');
         if (locEl) {
@@ -752,8 +756,12 @@ async function fillFromInspection(payload) {
         const typeEl = document.getElementById('add-damage-type');
         if (typeEl) setSelectValue(typeEl, dmg.category === 'Interior' ? 'Interior' : 'Exterior');
 
-        // Map the damage once using DamageMapper
-        const mappedDamage = DamageMapper.mapForSA(dmg);
+        // Map the damage once using DamageMapper. Verbatim rows (typed as
+        // "panel - damage") bypass it entirely — panel and description go to SA
+        // word-for-word, no canonicalization, no type prefix.
+        const mappedDamage = dmg.verbatim
+          ? { panel: dmg.panel || '', type: '', description: dmg.description || '' }
+          : DamageMapper.mapForSA(dmg);
         
         const locEl = document.getElementById('add-damage-location');
         if (locEl) {

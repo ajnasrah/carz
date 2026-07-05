@@ -17,11 +17,20 @@ function normalizeVin6(raw) {
   return v.length >= 6 ? v.slice(-6) : v.padStart(6, '0');
 }
 
+// Pull VIN-ish tokens out of free text. We accept a 5–7 char stock/last-6 OR a
+// 15–17 char full VIN pasted whole (the team increasingly drops the full VIN,
+// e.g. from a run list). A bare `{5,7}` never matched a 17-char run — the word
+// boundaries can't land inside it — so full VINs were silently dropped. We skip
+// the 8–14 char middle band so phone/order numbers don't masquerade as VINs.
+function vinCandidates(text) {
+  const tokens = text.toUpperCase().match(/\b[A-Z0-9]{5,17}\b/g) || [];
+  return tokens.filter((t) => t.length <= 7 || t.length >= 15);
+}
+
 // Find the first plausible VIN-last-6 anywhere in free text.
 export function extractVin6(text) {
   if (!text) return null;
-  const tokens = text.toUpperCase().match(/\b[A-Z0-9]{5,7}\b/g) || [];
-  for (const cand of tokens) {
+  for (const cand of vinCandidates(text)) {
     if (!/\d/.test(cand)) continue;
     if (EXCLUDE_WORDS.has(cand)) continue;
     return normalizeVin6(cand);
@@ -32,9 +41,8 @@ export function extractVin6(text) {
 // Extract EVERY plausible VIN-last-6 (one message, many cars).
 export function extractAllVin6(text) {
   if (!text) return [];
-  const tokens = text.toUpperCase().match(/\b[A-Z0-9]{5,7}\b/g) || [];
   const out = [], seen = new Set();
-  for (const cand of tokens) {
+  for (const cand of vinCandidates(text)) {
     if (!/\d/.test(cand) || EXCLUDE_WORDS.has(cand)) continue;
     const v = normalizeVin6(cand);
     if (!seen.has(v)) { seen.add(v); out.push(v); }
