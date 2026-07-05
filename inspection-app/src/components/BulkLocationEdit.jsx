@@ -29,7 +29,7 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'city_auto', label: 'City Auto' },
     { value: 'in_transit', label: 'In Transit' },
     // Denver + West Coast expansion
-    { value: 'otto_body', label: 'Otto Body Shop' },
+    { value: 'otta_body', label: 'Otta Body Shop' },
     { value: 'manheim_denver', label: 'Manheim Denver' },
     { value: 'daa_rockies', label: 'DAA Rockies' },
     { value: 'manheim_sf', label: 'Manheim San Francisco' },

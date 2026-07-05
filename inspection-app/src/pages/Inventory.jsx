@@ -22,6 +22,21 @@ import {
 import VehicleHistoryModal from "../components/VehicleHistoryModal";
 import BulkLocationEdit from "../components/BulkLocationEdit";
 
+// A car physically at one of these "settled" out-of-town destinations has
+// already been moved — it should NOT clutter Needs Dispatch or the Stale aging
+// bucket. It still surfaces in Stuck (>=21d) and Never Tracked, which are
+// location-agnostic, so a genuinely forgotten car still shows up. Covers every
+// Manheim lot (manheim_*) plus the Denver auctions/shops.
+const SETTLED_TRANSPORT_LOCS = new Set([
+  "otta_body",
+  "daa_rockies",
+  "marc_pdr",
+]);
+function isSettledTransportLoc(physLoc) {
+  if (!physLoc) return false;
+  return physLoc.startsWith("manheim_") || SETTLED_TRANSPORT_LOCS.has(physLoc);
+}
+
 export default function Inventory() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -245,7 +260,7 @@ export default function Inventory() {
     jim_keras_chevy_service: "Jim Keras Chevy Svc",
     muffler_cs: "Muffler C&S",
     // Denver + West Coast expansion
-    otto_body: "Otto Body Shop",
+    otta_body: "Otta Body Shop",
     manheim_denver: "Manheim Denver",
     daa_rockies: "DAA Rockies",
     manheim_sf: "Manheim San Francisco",
@@ -288,7 +303,7 @@ export default function Inventory() {
     jim_keras_nissan: "bg-violet-500",
     summit_tire: "bg-amber-500",
     // Denver + West Coast expansion
-    otto_body: "bg-pink-500",
+    otta_body: "bg-pink-500",
     manheim_denver: "bg-red-500",
     daa_rockies: "bg-blue-600",
     manheim_sf: "bg-red-600",
@@ -321,20 +336,27 @@ export default function Inventory() {
     
     if (sectionFilter) {
       if (sectionFilter === "__stale__") {
+        // Settled out-of-town cars are expected to sit — they only count as a
+        // problem once Stuck (>=21d) or Never Tracked, not at the 7d stale mark.
         result = result.filter(
-          (r) => r.effective_days_since == null || r.effective_days_since >= 7,
+          (r) =>
+            (r.effective_days_since == null || r.effective_days_since >= 7) &&
+            !isSettledTransportLoc(locMap.get(r.stock_number)?.physical_location),
         );
       } else if (sectionFilter === "__stuck21__") {
         result = result.filter(
           (r) => r.effective_days_since != null && r.effective_days_since >= 21,
         );
       } else if (sectionFilter === "__needs_dispatch__") {
-        // Frazer Z (Transport) but no active Super Dispatch record
+        // Frazer Z (Transport) but no active Super Dispatch record — and not
+        // already physically at an out-of-town auction/shop (those are handled).
         result = result.filter((r) => {
           const c = costMap.get(r.stock_number) || {};
           const loc = locMap.get(r.stock_number) || {};
           return (
-            c.location_code === "Z" && loc.physical_location !== "in_transit"
+            c.location_code === "Z" &&
+            loc.physical_location !== "in_transit" &&
+            !isSettledTransportLoc(loc.physical_location)
           );
         });
       } else if (sectionFilter === "__front_lot_aging__") {
@@ -378,7 +400,8 @@ export default function Inventory() {
           return (
             c.location_code === "Z" &&
             c.location_code !== "X" &&
-            loc.physical_location !== "in_transit"
+            loc.physical_location !== "in_transit" &&
+            !isSettledTransportLoc(loc.physical_location)
           );
         });
       } else if (
@@ -811,7 +834,9 @@ export default function Inventory() {
           const c = costMap.get(r.stock_number) || {};
           const loc = locMap.get(r.stock_number) || {};
           return (
-            c.location_code === "Z" && loc.physical_location !== "in_transit"
+            c.location_code === "Z" &&
+            loc.physical_location !== "in_transit" &&
+            !isSettledTransportLoc(loc.physical_location)
           );
         }).length;
         const frontLotAgingCount = rows.filter((r) => {

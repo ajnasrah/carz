@@ -2330,7 +2330,7 @@
             else if (v.physical_location === 'manheim_riverside') locLabel = 'Manheim Riverside';
             else if (v.physical_location === 'manheim_little_rock') locLabel = 'Manheim Little Rock';
             else if (v.physical_location === 'loveland') locLabel = 'Loveland Auto Auction';
-            else if (v.physical_location === 'otto_body') locLabel = 'Otto Body Shop';
+            else if (v.physical_location === 'otta_body') locLabel = 'Otta Body Shop';
             else if (v.physical_location === 'marc_pdr') locLabel = 'Marc (PDR)';
             else if (v.physical_location === 'emich_kia') locLabel = 'Emich Kia';
             else if (v.physical_location === 'in_transit') locLabel = 'In Transit';
