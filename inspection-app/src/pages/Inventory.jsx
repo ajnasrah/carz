@@ -267,7 +267,7 @@ export default function Inventory() {
     manheim_riverside: "Manheim Riverside",
     manheim_little_rock: "Manheim Little Rock",
     loveland: "Loveland Auto Auction",
-    marc_pdr: "Marc (PDR)",
+    marc_pdr: "Marc Dent Doctor (Denver)",
     emich_kia: "Emich Kia",
   };
   // Format any location value for display: use the label if we have one,

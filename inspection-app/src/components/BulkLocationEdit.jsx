@@ -36,7 +36,7 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'manheim_riverside', label: 'Manheim Riverside' },
     { value: 'manheim_little_rock', label: 'Manheim Little Rock' },
     { value: 'loveland', label: 'Loveland Auto Auction' },
-    { value: 'marc_pdr', label: 'Marc (PDR)' },
+    { value: 'marc_pdr', label: 'Marc Dent Doctor (Denver)' },
     { value: 'emich_kia', label: 'Emich Kia' },
     { value: '__other__', label: 'Custom Location' },
   ];
