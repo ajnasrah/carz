@@ -66,6 +66,8 @@ export default function Inventory() {
   const [sections, setSections] = useState([]);
   const [buyerFilter, setBuyerFilter] = useState(""); // filter by buyer
   const [buyers, setBuyers] = useState([]); // unique buyers list
+  const [vendorFilter, setVendorFilter] = useState(""); // filter by vendor/auction
+  const [vendors, setVendors] = useState([]); // unique vendors/auctions list
   const [editingRow, setEditingRow] = useState(null); // stock of row being edited
   const [editLocation, setEditLocation] = useState("");
   const [editCustom, setEditCustom] = useState("");
@@ -209,6 +211,9 @@ export default function Inventory() {
     // Extract unique buyers for filter dropdown
     const uniqueBuyers = [...new Set((costRes.data || []).map(r => r.buyer).filter(Boolean))].sort();
     setBuyers(uniqueBuyers);
+    // Extract unique vendors/auctions for filter dropdown
+    const uniqueVendors = [...new Set((costRes.data || []).map(r => r.vendor).filter(Boolean))].sort();
+    setVendors(uniqueVendors);
     setLoading(false);
   }
 
@@ -342,7 +347,16 @@ export default function Inventory() {
         return cost && cost.buyer === buyerFilter;
       });
     }
-    
+
+    // Vendor/auction filter — composes with the section filter (Stuck, Needs
+    // Dispatch, etc.) so you can narrow those lists to one vendor/auction.
+    if (vendorFilter) {
+      result = result.filter(r => {
+        const cost = costMap.get(r.stock_number);
+        return cost && cost.vendor === vendorFilter;
+      });
+    }
+
     if (sectionFilter) {
       if (sectionFilter === "__stale__") {
         // Anything sitting in one spot 21+ days is stale — no exceptions, any
@@ -461,7 +475,7 @@ export default function Inventory() {
       });
     }
     return result;
-  }, [rows, search, sectionFilter, costMap, locMap, buyerFilter]);
+  }, [rows, search, sectionFilter, costMap, locMap, buyerFilter, vendorFilter]);
 
   const totalCost = useMemo(
     () =>
@@ -1008,6 +1022,35 @@ export default function Inventory() {
             </span>
             <button
               onClick={() => setBuyerFilter("")}
+              className="text-xs text-slate-500 hover:text-white"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Vendor / Auction Filter — narrows the current view (incl. Stuck /
+          Needs Dispatch) to one vendor or auction source. */}
+      <div className="mb-3">
+        <select
+          value={vendorFilter}
+          onChange={(e) => setVendorFilter(e.target.value)}
+          className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-700 focus:border-emerald-400 focus:outline-none text-sm"
+        >
+          <option value="">All Vendors / Auctions</option>
+          {vendors.map(vendor => (
+            <option key={vendor} value={vendor}>{vendor}</option>
+          ))}
+        </select>
+        {vendorFilter && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-slate-400">Filtering by vendor:</span>
+            <span className="px-2 py-1 text-xs bg-emerald-500/20 text-emerald-400 rounded">
+              {vendorFilter}
+            </span>
+            <button
+              onClick={() => setVendorFilter("")}
               className="text-xs text-slate-500 hover:text-white"
             >
               Clear

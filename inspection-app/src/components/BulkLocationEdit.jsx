@@ -10,34 +10,39 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
   const [customLocation, setCustomLocation] = useState('');
 
   const KNOWN_LOCATIONS = [
+    // ── Memphis / lots ──
+    { value: 'front', label: 'Memphis - Front Lot' },
+    { value: 'jackson', label: 'Jackson' },
+    // ── In transit / dispatch ──
+    { value: 'in_transit', label: 'In Transit' },
+    { value: 'super_dispatch', label: 'Super Dispatch (Dispatched)' },
+    // ── Auctions ──
     { value: 'uax', label: 'UAX' },
     { value: 'daa', label: 'DAA' },
     { value: 'adesa', label: 'ADESA' },
-    { value: 'super_dispatch', label: 'Super Dispatch (Dispatched)' },
-    { value: 'in_transit', label: 'In Transit' },
+    { value: 'daa_rockies', label: 'DAA Rockies' },
+    { value: 'manheim_denver', label: 'Manheim Denver' },
+    { value: 'manheim_sf', label: 'Manheim San Francisco' },
+    { value: 'manheim_riverside', label: 'Manheim Riverside' },
+    { value: 'manheim_little_rock', label: 'Manheim Little Rock' },
+    { value: 'loveland', label: 'Loveland Auto Auction' },
+    // ── Shops / vendors ──
     { value: 'body_shop', label: 'Body Shop' },
     { value: 'mechanic_section', label: 'Mechanic' },
     { value: 'jorge', label: "Jorge's Shop" },
+    { value: 'otta_body', label: 'Otta Body Shop' },
+    { value: 'marc_pdr', label: 'Marc Dent Doctor (Denver)' },
     { value: 'muffler_cs', label: 'Muffler C&S' },
-    { value: 'jim_keras_nissan', label: 'Jim Keras Nissan' },
-    { value: 'front', label: 'Memphis - Front Lot' },
-    { value: 'jackson', label: 'Jackson' },
     { value: 'pro_auto', label: 'Pro Auto' },
     { value: 'andys_auto', label: "Andy's Auto" },
     { value: 'summit_tire', label: 'Summit Tire' },
     { value: 'tri_state', label: 'Tri State' },
     { value: 'city_auto', label: 'City Auto' },
-    { value: 'in_transit', label: 'In Transit' },
-    // Denver + West Coast expansion
-    { value: 'otta_body', label: 'Otta Body Shop' },
-    { value: 'manheim_denver', label: 'Manheim Denver' },
-    { value: 'daa_rockies', label: 'DAA Rockies' },
-    { value: 'manheim_sf', label: 'Manheim San Francisco' },
-    { value: 'manheim_riverside', label: 'Manheim Riverside' },
-    { value: 'manheim_little_rock', label: 'Manheim Little Rock' },
-    { value: 'loveland', label: 'Loveland Auto Auction' },
-    { value: 'marc_pdr', label: 'Marc Dent Doctor (Denver)' },
+    { value: 'upholstery', label: 'Upholstery' },
+    { value: 'jim_keras_nissan', label: 'Jim Keras Nissan' },
+    { value: 'jim_keras_chevy_service', label: 'Jim Keras Chevy Svc' },
     { value: 'emich_kia', label: 'Emich Kia' },
+    // ── Custom ──
     { value: '__other__', label: 'Custom Location' },
   ];
 
