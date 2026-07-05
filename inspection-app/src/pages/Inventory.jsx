@@ -345,13 +345,17 @@ export default function Inventory() {
     
     if (sectionFilter) {
       if (sectionFilter === "__stale__") {
-        // Settled out-of-town cars are expected to sit — they only count as a
-        // problem once Stuck (>=21d) or Never Tracked, not at the 7d stale mark.
-        result = result.filter(
-          (r) =>
-            (r.effective_days_since == null || r.effective_days_since >= 7) &&
-            !isSettledTransportLoc(locMap.get(r.stock_number)?.physical_location),
-        );
+        // Anything sitting in one spot 21+ days is stale — no exceptions, any
+        // location. Under 21d, the far-away auction/shop cars are expected to
+        // sit, so they don't trip the 7d mark; everything else does.
+        result = result.filter((r) => {
+          const days = r.effective_days_since;
+          if (days != null && days >= 21) return true; // 21d+ => always stale
+          if (days != null && days < 7) return false; // fresh
+          return !isSettledTransportLoc(
+            locMap.get(r.stock_number)?.physical_location,
+          );
+        });
       } else if (sectionFilter === "__stuck21__") {
         result = result.filter(
           (r) => r.effective_days_since != null && r.effective_days_since >= 21,
