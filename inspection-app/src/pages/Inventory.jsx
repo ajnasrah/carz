@@ -37,6 +37,15 @@ function isSettledTransportLoc(physLoc) {
   return physLoc.startsWith("manheim_") || SETTLED_TRANSPORT_LOCS.has(physLoc);
 }
 
+// A car "needs dispatch" only until we know where it physically is. The moment
+// it's tracked at ANY real location (in_transit, mechanic, a body shop, an
+// auction, etc.) it's been handled and drops off Needs Dispatch — it's no
+// longer a "we don't know where this Z car is" case. Only null / "unknown"
+// counts as un-located.
+function hasBeenLocated(physLoc) {
+  return !!physLoc && physLoc !== "unknown";
+}
+
 export default function Inventory() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -348,15 +357,14 @@ export default function Inventory() {
           (r) => r.effective_days_since != null && r.effective_days_since >= 21,
         );
       } else if (sectionFilter === "__needs_dispatch__") {
-        // Frazer Z (Transport) but no active Super Dispatch record — and not
-        // already physically at an out-of-town auction/shop (those are handled).
+        // Frazer Z (Transport) that we haven't physically located yet. Once a
+        // car is tracked ANYWHERE (in transit, a shop, an auction, …) it's been
+        // handled and no longer needs dispatch.
         result = result.filter((r) => {
           const c = costMap.get(r.stock_number) || {};
           const loc = locMap.get(r.stock_number) || {};
           return (
-            c.location_code === "Z" &&
-            loc.physical_location !== "in_transit" &&
-            !isSettledTransportLoc(loc.physical_location)
+            c.location_code === "Z" && !hasBeenLocated(loc.physical_location)
           );
         });
       } else if (sectionFilter === "__front_lot_aging__") {
@@ -400,8 +408,7 @@ export default function Inventory() {
           return (
             c.location_code === "Z" &&
             c.location_code !== "X" &&
-            loc.physical_location !== "in_transit" &&
-            !isSettledTransportLoc(loc.physical_location)
+            !hasBeenLocated(loc.physical_location)
           );
         });
       } else if (
@@ -834,9 +841,7 @@ export default function Inventory() {
           const c = costMap.get(r.stock_number) || {};
           const loc = locMap.get(r.stock_number) || {};
           return (
-            c.location_code === "Z" &&
-            loc.physical_location !== "in_transit" &&
-            !isSettledTransportLoc(loc.physical_location)
+            c.location_code === "Z" && !hasBeenLocated(loc.physical_location)
           );
         }).length;
         const frontLotAgingCount = rows.filter((r) => {
