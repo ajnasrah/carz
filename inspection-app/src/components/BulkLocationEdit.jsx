@@ -27,9 +27,8 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'manheim_little_rock', label: 'Manheim Little Rock' },
     { value: 'loveland', label: 'Loveland Auto Auction' },
     // ── Shops / vendors ──
-    { value: 'body_shop', label: 'Body Shop' },
+    { value: 'body_shop', label: 'Body Shop (Jorge)' },
     { value: 'mechanic_section', label: 'Mechanic' },
-    { value: 'jorge', label: "Jorge's Shop" },
     { value: 'otta_body', label: 'Otta Body Shop' },
     { value: 'marc_pdr', label: 'Marc Dent Doctor (Denver)' },
     { value: 'muffler_cs', label: 'Muffler C&S' },

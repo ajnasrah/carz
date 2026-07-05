@@ -46,6 +46,14 @@ function hasBeenLocated(physLoc) {
   return !!physLoc && physLoc !== "unknown";
 }
 
+// Jorge's Shop IS the body shop — they're one physical place. Collapse "jorge"
+// into "body_shop" so /inventory shows a single badge, Places chip, count, and
+// filter for them instead of two. Applied wherever a location row enters the
+// page's location map.
+function canonicalLoc(physLoc) {
+  return physLoc === "jorge" ? "body_shop" : physLoc;
+}
+
 export default function Inventory() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -127,7 +135,13 @@ export default function Inventory() {
     // Super Dispatch) or chat-sourced entry counts as tracking too, not just  
     // physical lot scans.
     const lm = new Map();
-    for (const r of locRes.data || []) lm.set(r.stock_number, r);
+    for (const row of locRes.data || []) {
+      const r =
+        row.physical_location === "jorge"
+          ? { ...row, physical_location: "body_shop" }
+          : row;
+      lm.set(r.stock_number, r);
+    }
     
     // Debug in production
     console.log('Vehicle locations loaded:', {
@@ -253,10 +267,10 @@ export default function Inventory() {
     adesa: "ADESA",
     in_transit: "In Transit",
     // Chat-sourced destinations (CARZ INC, Body shop, Mechanics, Seller Group)
-    body_shop: "Body Shop",
+    body_shop: "Body Shop (Jorge)",
     mechanic_section: "Mechanic",
     mechanic: "Mechanic",
-    jorge: "Jorge's Shop",
+    jorge: "Body Shop (Jorge)",
     front: "Memphis - Front Lot",
     seller_group: "Memphis - Front Lot",
     carz_inc: "Memphis - Front Lot",
@@ -562,14 +576,15 @@ export default function Inventory() {
   async function saveLocation() {
     if (!editingRow || saving) return; // Prevent multiple simultaneous saves
     
-    const finalLoc =
+    const finalLoc = canonicalLoc(
       editLocation === "__other__"
         ? editCustom
             .trim()
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "_")
             .replace(/^_+|_+$/g, "")
-        : editLocation;
+        : editLocation,
+    );
     
     // Validate location
     if (!finalLoc || finalLoc === "__other__") {
@@ -1406,17 +1421,26 @@ export default function Inventory() {
               <option value="">— pick one —</option>
               <optgroup label="Memphis">
                 <option value="front">Front Lot</option>
-                <option value="body_shop">Body Shop</option>
+                <option value="body_shop">Body Shop (Jorge)</option>
                 <option value="mechanic_section">Mechanic</option>
               </optgroup>
               <optgroup label="Jackson">
                 <option value="jackson">Jackson</option>
               </optgroup>
+              <optgroup label="Transit">
+                <option value="in_transit">In Transit</option>
+                <option value="super_dispatch">Super Dispatch</option>
+              </optgroup>
               <optgroup label="Auction">
                 <option value="uax">UAX</option>
                 <option value="daa">DAA</option>
                 <option value="adesa">ADESA</option>
-                <option value="in_transit">In Transit</option>
+                <option value="daa_rockies">DAA Rockies</option>
+                <option value="manheim_denver">Manheim Denver</option>
+                <option value="manheim_sf">Manheim San Francisco</option>
+                <option value="manheim_riverside">Manheim Riverside</option>
+                <option value="manheim_little_rock">Manheim Little Rock</option>
+                <option value="loveland">Loveland Auto Auction</option>
               </optgroup>
               <optgroup label="External Shop">
                 <option value="pro_auto">Pro Auto</option>
@@ -1424,6 +1448,8 @@ export default function Inventory() {
                 <option value="tri_state_glass">Tri State Glass</option>
                 <option value="upholstery">Upholstery</option>
                 <option value="muffler_cs">Muffler C&amp;S</option>
+                <option value="otta_body">Otta Body Shop</option>
+                <option value="marc_pdr">Marc Dent Doctor (Denver)</option>
               </optgroup>
               <optgroup label="Dealer">
                 <option value="jim_keras_nissan">Jim Keras Nissan</option>
@@ -1431,6 +1457,7 @@ export default function Inventory() {
                   Jim Keras Chevy Svc
                 </option>
                 <option value="city_auto">City Auto</option>
+                <option value="emich_kia">Emich Kia</option>
               </optgroup>
               <optgroup label="Other">
                 <option value="unknown">Unknown</option>
