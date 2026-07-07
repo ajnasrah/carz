@@ -3354,6 +3354,45 @@
       .trim();
   }
 
+  // ── Sync entered damages to Supabase so they render on the public marketplace ──
+  // Transform the extension's damage rows into the marketplace's checklist shape.
+  // Each damage carries its own `panel` label (the marketplace uses it directly),
+  // and all rows go under 'sa_'-prefixed keys so a re-sync replaces them cleanly
+  // without touching damages entered in the PWA inspection.
+  function buildDamageChecklist() {
+    const exterior = {}, interior = {};
+    let ei = 0, ii = 0;
+    for (const d of damages) {
+      const isInterior = d.category === 'Interior' || (!d.category && INTERIOR_SA_PANELS.has(d.panel));
+      const dmg = {
+        type: d.type || d.description || 'Damage',
+        size: '',
+        count: '',
+        note: (d.type && d.description) ? d.description : '',
+        photos: Array.isArray(d.photos) ? d.photos.filter((p) => p && p.url).map((p) => ({ url: p.url, path: p.path || '' })) : [],
+        panel: d.panel || (isInterior ? 'Interior' : 'Exterior'),
+      };
+      if (isInterior) interior['sa_int_' + (ii++)] = { damages: [dmg] };
+      else exterior['sa_ext_' + (ei++)] = { damages: [dmg] };
+    }
+    return { exterior, interior };
+  }
+
+  async function syncDamagesToSupabase() {
+    try {
+      const raw = ((vin6Input && vin6Input.value) || '').trim();
+      if (raw.replace(/[^A-Za-z0-9]/g, '').length < 6) return; // need at least a last-6 VIN
+      const { exterior, interior } = buildDamageChecklist();
+      await sbRpc('upsert_listing_damages', { p_vin: raw, p_exterior: exterior, p_interior: interior });
+    } catch (e) { /* best-effort — never block the UI */ }
+  }
+
+  let _damageSyncTimer = null;
+  function scheduleDamageSync() {
+    clearTimeout(_damageSyncTimer);
+    _damageSyncTimer = setTimeout(syncDamagesToSupabase, 900);
+  }
+
   function addDamage({ panel, type, description, verbatim }) {
     const clean = {
       panel: panel || '',
@@ -4303,6 +4342,8 @@
     });
     // Don't save photo base64 to storage (too large) — they need to be re-uploaded
     chrome.storage.local.set({ sessionData: data });
+    // Mirror damages to Supabase (debounced) so they show on the marketplace.
+    scheduleDamageSync();
   }
 
   function restoreSession(data) {
