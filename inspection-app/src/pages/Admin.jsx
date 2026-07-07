@@ -250,19 +250,25 @@ export default function Admin() {
         </form>
       )}
 
-      {/* Users List */}
-      <h2 className="text-lg font-bold text-white mb-3">Users ({users.filter(u => 
-        u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        u.phone?.includes(searchTerm)
+      {/* Users List — excludes pending users (they live in the Pending Approval section
+          above); showing them here would duplicate them and let an admin "Promote" a
+          not-yet-approved user straight to admin, bypassing the approval decision. */}
+      <h2 className="text-lg font-bold text-white mb-3">Users ({users.filter(u =>
+        u.approval_status !== 'pending' && (
+          u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          u.phone?.includes(searchTerm)
+        )
       ).length})</h2>
       {loading ? (
         <p className="text-slate-400">Loading...</p>
       ) : (
         <div className="space-y-2">
           {users
-            .filter(u => 
-              u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-              u.phone?.includes(searchTerm)
+            .filter(u =>
+              u.approval_status !== 'pending' && (
+                u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                u.phone?.includes(searchTerm)
+              )
             )
             .map((u) => (
             <div key={u.id} className="card flex items-center gap-3">

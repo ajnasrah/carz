@@ -277,6 +277,34 @@
     return { ok, err };
   }
 
+  // Replace the sa_active_cars snapshot (drives the marketplace Buy-Now price,
+  // "View on SmartAuction" link, and sa-only coverage). Mirrors the Buyer Match
+  // Active-List upload so one SmartAuction report keeps the marketplace current.
+  async function replaceActiveCars(rows) {
+    const byVin = new Map();
+    for (const r of rows) if (r.vin) byVin.set(r.vin, r);
+    const list = [...byVin.values()];
+    const hdr = (extra) => Object.assign({
+      apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
+      'Content-Type': 'application/json',
+    }, extra || {});
+    // Clear (PostgREST refuses an unfiltered DELETE; vin=like.* matches every row)
+    await fetch(`${config.supabaseUrl}/rest/v1/sa_active_cars?vin=like.*`, {
+      method: 'DELETE', headers: hdr({ Prefer: 'return=minimal' }),
+    });
+    let ok = 0;
+    for (let i = 0; i < list.length; i += 500) {
+      const batch = list.slice(i, i + 500);
+      const res = await fetch(`${config.supabaseUrl}/rest/v1/sa_active_cars?on_conflict=vin`, {
+        method: 'POST', headers: hdr({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+        body: JSON.stringify(batch),
+      });
+      if (res.ok) ok += batch.length;
+      else config.log(`sa_active_cars batch failed: ${(await res.text()).slice(0, 160)}`, 'warn');
+    }
+    return ok;
+  }
+
   // Fetch current vehicle_locations rows for a list of stock numbers. Used
   // to preserve `*_updated_at` timestamps when the same car is re-uploaded
   // at the same status — we only want the timestamp to reset when the
@@ -1630,6 +1658,31 @@
     upserts = [...winByStock.values()];
     const { ok, err } = await upsertLocations(upserts);
     config.log(`SmartAuction: matched ${matched} of ${rows.length} (skipped ${skipped}), sold ${soldCount}, upserted ${ok}, errors ${err}`, 'ok');
+
+    // Refresh sa_active_cars from this same report so the marketplace shows the
+    // SmartAuction link + Buy-Now price for every active car (one upload does it
+    // all — no separate Active-List upload needed). Reuses BuyerMatch's mapping.
+    try {
+      const mapA = window.BuyerMatchUploader && window.BuyerMatchUploader.mapActive;
+      if (mapA) {
+        const activeSa = [];
+        const seenVin = new Set();
+        for (const r of rows) {
+          const vin = (r.VIN || r.Vin || '').toUpperCase();
+          if (!vin || seenVin.has(vin)) continue;
+          if (r['Sale Date'] || r['Removal Date'] || r['Hold Date']) continue; // active only
+          seenVin.add(vin);
+          const rec = mapA(r);
+          if (rec.vin) activeSa.push(rec);
+        }
+        const saOk = await replaceActiveCars(activeSa);
+        config.log(`sa_active_cars: replaced with ${saOk} active cars (SA links + prices)`, 'ok');
+      } else {
+        config.log('BuyerMatch uploader not loaded — skipped sa_active_cars refresh', 'warn');
+      }
+    } catch (e) {
+      config.log(`sa_active_cars refresh failed: ${e.message}`, 'warn');
+    }
     
     // Auto-mark active vehicles as listed in the queue
     const activeVehicles = upserts.filter(u => u.sa_status === 'active');

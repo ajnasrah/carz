@@ -1,12 +1,24 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Clock, LogOut, RefreshCw } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
+import { isPrimaryAdmin } from '../services/adminSetup'
 
 export default function PendingApproval() {
   const navigate = useNavigate()
   const { profile, signOut, refreshProfile } = useAuth()
 
   const rejected = profile?.approval_status === 'rejected'
+
+  // If this user is actually cleared (approved or admin), don't strand them on the
+  // pending screen — send them into the app, which routes them correctly.
+  useEffect(() => {
+    if (profile?.approval_status === 'approved' ||
+        profile?.role === 'admin' ||
+        isPrimaryAdmin(profile?.phone)) {
+      navigate('/', { replace: true })
+    }
+  }, [profile, navigate])
 
   async function recheck() {
     if (refreshProfile) await refreshProfile()
