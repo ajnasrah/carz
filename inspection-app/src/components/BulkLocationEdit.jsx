@@ -31,6 +31,7 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'mechanic_section', label: 'Mechanic' },
     { value: 'otta_body', label: 'Otta Body Shop' },
     { value: 'marc_pdr', label: 'Marc Dent Doctor (Denver)' },
+    { value: 'rocky_mountain_dent', label: 'Rocky Mountain Dent (Denver)' },
     { value: 'muffler_cs', label: 'Muffler C&S' },
     { value: 'pro_auto', label: 'Pro Auto' },
     { value: 'andys_auto', label: "Andy's Auto" },

@@ -31,6 +31,7 @@ const SETTLED_TRANSPORT_LOCS = new Set([
   "otta_body",
   "daa_rockies",
   "marc_pdr",
+  "rocky_mountain_dent",
 ]);
 function isSettledTransportLoc(physLoc) {
   if (!physLoc) return false;
@@ -296,6 +297,7 @@ export default function Inventory() {
     manheim_little_rock: "Manheim Little Rock",
     loveland: "Loveland Auto Auction",
     marc_pdr: "Marc Dent Doctor (Denver)",
+    rocky_mountain_dent: "Rocky Mountain Dent (Denver)",
     emich_kia: "Emich Kia",
   };
   // Format any location value for display: use the label if we have one,
@@ -339,6 +341,7 @@ export default function Inventory() {
     manheim_little_rock: "bg-red-700",
     loveland: "bg-sky-600",
     marc_pdr: "bg-fuchsia-600",
+    rocky_mountain_dent: "bg-purple-600",
     emich_kia: "bg-violet-600",
   };
 
@@ -1450,6 +1453,7 @@ export default function Inventory() {
                 <option value="muffler_cs">Muffler C&amp;S</option>
                 <option value="otta_body">Otta Body Shop</option>
                 <option value="marc_pdr">Marc Dent Doctor (Denver)</option>
+                <option value="rocky_mountain_dent">Rocky Mountain Dent (Denver)</option>
               </optgroup>
               <optgroup label="Dealer">
                 <option value="jim_keras_nissan">Jim Keras Nissan</option>

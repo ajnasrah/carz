@@ -17,14 +17,14 @@ function normalizeVin6(raw) {
   return v.length >= 6 ? v.slice(-6) : v.padStart(6, '0');
 }
 
-// Pull VIN-ish tokens out of free text. We accept a 5–7 char stock/last-6 OR a
-// 15–17 char full VIN pasted whole (the team increasingly drops the full VIN,
-// e.g. from a run list). A bare `{5,7}` never matched a 17-char run — the word
-// boundaries can't land inside it — so full VINs were silently dropped. We skip
-// the 8–14 char middle band so phone/order numbers don't masquerade as VINs.
+// Pull VIN-ish tokens out of free text. The team sends a car's VIN three ways:
+// last 6, last 8, or the whole 17-char VIN (e.g. pasted from a run list). So we
+// accept 5–8 char fragments OR 15–17 char full VINs. We still skip the 9–14 char
+// middle band so phone/order numbers don't masquerade as VINs. (normalizeVin6
+// right-aligns any of these to the canonical last 6.)
 function vinCandidates(text) {
   const tokens = text.toUpperCase().match(/\b[A-Z0-9]{5,17}\b/g) || [];
-  return tokens.filter((t) => t.length <= 7 || t.length >= 15);
+  return tokens.filter((t) => t.length <= 8 || t.length >= 15);
 }
 
 // Find the first plausible VIN-last-6 anywhere in free text.
