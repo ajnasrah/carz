@@ -1,4 +1,16 @@
 {
+  "redirects": [
+    {
+      "source": "/cars",
+      "destination": "https://docs.google.com/spreadsheets/d/15Tkj9SS-YbS1qs6GM0uVjKLEbIhRTbXZZiv1OfphWzM/edit?usp=sharing",
+      "permanent": false
+    },
+    {
+      "source": "/inventory",
+      "destination": "https://docs.google.com/spreadsheets/d/15Tkj9SS-YbS1qs6GM0uVjKLEbIhRTbXZZiv1OfphWzM/edit?usp=sharing",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     { "source": "/((?!training/|api/).*)", "destination": "/index.html" }
   ],

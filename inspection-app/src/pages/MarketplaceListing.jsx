@@ -24,6 +24,20 @@ function CopyButton({ text, label }) {
   )
 }
 
+// Small inline copy icon that sits right next to a value
+function InlineCopy({ text }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) })}
+      className="shrink-0 text-slate-500 active:text-emerald-400"
+      title="Copy"
+    >
+      {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
+    </button>
+  )
+}
+
 function PhotoGallery({ photos }) {
   const [idx, setIdx] = useState(0)
   if (!photos.length) return <div className="aspect-[16/10] bg-slate-800 flex items-center justify-center text-slate-600">No Photos</div>
@@ -236,12 +250,6 @@ export default function MarketplaceListing() {
           </div>
         )}
 
-        {/* Quick actions */}
-        <div className="flex gap-2 mt-3">
-          <CopyButton text={fullVin || ''} label={`Copy VIN (${car.vin_last6 || car.vin?.slice(-6)})`} />
-          <CopyButton text={String(miles)} label={`Copy Miles (${miles.toLocaleString()})`} />
-        </div>
-
         {/* Vehicle details */}
         <Section title="Vehicle Details">
           <div className="grid grid-cols-2 gap-2 text-sm">
@@ -259,11 +267,17 @@ export default function MarketplaceListing() {
             </div>
             <div className="bg-slate-900 rounded-lg p-2.5">
               <p className="text-[10px] text-slate-500 uppercase">Mileage</p>
-              <p className="font-semibold">{miles.toLocaleString()}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold">{miles.toLocaleString()}</p>
+                <InlineCopy text={String(miles)} />
+              </div>
             </div>
             <div className="bg-slate-900 rounded-lg p-2.5 col-span-2">
               <p className="text-[10px] text-slate-500 uppercase">VIN</p>
-              <p className="font-semibold font-mono text-xs">{fullVin}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold font-mono text-xs break-all">{fullVin}</p>
+                <InlineCopy text={fullVin} />
+              </div>
             </div>
           </div>
         </Section>

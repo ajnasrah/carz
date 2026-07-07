@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
@@ -26,7 +26,7 @@ export default function Admin() {
   }
 
   useEffect(() => {
-    if (profile?.role !== 'admin') {
+    if (profile?.role !== 'admin' && !isPrimaryAdmin(profile?.phone)) {
       navigate('/')
       return
     }
@@ -85,6 +85,19 @@ export default function Admin() {
     loadUsers()
   }
 
+  async function setApproval(userId, status) {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ approval_status: status })
+      .eq('id', userId)
+    if (error) {
+      setError('Failed to update approval: ' + error.message)
+      setTimeout(() => setError(''), 3000)
+    } else {
+      loadUsers()
+    }
+  }
+
   async function removeUser(user) {
     if (isPrimaryAdmin(user.phone)) {
       setError('Cannot remove the primary admin user')
@@ -103,7 +116,7 @@ export default function Admin() {
     }
   }
 
-  if (profile?.role !== 'admin') return null
+  if (profile?.role !== 'admin' && !isPrimaryAdmin(profile?.phone)) return null
 
   return (
     <div className="page">
@@ -114,12 +127,8 @@ export default function Admin() {
         <h1 className="page-title mb-0">Admin Panel</h1>
       </div>
 
-      {/* Stats */}
+      {/* Stats — based on account_type/role (granular job roles live in roles[]) */}
       <div className="grid grid-cols-3 gap-3 mb-6">
-        <div className="card text-center">
-          <p className="text-2xl font-bold text-emerald-400">{users.length}</p>
-          <p className="text-sm text-slate-400">Total Users</p>
-        </div>
         <div className="card text-center">
           <p className="text-2xl font-bold text-emerald-400">
             {users.filter((u) => u.role === 'admin').length}
@@ -128,11 +137,61 @@ export default function Admin() {
         </div>
         <div className="card text-center">
           <p className="text-2xl font-bold text-emerald-400">
-            {users.filter((u) => u.role === 'inspector').length}
+            {users.filter((u) => u.account_type === 'employee' && u.role !== 'admin').length}
           </p>
-          <p className="text-sm text-slate-400">Inspectors</p>
+          <p className="text-sm text-slate-400">Employees</p>
+        </div>
+        <div className="card text-center">
+          <p className="text-2xl font-bold text-emerald-400">
+            {users.filter((u) => u.account_type === 'buyer').length}
+          </p>
+          <p className="text-sm text-slate-400">Buyers</p>
         </div>
       </div>
+
+      {/* Pending Approval — new signups waiting for admin review */}
+      {(() => {
+        const pending = users.filter((u) => u.approval_status === 'pending')
+        if (pending.length === 0) return null
+        return (
+          <div className="mb-6">
+            <h2 className="text-lg font-bold text-amber-400 mb-3 flex items-center gap-2">
+              <Clock size={18} /> Pending Approval ({pending.length})
+            </h2>
+            <div className="space-y-2">
+              {pending.map((u) => (
+                <div key={u.id} className="card border border-amber-500/40 bg-amber-500/5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="font-semibold text-white">{u.name || 'Unnamed'}</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      u.account_type === 'buyer'
+                        ? 'bg-blue-500/20 text-blue-300'
+                        : 'bg-emerald-500/20 text-emerald-300'
+                    }`}>
+                      {u.account_type === 'buyer' ? '🤝 Buyer' : '🏢 Employee'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-400 mb-3">{u.phone || 'No phone'}</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setApproval(u.id, 'approved')}
+                      className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-emerald-500 text-slate-900 font-semibold text-sm"
+                    >
+                      <Check size={16} /> Approve
+                    </button>
+                    <button
+                      onClick={() => setApproval(u.id, 'rejected')}
+                      className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-red-500/20 text-red-400 font-semibold text-sm"
+                    >
+                      <X size={16} /> Reject
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Search Bar */}
       <input
@@ -211,17 +270,35 @@ export default function Admin() {
                 {u.role === 'admin' ? <Shield size={20} className="text-yellow-400" /> : <User size={20} className="text-slate-400" />}
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <p className="font-semibold text-white">{u.name || 'Unnamed'}</p>
                   {isPrimaryAdmin(u.phone) && (
                     <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full">
                       Primary
                     </span>
                   )}
+                  {u.account_type === 'buyer' && (
+                    <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-full">
+                      Buyer
+                    </span>
+                  )}
+                  {u.approval_status === 'rejected' && (
+                    <span className="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded-full">
+                      Rejected
+                    </span>
+                  )}
                 </div>
                 <p className="text-sm text-slate-400">{u.phone || 'No phone'}</p>
               </div>
               <div className="flex gap-2">
+                {u.approval_status === 'rejected' && (
+                  <button
+                    onClick={() => setApproval(u.id, 'approved')}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs"
+                  >
+                    Approve
+                  </button>
+                )}
                 <button
                   onClick={() => toggleRole(u.id, u.role)}
                   className="p-2 rounded-lg bg-slate-700 text-slate-400 text-xs"

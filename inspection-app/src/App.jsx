@@ -1,8 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { useAuth } from './context/useAuth'
+import { isPrimaryAdmin } from './services/adminSetup'
 import Login from './pages/Login'
 import Setup from './pages/Setup'
+import PendingApproval from './pages/PendingApproval'
 import Dashboard from './pages/Dashboard'
 import StartInspection from './pages/StartInspection'
 import StartupCheck from './pages/StartupCheck'
@@ -51,9 +53,44 @@ function ProtectedRoute({ children, requireSetup = true }) {
   }
 
   if (!user) return <Navigate to="/login" replace />
+
+  // Logged in but the profile failed to load (network/RLS error → profile===null after
+  // loading finished). Fail CLOSED on gated routes: never render internal pages without a
+  // profile to check. /setup and /pending (requireSetup=false) stay reachable so the user
+  // isn't trapped. This closes an auth bypass where a transient load failure granted access.
+  if (requireSetup && !profile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-emerald-400 mb-2">CARZ INC</h1>
+          <p className="text-slate-400 mb-4">Couldn't load your account. Check your connection and try again.</p>
+          <button onClick={() => window.location.reload()} className="bg-emerald-500 text-slate-900 font-bold py-2 px-5 rounded-lg">
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // Force unfinished profiles through the Setup page before they can use the app
   if (requireSetup && profile && profile.setup_complete === false) {
     return <Navigate to="/setup" replace />
+  }
+
+  // Approval gate + buyer scoping. Admins always pass. Skipped when requireSetup is
+  // false (the /setup and /pending screens must stay reachable for new/pending users).
+  if (requireSetup && profile) {
+    const isAdmin = profile.role === 'admin' || isPrimaryAdmin(profile.phone)
+    if (!isAdmin) {
+      // New users can't use the app until an admin approves them.
+      if (profile.approval_status !== 'approved') {
+        return <Navigate to="/pending" replace />
+      }
+      // Approved buyers are marketplace-only — no internal pages.
+      if (profile.account_type === 'buyer') {
+        return <Navigate to="/listings" replace />
+      }
+    }
   }
   return children
 }
@@ -76,6 +113,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/setup" element={<ProtectedRoute requireSetup={false}><Setup /></ProtectedRoute>} />
+      <Route path="/pending" element={<ProtectedRoute requireSetup={false}><PendingApproval /></ProtectedRoute>} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/inspections" element={<ProtectedRoute><Inspections /></ProtectedRoute>} />
       <Route path="/new" element={<ProtectedRoute><StartInspection /></ProtectedRoute>} />

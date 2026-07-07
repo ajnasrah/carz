@@ -232,6 +232,14 @@
 
   async function upsertLocations(rows) {
     if (!rows.length) return { ok: 0, err: 0 };
+    // Collapse duplicate conflict keys first — PostgREST rejects a bulk upsert
+    // that touches the same stock_number twice in one request ("ON CONFLICT DO
+    // UPDATE command cannot affect row a second time"), which fails the whole
+    // batch. Keep the last row for each stock_number (callers pre-rank so the
+    // winning status is last).
+    const byStockKey = new Map();
+    for (const r of rows) byStockKey.set(r.stock_number, r);
+    rows = [...byStockKey.values()];
     // PostgREST requires every object in a bulk upsert to have the exact same
     // keys. Normalize by computing the union of keys across all rows and
     // filling missing keys with null so each object matches the shape.
@@ -1529,7 +1537,7 @@
       config.log(`⚠️ Warning: ${last6Conflicts.size} last-6 VINs have multiple matches`, 'warn');
     }
     const now = new Date().toISOString();
-    const upserts = [];
+    let upserts = [];
     // Breakdown buckets
     const activeNotInInv = [];   // SA shows active listing, not in our inventory → ghost listing to pull
     const removedStillInInv = []; // SA removed/hold but still in inventory → Frazer state mismatch
@@ -1607,6 +1615,19 @@
       }
       upserts.push(row);
     }
+    // Collapse multiple SA rows for the same car — a relisted unit can appear as
+    // both sold and active in one export. ACTIVE always wins so the car stays
+    // visible on the marketplace instead of being hidden as sold. Ranking also
+    // makes the winning row LAST, which upsertLocations' keep-last dedupe honors.
+    const saRank = { sold: 1, removed: 2, hold: 3, active: 4 };
+    const winByStock = new Map();
+    for (const row of upserts) {
+      const prev = winByStock.get(row.stock_number);
+      if (!prev || (saRank[row.sa_status] || 0) >= (saRank[prev.sa_status] || 0)) {
+        winByStock.set(row.stock_number, row);
+      }
+    }
+    upserts = [...winByStock.values()];
     const { ok, err } = await upsertLocations(upserts);
     config.log(`SmartAuction: matched ${matched} of ${rows.length} (skipped ${skipped}), sold ${soldCount}, upserted ${ok}, errors ${err}`, 'ok');
     

@@ -16,6 +16,7 @@ const ROLE_OPTIONS = [
 export default function Setup() {
   const navigate = useNavigate()
   const { user, profile, refreshProfile } = useAuth()
+  const [accountType, setAccountType] = useState(null) // 'buyer' | 'employee'
   const [name, setName] = useState('')
   const [roles, setRoles] = useState([])
   const [saving, setSaving] = useState(false)
@@ -24,11 +25,12 @@ export default function Setup() {
   // Prefill if the user had partial data
   useEffect(() => {
     if (profile?.name) setName(profile.name)
+    if (profile?.account_type) setAccountType(profile.account_type)
     if (profile?.roles?.length) setRoles(profile.roles)
     else if (profile?.role) setRoles([profile.role])
   }, [profile])
 
-  // If already set up, kick to home
+  // If already set up, kick to home (ProtectedRoute handles the approval gate)
   useEffect(() => {
     if (profile?.setup_complete) navigate('/', { replace: true })
   }, [profile, navigate])
@@ -40,18 +42,30 @@ export default function Setup() {
   async function save(e) {
     e.preventDefault()
     setError('')
+    if (!accountType) { setError('Please pick Buyer or Employee'); return }
     const trimmed = name.trim()
     if (!trimmed) { setError('Please enter your name'); return }
-    if (roles.length === 0) { setError('Pick at least one role'); return }
+    if (accountType === 'employee' && roles.length === 0) {
+      setError('Pick at least one role'); return
+    }
     setSaving(true)
     try {
+      // Buyers have no internal role; employees keep their selected roles in roles[].
+      const finalRoles = accountType === 'buyer' ? [] : roles
+      // NOTE: the legacy `role` column has a CHECK constraint (admin | inspector), so we
+      // must NOT write granular labels like 'lot_manager'/'buyer' into it — that would
+      // fail the update and block signup. The real role(s) live in roles[]; buyer vs
+      // employee is tracked by account_type. Admin is only ever granted from the Admin
+      // panel (and the DB guard trigger blocks self-promotion anyway), so we don't touch
+      // `role` here — new rows already default to 'inspector'.
       const { error: err } = await supabase
         .from('profiles')
         .update({
           name: trimmed,
-          roles,
-          role: roles[0],        // keep legacy single role aligned with the first selection
+          account_type: accountType,
+          roles: finalRoles,
           setup_complete: true,
+          // approval_status stays 'pending' — an admin must approve before access
         })
         .eq('id', user.id)
       if (err) throw err
@@ -72,47 +86,86 @@ export default function Setup() {
       </div>
 
       <form onSubmit={save} className="flex-1 flex flex-col">
-        <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">Your Name</label>
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-          autoComplete="name"
-          placeholder="First + Last"
-          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-5"
-        />
-
+        {/* Account type — buyer vs employee */}
         <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">
-          What do you do? <span className="text-slate-500 normal-case">(pick all that apply)</span>
+          I am a…
         </label>
-        <div className="space-y-2 mb-5">
-          {ROLE_OPTIONS.map((opt) => {
-            const active = roles.includes(opt.key)
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          {[
+            { key: 'buyer',    label: 'Buyer',    emoji: '🤝', sub: 'Shop the marketplace' },
+            { key: 'employee', label: 'Employee', emoji: '🏢', sub: 'Carz Inc staff' },
+          ].map((opt) => {
+            const active = accountType === opt.key
             return (
               <button
                 key={opt.key}
                 type="button"
-                onClick={() => toggleRole(opt.key)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${
+                onClick={() => setAccountType(opt.key)}
+                className={`flex flex-col items-center gap-1 p-4 rounded-xl border text-center transition-colors ${
                   active
                     ? 'bg-emerald-500/15 border-emerald-500 text-white'
                     : 'bg-slate-800 border-slate-700 text-slate-300'
                 }`}
               >
-                <span className="text-2xl">{opt.emoji}</span>
-                <span className="flex-1 font-bold text-sm">{opt.label}</span>
-                <span
-                  className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
-                    active ? 'bg-emerald-500 border-emerald-500 text-slate-900' : 'border-slate-600'
-                  }`}
-                >
-                  {active ? '✓' : ''}
-                </span>
+                <span className="text-3xl">{opt.emoji}</span>
+                <span className="font-bold text-sm">{opt.label}</span>
+                <span className="text-[11px] text-slate-400">{opt.sub}</span>
               </button>
             )
           })}
         </div>
+
+        <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">Your Name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoComplete="name"
+          placeholder="First + Last"
+          className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-5"
+        />
+
+        {/* Roles only apply to employees */}
+        {accountType === 'employee' && (
+          <>
+            <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">
+              What do you do? <span className="text-slate-500 normal-case">(pick all that apply)</span>
+            </label>
+            <div className="space-y-2 mb-5">
+              {ROLE_OPTIONS.map((opt) => {
+                const active = roles.includes(opt.key)
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => toggleRole(opt.key)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${
+                      active
+                        ? 'bg-emerald-500/15 border-emerald-500 text-white'
+                        : 'bg-slate-800 border-slate-700 text-slate-300'
+                    }`}
+                  >
+                    <span className="text-2xl">{opt.emoji}</span>
+                    <span className="flex-1 font-bold text-sm">{opt.label}</span>
+                    <span
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center text-xs ${
+                        active ? 'bg-emerald-500 border-emerald-500 text-slate-900' : 'border-slate-600'
+                      }`}
+                    >
+                      {active ? '✓' : ''}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        {accountType && (
+          <p className="text-xs text-slate-500 mb-3">
+            After you continue, an admin will review and approve your account before you get access.
+          </p>
+        )}
 
         {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
 

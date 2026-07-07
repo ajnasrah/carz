@@ -58,6 +58,9 @@ export function AuthProvider({ children }) {
           phone: authUser?.phone || null,
           name: '',
           role: 'inspector',
+          // Explicit so a new user is always routed through Setup + approval, even if the
+          // DB column default ever changes. (approval_status defaults to 'pending' in DB.)
+          setup_complete: false,
         })
         .select()
         .single()

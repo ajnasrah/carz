@@ -57,8 +57,10 @@ export async function ensurePrimaryAdmin() {
 }
 
 export function isPrimaryAdmin(phone) {
-  const normalizedPhone = phone?.replace(/\D/g, '')
-  return normalizedPhone === '9018319661' || phone === PRIMARY_ADMIN_PHONE
+  let digits = phone?.replace(/\D/g, '') || ''
+  // Accept +1 country code, bare 10-digit, or a leading 1 (e.g. 19018319661)
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1)
+  return digits === '9018319661'
 }
 
 export async function getAdminStats() {

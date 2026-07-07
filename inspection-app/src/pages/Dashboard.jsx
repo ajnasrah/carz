@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
+import { isPrimaryAdmin } from '../services/adminSetup'
 import VinSearchBar from '../components/VinSearchBar'
 
 // A Frazer-Z car needs dispatch only until we know where it physically is. Once
@@ -185,7 +186,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {profile?.role === 'admin' && (
+      {(profile?.role === 'admin' || isPrimaryAdmin(profile?.phone)) && (
         <Link 
           to="/admin" 
           className="block mt-4 mx-4 px-4 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-semibold text-center shadow-lg hover:shadow-xl transition-shadow"

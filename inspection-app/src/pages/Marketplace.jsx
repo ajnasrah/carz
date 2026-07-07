@@ -22,15 +22,16 @@ function exportCsv(cars) {
   URL.revokeObjectURL(url)
 }
 
-function QuickCopy({ text, label }) {
+// Small inline copy icon that sits right next to a value
+function InlineCopy({ text }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
       onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }) }}
-      className="flex items-center gap-1 px-2 py-1 rounded bg-slate-800 text-[11px] font-semibold text-slate-300 active:bg-slate-700"
+      className="shrink-0 text-slate-500 active:text-emerald-400"
+      title="Copy"
     >
-      {copied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
-      {copied ? 'Copied' : label}
+      {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
     </button>
   )
 }
@@ -69,6 +70,7 @@ export default function Marketplace() {
   const [makeFilter, setMakeFilter] = useState('')
   const [yearRange, setYearRange] = useState('')
   const [mileRange, setMileRange] = useState('')
+  const [sort, setSort] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [hidden, setHidden] = useState(() => new Set())
 
@@ -121,8 +123,21 @@ export default function Marketplace() {
         [c.vin, c.vin_last6, c.year, c.make, c.model].some((v) => String(v || '').toUpperCase().includes(q)),
       )
     }
+    if (sort) {
+      const price = (c) => (c.buy_now ? Number(c.buy_now) : null)
+      result = [...result].sort((a, b) => {
+        switch (sort) {
+          case 'make': return String(a.make || '').localeCompare(String(b.make || ''))
+          case 'price_asc': return (price(a) ?? Infinity) - (price(b) ?? Infinity)
+          case 'price_desc': return (price(b) ?? -Infinity) - (price(a) ?? -Infinity)
+          case 'miles_asc': return toInt(a.mileage) - toInt(b.mileage)
+          case 'miles_desc': return toInt(b.mileage) - toInt(a.mileage)
+          default: return 0
+        }
+      })
+    }
     return result
-  }, [cars, hidden, search, makeFilter, yearRange, mileRange])
+  }, [cars, hidden, search, makeFilter, yearRange, mileRange, sort])
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -185,12 +200,29 @@ export default function Marketplace() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-slate-500">{filtered.length} vehicles</p>
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-xs text-slate-500 whitespace-nowrap">{filtered.length} vehicles</p>
+            <div className="relative">
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+                className="text-xs bg-slate-800 border border-slate-700 rounded-lg pl-2 pr-6 py-1.5 text-white appearance-none"
+              >
+                <option value="">Sort: Newest</option>
+                <option value="make">Make: A–Z</option>
+                <option value="price_asc">Price: Low → High</option>
+                <option value="price_desc">Price: High → Low</option>
+                <option value="miles_asc">Miles: Low → High</option>
+                <option value="miles_desc">Miles: High → Low</option>
+              </select>
+              <ChevronDown size={12} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            </div>
+          </div>
           <button
             onClick={() => exportCsv(filtered)}
             disabled={!filtered.length}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40"
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40 whitespace-nowrap"
           >
             Export CSV
           </button>
@@ -239,13 +271,17 @@ export default function Marketplace() {
                       )}
                     </div>
                     <div className="flex gap-4 mt-1 text-sm text-slate-400">
-                      <span>{miles.toLocaleString()} mi</span>
+                      <span className="inline-flex items-center gap-1">{miles.toLocaleString()} mi <InlineCopy text={String(miles)} /></span>
                       {car.vehicle_color && <span>{car.vehicle_color}</span>}
-                      <span>VIN ...{vin.slice(-6)}</span>
+                      <span className="inline-flex items-center gap-1">VIN ...{vin.slice(-6)} <InlineCopy text={vin} /></span>
                     </div>
                     <div className="flex items-center gap-2 mt-3">
-                      <QuickCopy text={vin} label="Copy VIN" />
-                      <QuickCopy text={String(miles)} label="Copy Miles" />
+                      <Link
+                        to={`/marketplace/${car.id}`}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-900 text-xs font-bold"
+                      >
+                        View Details
+                      </Link>
                       {isAdmin && (
                         <button
                           onClick={() => removeCar(car.stock_number)}
@@ -254,12 +290,6 @@ export default function Marketplace() {
                           Remove
                         </button>
                       )}
-                      <Link
-                        to={`/marketplace/${car.id}`}
-                        className={`${isAdmin ? '' : 'ml-auto'} px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-900 text-xs font-bold`}
-                      >
-                        View Details
-                      </Link>
                     </div>
                   </div>
                 </div>

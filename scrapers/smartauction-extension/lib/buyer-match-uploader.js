@@ -80,6 +80,18 @@
     };
   }
 
+  // Classify an InventoryResults row by lifecycle. The full report contains active,
+  // sold, removed, and held cars in one file — status is derived from which columns
+  // are filled (SmartAuction leaves the others blank).
+  function classify(r) {
+    const has = (k) => String(r[k] ?? '').trim() !== '';
+    if (has('Sale Date') && (has('Sale Price') || has('Buyer Name'))) return 'sold';
+    if (has('Removal Date') || has('Removal Reason')) return 'removed';
+    if (has('Hold Date') || has('Hold Reason')) return 'hold';
+    if (has('Days Remaining')) return 'active';
+    return 'other';
+  }
+
   // ── PostgREST helpers ──
   function headers(extra) {
     return Object.assign({
@@ -129,6 +141,14 @@
     } catch (e) {
       return `GHL sync failed: ${e.message}`;
     }
+  }
+
+  async function rpc(name, args) {
+    const res = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${name}`, {
+      method: 'POST', headers: headers(), body: JSON.stringify(args || {}),
+    });
+    if (!res.ok) throw new Error(`${name}: ${res.status} ${await res.text()}`);
+    return res.json().catch(() => null);
   }
 
   async function clearTable(table) {
@@ -189,11 +209,62 @@
       }
     }
 
+    // Full InventoryResults report → sync the public marketplace in one shot:
+    //   • active rows   → replace sa_active_cars snapshot (refreshes Buy-Now prices,
+    //                     and surfaces active cars that weren't showing)
+    //   • sold rows     → marketplace_mark_sold (sa_status='sold' → dropped from grid)
+    //   • active VINs   → marketplace_unmark_sold (un-hide anything relisted)
+    async function handleReport(file) {
+      if (!file) return;
+      const id = 'bmReportStatus';
+      try {
+        setStatus(id, 'Reading…');
+        const raw = parseCSV(await file.text());
+        if (!raw.length) throw new Error('Empty file');
+
+        const activeRows = [];
+        const soldVins = [];
+        const activeVins = [];
+        const counts = { active: 0, sold: 0, removed: 0, hold: 0, other: 0 };
+        for (const r of raw) {
+          const st = classify(r);
+          counts[st] = (counts[st] || 0) + 1;
+          const vin = String(r.VIN || '').trim();
+          if (st === 'active') {
+            const m = mapActive(r);
+            if (m.vin) { activeRows.push(m); activeVins.push(m.vin); }
+          } else if (st === 'sold' && vin) {
+            soldVins.push(vin);
+          }
+        }
+        const uniqActive = dedupeByKey(activeRows, 'vin');
+        const uniqSoldVins = [...new Set(soldVins)];
+        const uniqActiveVins = [...new Set(activeVins)];
+
+        setStatus(id, `Replacing ${uniqActive.length} active…`);
+        await clearTable('sa_active_cars');
+        if (uniqActive.length) await upsert('sa_active_cars', uniqActive, 'vin');
+
+        setStatus(id, 'Marking sold…');
+        const soldMarked = uniqSoldVins.length ? await rpc('marketplace_mark_sold', { p_vins: uniqSoldVins }) : 0;
+        const reactivated = uniqActiveVins.length ? await rpc('marketplace_unmark_sold', { p_vins: uniqActiveVins }) : 0;
+
+        setStatus(id, `✓ ${uniqActive.length} active · ${soldMarked} sold hidden`, 'loaded');
+        log(`Full report: ${uniqActive.length} active priced · ${soldMarked} sold hidden · ${reactivated} relisted`, 'ok');
+        log(`  rows — active ${counts.active}, sold ${counts.sold}, removed ${counts.removed}, hold ${counts.hold}, other ${counts.other}`, 'ok');
+      } catch (e) {
+        setStatus(id, '✗ failed', 'error');
+        log(`Full report failed: ${e.message}`, 'err');
+      }
+    }
+
     const a = document.getElementById('bmActiveInput');
     const s = document.getElementById('bmSoldInput');
+    const rp = document.getElementById('bmReportInput');
     if (a) a.addEventListener('change', (e) => handle('active', e.target.files && e.target.files[0]));
     if (s) s.addEventListener('change', (e) => handle('sold', e.target.files && e.target.files[0]));
+    if (rp) rp.addEventListener('change', (e) => handleReport(e.target.files && e.target.files[0]));
   }
 
-  window.BuyerMatchUploader = { bindUI, parseCSV, mapActive, mapSold, segment };
+  window.BuyerMatchUploader = { bindUI, parseCSV, mapActive, mapSold, segment, classify };
 })();
