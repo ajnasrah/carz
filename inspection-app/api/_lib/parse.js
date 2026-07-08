@@ -50,9 +50,48 @@ export function extractAllVin6(text) {
   return out;
 }
 
+// Parse a single mileage token/line into an integer, or null if it isn't
+// miles-shaped. Tolerant of the ways the team actually types odometers:
+// commas ("81,263"), a decimal odometer ("81263.1"), a "k" shorthand
+// ("125k" -> 125000), and a trailing mi/miles/mileage unit. 7-digit odometers
+// are accepted too (the old /^\d{3,6}$/ rule silently dropped those).
+export function parseMilesToken(raw) {
+  if (raw == null) return null;
+  const s = String(raw).replace(/,/g, '').trim();
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*(k)?\s*(?:mi|miles|mileage)?\.?$/i);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (m[2]) n *= 1000; // "125k" -> 125000
+  n = Math.round(n);
+  return n >= 100 && n <= 1500000 ? n : null;
+}
+
+// Find a mileage anywhere in free text, but ONLY when it's explicitly tagged
+// with a mi/miles/mileage keyword — so we never mistake a tire score, year, or
+// condition number for the odometer.
+export function scanMilesKeyworded(text) {
+  if (!text) return null;
+  for (const re of [
+    /(\d[\d,]*(?:\.\d+)?)\s*(k)?\s*(?:mi|miles|mileage)\b/i,
+    /(?:mileage|miles|mi)[:=\s]+(\d[\d,]*(?:\.\d+)?)\s*(k)?/i,
+  ]) {
+    const m = text.match(re);
+    if (m) {
+      let n = parseFloat(m[1].replace(/,/g, ''));
+      if (m[2]) n *= 1000;
+      n = Math.round(n);
+      if (n >= 100 && n <= 1500000) return n;
+    }
+  }
+  return null;
+}
+
 // Parse a seller/ready intake message into a vehicle entry, or null.
 // Structured form first (VIN \n miles \n condition \n tire \n notes), then a
-// conversational fallback.
+// conversational fallback. Miles is OPTIONAL: when we can't read a clean
+// odometer we still return the entry (VIN/condition/photos stay intact) and
+// simply omit the `miles` key — dropping the whole car over a malformed miles
+// line was leaving matched cars with a blank SmartAuction odometer.
 export function parseVehicleEntry(text) {
   if (!text) return null;
   const lines = text.trim().split('\n');
@@ -62,10 +101,11 @@ export function parseVehicleEntry(text) {
     if (/^[A-Z0-9]{5,7}$/.test(first) && /\d/.test(first) && !EXCLUDE_WORDS.has(first)) {
       const vin6 = normalizeVin6(first);
 
-      // Accept a decimal odometer ("81263.1") — use the whole-number part.
-      const milesM = lines[1]?.replace(/,/g, '').trim().match(/^(\d{3,6})(?:\.\d+)?$/);
-      if (!milesM) return null;
-      const miles = parseInt(milesM[1], 10);
+      // Miles convention is line 2, but be tolerant of commas/decimals/"k"/units
+      // and 7-digit odometers. If line 2 isn't miles-shaped, look for a
+      // keyword-tagged value elsewhere. Still nothing? Keep the entry without a
+      // `miles` key rather than dropping the whole car.
+      const miles = parseMilesToken(lines[1]) ?? scanMilesKeyworded(text);
 
       const condition = lines[2]?.trim() || 'Unknown';
       let tire_condition = '';
@@ -74,25 +114,19 @@ export function parseVehicleEntry(text) {
         if (tm) tire_condition = parseFloat(tm[1]);
       }
       const notes = lines.slice(4).join(' ').slice(0, 100);
-      return { vin6, miles, condition, tire_condition, notes };
+      const entry = { vin6, condition, tire_condition, notes };
+      if (miles != null) entry.miles = miles;
+      return entry;
     }
   }
 
   const vin6 = extractVin6(text);
   if (!vin6) return null;
 
-  let miles = 0;
-  for (const re of [
-    /(\d{1,3},?\d{3})\s*(?:mi|miles|mileage)/i,
-    /(?:mileage|miles|mi)[:=\s]+(\d{1,3},?\d{3})/i,
-    /\b(\d{4,6})\s*(?:mi|miles)\b/i,
-  ]) {
-    const m = text.match(re);
-    if (m) {
-      const n = parseInt(m[1].replace(/,/g, ''), 10);
-      if (n >= 1000 && n <= 999999) { miles = n; break; }
-    }
-  }
+  // Only accept a keyword-tagged mileage here (free text is noisy). Omit the
+  // key entirely when nothing matches — never default to 0, which would clobber
+  // a real reading from another message in ready_to_sell_queue().
+  const miles = scanMilesKeyworded(text);
 
   let condition = 'Unknown';
   if (/\b(good|excellent|great|clean)\b/i.test(text)) condition = 'Good';
@@ -103,5 +137,7 @@ export function parseVehicleEntry(text) {
   const tm = text.match(/tire[s]?\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
   if (tm) tire_condition = parseFloat(tm[1]);
 
-  return { vin6, miles, condition, tire_condition, notes: text.slice(0, 100) };
+  const entry = { vin6, condition, tire_condition, notes: text.slice(0, 100) };
+  if (miles != null) entry.miles = miles;
+  return entry;
 }
