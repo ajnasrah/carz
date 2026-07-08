@@ -160,18 +160,21 @@
       }
     }
     
-    // Second pass: build maps and track conflicts
+    // Second pass. `byVin` (full 17-char VIN) is the ONLY map used to resolve a
+    // stock number — run lists always carry full VINs. `byLast6` is kept as a
+    // PRESENCE lookup only (never used to pick a stock): two different cars can
+    // share the same last 6 — e.g. a Mercedes WDDLJ7DB5EA102576 on a DAA Rockies
+    // run list vs. our Chevy 3GCPDDEKXPG102576 in inventory — so matching on
+    // last-6 would stamp the wrong car's physical location. We only use
+    // byLast6.has(...) to warn that a skipped VIN was a last-6 near-miss.
     for (const r of rows) {
       const full = (r.vehicle_vin || '').toUpperCase();
       const l6 = (r.last_6_vin || full.slice(-6) || '').toUpperCase();
       if (full) byVin.set(full, r.stock_number);
       if (l6) {
-        byLast6.set(l6, r.stock_number);
-        // Mark as conflict if multiple vehicles have same last6
+        byLast6.set(l6, r.stock_number); // presence only — NOT a match source
         const vehicles = last6Count.get(l6);
-        if (vehicles && vehicles.length > 1) {
-          last6Conflicts.set(l6, vehicles);
-        }
+        if (vehicles && vehicles.length > 1) last6Conflicts.set(l6, vehicles);
       }
     }
     return { byVin, byLast6, last6Conflicts };
@@ -1165,7 +1168,7 @@
     for (const r of rows) {
       const vin = (r.Vin || r.VIN || '').toUpperCase();
       // Try full VIN first, fallback to last6 if needed
-      const stock = vin ? (byVin.get(vin) || byLast6.get(last6(vin))) : null;
+      const stock = vin ? byVin.get(vin) : null; // full VIN only — no last-6 fallback
       if (stock) candidateStocks.push(stock);
     }
     const existingByStock = await fetchExistingLocationRows(candidateStocks);
@@ -1180,17 +1183,10 @@
       const vin = (r.Vin || r.VIN || '').toUpperCase();
       if (!vin) { skipped++; continue; }
       
-      // Prioritize full VIN match
-      let stock = byVin.get(vin);
-      
-      // Only use last6 as fallback, with warning
-      if (!stock) {
-        const l6 = last6(vin);
-        stock = byLast6.get(l6);
-        if (stock && last6Conflicts.has(l6)) {
-          const conflicts = last6Conflicts.get(l6);
-          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
-        }
+      // Match on the FULL VIN only — never last-6 (see fetchInventoryStocksForVins).
+      const stock = byVin.get(vin);
+      if (!stock && byLast6.has(last6(vin))) {
+        config.log(`↷ ${vin} not in inventory, but its last-6 ${last6(vin)} belongs to a DIFFERENT inventory VIN — skipping (this was the mis-match bug)`, 'warn');
       }
       
       if (!stock) {
@@ -1234,7 +1230,7 @@
       ]);
       for (const vin of unmatchedVins) {
         const mSold = marketplaceSold.get(vin);
-        const lSold = localSold.byVin.get(vin) || localSold.byLast6.get(last6(vin));
+        const lSold = localSold.byVin.get(vin); // full VIN only — no last-6 fallback
         if (mSold || lSold) {
           const csvRow = unmatchedRows.get(vin) || {};
           soldAtAuction.push({
@@ -1364,7 +1360,7 @@
     const candidateStocks = [];
     for (const { row } of lotRows) {
       const vin = (row.VIN || row.Vin || '').toUpperCase();
-      const stock = vin ? (byVin.get(vin) || byLast6.get(last6(vin))) : null;
+      const stock = vin ? byVin.get(vin) : null; // full VIN only — no last-6 fallback
       if (stock) candidateStocks.push(stock);
     }
     const existingByStock = await fetchExistingLocationRows(candidateStocks);
@@ -1375,13 +1371,10 @@
     for (const { row, code } of lotRows) {
       const vin = (row.VIN || row.Vin || '').toUpperCase();
       if (!vin) { skipped++; continue; }
-      let stock = byVin.get(vin);
-      if (!stock) {
-        const l6 = last6(vin);
-        stock = byLast6.get(l6);
-        if (stock && last6Conflicts.has(l6)) {
-          config.log(`⚠️ Multiple vehicles match last-6 ${l6}. Using stock ${stock} for VIN ${vin}`, 'warn');
-        }
+      // Match on the FULL VIN only — never last-6 (see fetchInventoryStocksForVins).
+      const stock = byVin.get(vin);
+      if (!stock && byLast6.has(last6(vin))) {
+        config.log(`↷ ${vin} not in inventory, but its last-6 ${last6(vin)} belongs to a DIFFERENT inventory VIN — skipping (this was the mis-match bug)`, 'warn');
       }
       if (!stock) { skipped++; continue; }   // not our car — the auction lists everyone's
       matched++;
@@ -1445,7 +1438,7 @@
     for (const r of rows) {
       const vin = (r.VIN || r.Vin || '').toUpperCase();
       // Try full VIN first, fallback to last6 if needed
-      const stock = vin ? (byVin.get(vin) || byLast6.get(last6(vin))) : null;
+      const stock = vin ? byVin.get(vin) : null; // full VIN only — no last-6 fallback
       if (stock) candidateStocks.push(stock);
     }
     const existingByStock = await fetchExistingLocationRows(candidateStocks);
@@ -1460,17 +1453,10 @@
       const vin = (r.VIN || r.Vin || '').toUpperCase();
       if (!vin) { skipped++; continue; }
       
-      // Prioritize full VIN match
-      let stock = byVin.get(vin);
-      
-      // Only use last6 as fallback, with warning
-      if (!stock) {
-        const l6 = last6(vin);
-        stock = byLast6.get(l6);
-        if (stock && last6Conflicts.has(l6)) {
-          const conflicts = last6Conflicts.get(l6);
-          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
-        }
+      // Match on the FULL VIN only — never last-6 (see fetchInventoryStocksForVins).
+      const stock = byVin.get(vin);
+      if (!stock && byLast6.has(last6(vin))) {
+        config.log(`↷ ${vin} not in inventory, but its last-6 ${last6(vin)} belongs to a DIFFERENT inventory VIN — skipping (this was the mis-match bug)`, 'warn');
       }
       
       if (!stock) {
@@ -1512,7 +1498,7 @@
       ]);
       for (const vin of unmatchedVins) {
         const mSold = marketplaceSold.get(vin);
-        const lSold = localSold.byVin.get(vin) || localSold.byLast6.get(last6(vin));
+        const lSold = localSold.byVin.get(vin); // full VIN only — no last-6 fallback
         if (mSold || lSold) {
           const csvRow = unmatchedRows.get(vin) || {};
           soldAtAuction.push({
@@ -1584,17 +1570,10 @@
       else if (removalDate) saStatus = 'removed';
       else if (holdDate) saStatus = 'hold';
       
-      // Prioritize full VIN match
-      let stock = byVin.get(vin);
-      
-      // Only use last6 as fallback, with warning
-      if (!stock) {
-        const l6 = last6(vin);
-        stock = byLast6.get(l6);
-        if (stock && last6Conflicts.has(l6)) {
-          const conflicts = last6Conflicts.get(l6);
-          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
-        }
+      // Match on the FULL VIN only — never last-6 (see fetchInventoryStocksForVins).
+      const stock = byVin.get(vin);
+      if (!stock && byLast6.has(last6(vin))) {
+        config.log(`↷ ${vin} not in inventory, but its last-6 ${last6(vin)} belongs to a DIFFERENT inventory VIN — skipping (this was the mis-match bug)`, 'warn');
       }
       if (!stock) {
         skipped++;
@@ -1911,17 +1890,10 @@
       const vin = (r.VIN || r.Vin || '').toUpperCase();
       if (!vin) { skipped++; continue; }
       
-      // Prioritize full VIN match
-      let stock = byVin.get(vin);
-      
-      // Only use last6 as fallback, with warning
-      if (!stock) {
-        const l6 = last6(vin);
-        stock = byLast6.get(l6);
-        if (stock && last6Conflicts.has(l6)) {
-          const conflicts = last6Conflicts.get(l6);
-          config.log(`⚠️ Multiple vehicles match last-6 ${l6}: ${conflicts.map(c => c.vin).join(', ')}. Using stock ${stock} for VIN ${vin}`, 'warn');
-        }
+      // Match on the FULL VIN only — never last-6 (see fetchInventoryStocksForVins).
+      const stock = byVin.get(vin);
+      if (!stock && byLast6.has(last6(vin))) {
+        config.log(`↷ ${vin} not in inventory, but its last-6 ${last6(vin)} belongs to a DIFFERENT inventory VIN — skipping (this was the mis-match bug)`, 'warn');
       }
       
       if (!stock) { skipped++; continue; }
@@ -1955,16 +1927,9 @@
     for (const r of rows) {
       const vin = (r.VIN || r.Vin || '').toUpperCase();
       
-      // Prioritize full VIN match
-      let stock = byVin.get(vin);
-      
-      // Only use last6 as fallback  
-      if (!stock) {
-        const l6 = last6(vin);
-        stock = byLast6.get(l6);
-        // Note: Not logging conflicts here since we already did above
-      }
-      
+      // Match on the FULL VIN only — never last-6 (see fetchInventoryStocksForVins).
+      const stock = byVin.get(vin);
+
       const status = (r.Status || '').toLowerCase();
       
       // Skip sold vehicles entirely
