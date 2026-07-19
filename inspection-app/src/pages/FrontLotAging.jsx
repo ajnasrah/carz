@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, selectAll } from '../services/supabase';
 import { Download, AlertCircle, RefreshCw, Copy, Check, ArrowLeft, Clock } from 'lucide-react';
+import HistoryButton from '../components/HistoryButton';
 
 // A car only counts as "front lot" if it's actually sitting on a sellable lot.
 // Everything else — mechanic, pro auto, body shop, wash, detail, in transit,
@@ -229,6 +230,13 @@ function FrontLotAging() {
                     {copied === key ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
                     {copied === key ? 'Copied' : 'VIN'}
                   </button>
+                  <HistoryButton
+                    stockNumber={v.stock_number}
+                    vin={v.vin}
+                    size={11}
+                    label="History"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-700 text-slate-300 text-[11px] font-semibold active:bg-slate-600"
+                  />
                 </div>
               </div>
             );

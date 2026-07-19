@@ -1,46 +1,7 @@
 import { useState, useEffect } from "react";
-import {
-  X,
-  MapPin,
-  ShoppingCart,
-  Truck,
-  Wrench,
-  Clock,
-  Package,
-} from "lucide-react";
+import { X } from "lucide-react";
 import { supabase } from "../services/supabase";
-
-const eventIcons = {
-  location_change: MapPin,
-  marketplace_listed: ShoppingCart,
-  marketplace_status: ShoppingCart,
-  marketplace_sold: Package,
-  transport_initiated: Truck,
-  transport_completed: Truck,
-  service_sent: Wrench,
-  service_completed: Wrench,
-  inventory_added: Package,
-  inventory_removed: Package,
-  manual_update: MapPin,
-  scan_detected: MapPin,
-  note_added: Clock,
-};
-
-const eventLabels = {
-  location_change: "Location Changed",
-  marketplace_listed: "Listed on Marketplace",
-  marketplace_status: "Marketplace Status Update",
-  marketplace_sold: "Sold",
-  transport_initiated: "Transport Started",
-  transport_completed: "Transport Completed",
-  service_sent: "Sent to Service",
-  service_completed: "Service Completed",
-  inventory_added: "Added to Inventory",
-  inventory_removed: "Removed from Inventory",
-  manual_update: "Manual Update",
-  scan_detected: "Scanned on Lot",
-  note_added: "Note Added",
-};
+import HistoryTimeline from "./HistoryTimeline";
 
 export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
   const [history, setHistory] = useState([]);
@@ -49,7 +10,7 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
 
   useEffect(() => {
     loadHistory();
-  }, [stockNumber]);
+  }, [stockNumber, vin]);
 
   // Add escape key handler
   useEffect(() => {
@@ -58,7 +19,7 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
         onClose();
       }
     };
-    
+
     document.addEventListener('keydown', handleEscape);
     return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
@@ -66,23 +27,39 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
   async function loadHistory() {
     setLoading(true);
     try {
-      // Get current location
-      const { data: locData } = await supabase
-        .from("vehicle_locations")
-        .select("*")
-        .eq("stock_number", stockNumber)
-        .single();
+      // A VIN may arrive full (17) or as a last-6 (some list views only have
+      // that). Full → exact match; partial → tail match. History/location VINs
+      // are always stored full, so eq on a last-6 would match nothing.
+      const cleanVin = (vin || "").toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "");
+      const byVin = (q) => (cleanVin.length === 17 ? q.eq("vin", cleanVin) : q.ilike("vin", `%${cleanVin}`));
 
-      setCurrentLocation(locData);
+      // Current location — query by whichever key we have. Use limit(1) instead
+      // of .single() so a removed car (0 location rows) doesn't abort the whole
+      // load; it just leaves currentLocation null.
+      let locQ = supabase.from("vehicle_locations").select("*");
+      locQ = stockNumber ? locQ.eq("stock_number", stockNumber) : byVin(locQ);
+      const { data: locRows } = await locQ.limit(1);
+      setCurrentLocation(locRows?.[0] || null);
 
-      // Get history
-      const { data, error } = await supabase
+      // History key priority:
+      //   1. Full 17-char VIN — exact and collision-proof (best).
+      //   2. Stock number — precise; preferred over a partial VIN, whose
+      //      last-6 `ilike` can collide across cars and merge timelines.
+      //   3. Partial VIN — best-effort tail match when nothing better exists.
+      let histQ = supabase
         .from("vehicle_location_history")
         .select("*")
-        .eq("stock_number", stockNumber)
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(100);
+      if (cleanVin.length === 17) histQ = histQ.eq("vin", cleanVin);
+      else if (stockNumber) histQ = histQ.eq("stock_number", stockNumber);
+      else if (cleanVin.length >= 4) histQ = histQ.ilike("vin", `%${cleanVin}`);
+      else {
+        setHistory([]);
+        return;
+      }
 
+      const { data, error } = await histQ;
       if (error) throw error;
       setHistory(data || []);
     } catch (err) {
@@ -92,55 +69,6 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
       setLoading(false);
     }
   }
-
-  function formatDate(dateStr) {
-    if (!dateStr) return "";
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  function getEventDescription(event) {
-    const parts = [];
-
-    if (event.previous_location && event.new_location) {
-      parts.push(`${event.previous_location} → ${event.new_location}`);
-    } else if (event.new_location) {
-      parts.push(`Location: ${event.new_location}`);
-    }
-
-    if (event.marketplace && event.marketplace_status) {
-      parts.push(`${event.marketplace}: ${event.marketplace_status}`);
-    }
-
-    if (event.sale_price) {
-      parts.push(`Sale Price: $${event.sale_price.toLocaleString()}`);
-    }
-
-    if (event.buyer_name) {
-      parts.push(`Buyer: ${event.buyer_name}`);
-    }
-
-    if (event.service_provider) {
-      parts.push(`Service: ${event.service_provider}`);
-    }
-
-    if (event.transport_destination) {
-      parts.push(`Destination: ${event.transport_destination}`);
-    }
-
-    return parts.join(" • ");
-  }
-
-  const Icon = ({ eventType }) => {
-    const IconComponent = eventIcons[eventType] || Clock;
-    return <IconComponent className="h-4 w-4" />;
-  };
 
   return (
     <div 
@@ -194,68 +122,8 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400"></div>
             </div>
-          ) : history.length === 0 ? (
-            <div className="text-center py-8 text-slate-400">
-              No history records found
-            </div>
           ) : (
-            <div className="space-y-4">
-              {history.map((event, idx) => (
-                <div key={event.id} className="flex gap-3">
-                  <div className="flex-shrink-0 mt-1">
-                    <div
-                      className={`p-2 rounded-full ${
-                        event.event_type.includes("sold")
-                          ? "bg-green-500/20 text-green-400"
-                          : event.event_type.includes("service")
-                            ? "bg-orange-500/20 text-orange-400"
-                            : event.event_type.includes("transport")
-                              ? "bg-blue-500/20 text-blue-400"
-                              : "bg-slate-800 text-slate-400"
-                      }`}
-                    >
-                      <Icon eventType={event.event_type} />
-                    </div>
-                  </div>
-
-                  <div className="flex-1">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-medium text-white">
-                          {eventLabels[event.event_type] || event.event_type}
-                        </p>
-                        <p className="text-sm text-slate-400 mt-1">
-                          {getEventDescription(event)}
-                        </p>
-                        {event.event_data &&
-                          Object.keys(event.event_data).length > 0 && (
-                            <details className="mt-2">
-                              <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-300">
-                                Additional details
-                              </summary>
-                              <pre className="text-xs text-slate-400 mt-1 p-2 bg-slate-800 rounded overflow-x-auto">
-                                {JSON.stringify(event.event_data, null, 2)}
-                              </pre>
-                            </details>
-                          )}
-                      </div>
-                      <div className="text-right text-sm text-slate-500 ml-4 flex-shrink-0">
-                        <div>{formatDate(event.created_at)}</div>
-                        {event.created_by && (
-                          <div className="text-xs mt-1">
-                            by {event.created_by}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {idx < history.length - 1 && (
-                      <div className="border-l-2 border-slate-700 ml-4 h-4 mt-2"></div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <HistoryTimeline events={history} />
           )}
         </div>
         

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertTriangle, CheckCircle, XCircle, Search, RefreshCw } from 'lucide-react';
 import { supabase } from '../services/supabase';
+import HistoryButton from '../components/HistoryButton';
 
 export default function UnmatchedVehicles() {
   const navigate = useNavigate();
@@ -267,30 +268,33 @@ export default function UnmatchedVehicles() {
                   </div>
                 </div>
                 
-                {vehicle.resolution_status === 'pending' && (
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => {
-                        const notes = prompt('Resolution notes (optional):');
-                        if (notes !== null) resolveVehicle(vehicle.id, notes);
-                      }}
-                      className="p-1.5 rounded bg-green-500/20 text-green-400"
-                      title="Mark as resolved"
-                    >
-                      <CheckCircle size={16} />
-                    </button>
-                    <button
-                      onClick={() => {
-                        const notes = prompt('Why ignore this vehicle?');
-                        if (notes) ignoreVehicle(vehicle.id, notes);
-                      }}
-                      className="p-1.5 rounded bg-gray-500/20 text-gray-400"
-                      title="Ignore"
-                    >
-                      <XCircle size={16} />
-                    </button>
-                  </div>
-                )}
+                <div className="flex gap-1">
+                  <HistoryButton vin={vehicle.vin_last6} className="p-1.5 rounded bg-slate-700/50 text-slate-400" size={16} />
+                  {vehicle.resolution_status === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => {
+                          const notes = prompt('Resolution notes (optional):');
+                          if (notes !== null) resolveVehicle(vehicle.id, notes);
+                        }}
+                        className="p-1.5 rounded bg-green-500/20 text-green-400"
+                        title="Mark as resolved"
+                      >
+                        <CheckCircle size={16} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          const notes = prompt('Why ignore this vehicle?');
+                          if (notes) ignoreVehicle(vehicle.id, notes);
+                        }}
+                        className="p-1.5 rounded bg-gray-500/20 text-gray-400"
+                        title="Ignore"
+                      >
+                        <XCircle size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
               
               {vehicle.notes && (

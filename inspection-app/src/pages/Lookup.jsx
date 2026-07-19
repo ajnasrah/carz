@@ -4,6 +4,7 @@ import { ArrowLeft, Search, ExternalLink, Loader, Clock, X } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { SERVICES, decodeVIN, isValidVIN } from '../services/valuationServices'
+import HistoryButton from '../components/HistoryButton'
 
 // Static Tailwind class map — dynamic `bg-${color}` strings get purged by JIT
 const SVC_STYLES = {
@@ -232,6 +233,7 @@ export default function Lookup() {
                   <p className="text-sm text-white font-semibold">{label}</p>
                   <p className="text-xs text-slate-500 font-mono">{row.vin} · {new Date(row.created_at).toLocaleString()}</p>
                 </button>
+                <HistoryButton vin={row.vin} />
                 <button onClick={() => clearRecent(row.id)} className="p-1 text-slate-600 active:text-red-400">
                   <X size={14} />
                 </button>

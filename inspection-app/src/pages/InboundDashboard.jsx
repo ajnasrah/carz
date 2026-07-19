@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Filter, TrendingUp, AlertTriangle, Clock, CheckCircle, DollarSign, Package, FileText, BarChart3 } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { getInboundStats, INSPECTION_PRIORITIES, CONDITION_GRADES, calculateConditionGrade } from '../services/inboundInspection'
+import HistoryButton from '../components/HistoryButton'
 
 export default function InboundDashboard() {
   const navigate = useNavigate()
@@ -270,7 +271,8 @@ export default function InboundDashboard() {
                   </div>
                 </div>
 
-                <div className="text-right">
+                <div className="flex items-center gap-2">
+                  <HistoryButton stockNumber={inspection.stock_number} vin={inspection.vin} />
                   {inspection.status === 'complete' ? (
                     <CheckCircle size={20} className="text-green-500" />
                   ) : (

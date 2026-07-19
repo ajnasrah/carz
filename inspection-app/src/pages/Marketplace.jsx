@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Search, ChevronDown, Copy, Check } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { toInt } from '../services/utils'
+import HistoryButton from '../components/HistoryButton'
 
 function exportCsv(cars) {
   const cols = [
@@ -282,6 +283,7 @@ export default function Marketplace() {
                       >
                         View Details
                       </Link>
+                      <HistoryButton stockNumber={car.stock_number} vin={vin} />
                       {isAdmin && (
                         <button
                           onClick={() => removeCar(car.stock_number)}

@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { toInt } from '../services/utils'
 import { STARTUP_ITEMS, TEST_DRIVE_ITEMS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
+import HistoryButton from '../components/HistoryButton'
 
 function CopyButton({ text, label }) {
   const [copied, setCopied] = useState(false)
@@ -222,6 +223,7 @@ export default function MarketplaceListing() {
               disabled={!nextId}
               className="p-2 rounded-lg bg-slate-800 disabled:opacity-30"
             ><ChevronRight size={18} /></button>
+            <HistoryButton stockNumber={car.stock_number} vin={fullVin} />
           </div>
         </div>
 

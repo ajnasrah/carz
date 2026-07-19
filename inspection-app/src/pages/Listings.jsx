@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Search, ExternalLink, MapPin, Gauge } from 'lucide-react'
 import { fetchActiveCars } from '../services/buyerMatchData'
+import HistoryButton from '../components/HistoryButton'
 
 // Public, no-auth marketplace of current SmartAuction active inventory (sa_active_cars).
 // Buyer recommendations are intentionally NOT shown here — that's internal sales intel.
@@ -89,6 +90,9 @@ export default function Listings() {
                   ) : (
                     <div className="text-center text-[11px] text-slate-500 font-mono">{c.vin}</div>
                   )}
+                  <div className="mt-2">
+                    <HistoryButton vin={c.vin} />
+                  </div>
                 </div>
               </div>
             ))}

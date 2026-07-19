@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Mic, Square, Search, CheckCircle2, X, AlertCircle, Camera, CameraOff } from 'lucide-react'
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode'
 import { supabase } from '../services/supabase'
+import HistoryButton from '../components/HistoryButton'
 import {
   fetchSections, recordScan, recordUnmatchedVehicle, filterInventory, parseSpokenDigits,
   extractVIN, matchVehicleByVIN,
@@ -515,16 +516,21 @@ export default function LotWalk() {
               const label = [v.vehicle_year, v.vehicle_make, v.vehicle_model]
                 .filter(Boolean).join(' ')
               return (
-                <button
+                <div
                   key={v.stock_number}
-                  onClick={() => submitScan(v, 'manual')}
-                  className="w-full text-left px-3 py-3 rounded-lg bg-slate-800 active:bg-emerald-500/20 border border-slate-700 active:border-emerald-500 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-3 rounded-lg bg-slate-800 border border-slate-700"
                 >
-                  <p className="font-semibold text-white text-sm truncate">{label || `Stock ${v.stock_number}`}</p>
-                  <p className="text-xs text-slate-400 font-mono">
-                    {v.stock_number} · {v.last_6_vin || v.vehicle_vin?.slice(-6)}
-                  </p>
-                </button>
+                  <button
+                    onClick={() => submitScan(v, 'manual')}
+                    className="flex-1 min-w-0 text-left active:opacity-70 transition-opacity"
+                  >
+                    <p className="font-semibold text-white text-sm truncate">{label || `Stock ${v.stock_number}`}</p>
+                    <p className="text-xs text-slate-400 font-mono">
+                      {v.stock_number} · {v.last_6_vin || v.vehicle_vin?.slice(-6)}
+                    </p>
+                  </button>
+                  <HistoryButton stockNumber={v.stock_number} vin={v.vehicle_vin} />
+                </div>
               )
             })}
           </div>

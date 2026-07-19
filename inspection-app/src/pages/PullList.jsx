@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, AlertTriangle, RefreshCw, Plus, Check, X, Clock, Shield } from 'lucide-react'
 import { supabase } from '../services/supabase'
+import HistoryButton from '../components/HistoryButton'
 
 // IMPORTANT: all Tailwind classes MUST be complete static strings (no dynamic
 // `bg-${color}-500` construction) — Tailwind's JIT purges classes it can't
@@ -243,6 +244,7 @@ export default function PullList() {
                     </p>
                   </div>
                   <div className="flex gap-1 shrink-0">
+                    <HistoryButton stockNumber={a.stock_number} vin={a.vin} size={14} className="p-1.5 rounded bg-slate-700 text-slate-400 active:bg-slate-600" />
                     {!isResolved && !isDismissed && (
                       <button
                         onClick={() => dismissAlert(a.id)}

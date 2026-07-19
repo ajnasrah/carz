@@ -99,8 +99,8 @@ export default function VinSearchBar() {
             {!loading && notFound && (
               <div className="text-center py-12">
                 <Package size={48} className="mx-auto text-red-500/30 mb-4" />
-                <p className="text-red-400 font-bold">Not in inventory</p>
-                <p className="text-slate-500 text-xs mt-1">"{term}" not found in current inventory</p>
+                <p className="text-red-400 font-bold">Not found</p>
+                <p className="text-slate-500 text-xs mt-1">"{term}" isn't in inventory, sold records, or tracking history</p>
                 <button onClick={close} className="btn-secondary mt-4 text-xs">Close</button>
               </div>
             )}
