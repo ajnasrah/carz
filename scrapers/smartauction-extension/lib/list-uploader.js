@@ -1662,7 +1662,57 @@
     } catch (e) {
       config.log(`sa_active_cars refresh failed: ${e.message}`, 'warn');
     }
-    
+
+    // Accumulate sold buyers into sa_sold_sales (buyer-match training) and push
+    // brand-new buyers to GoHighLevel — so ONE SmartAuction report also feeds the
+    // buyer pipeline. Without this, sold buyers only landed via the separate Buyer
+    // Match "Sold List" button, so daily SMART_AUCTION uploads never fed GHL.
+    try {
+      const mapS = window.BuyerMatchUploader && window.BuyerMatchUploader.mapSold;
+      if (mapS) {
+        const soldRows = rows.map(mapS)
+          .filter((r) => r.vin && r.buyer_name)
+          .sort((a, b) => String(a.sale_date || '').localeCompare(String(b.sale_date || ''))); // oldest→newest, dedupe keeps newest
+        const byVinSold = new Map();
+        for (const r of soldRows) byVinSold.set(r.vin, r);
+        const soldList = [...byVinSold.values()];
+        const hdr = (extra) => Object.assign({
+          apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
+          'Content-Type': 'application/json',
+        }, extra || {});
+        let soldSaved = 0;
+        for (let i = 0; i < soldList.length; i += 500) {
+          const batch = soldList.slice(i, i + 500);
+          const res = await fetch(`${config.supabaseUrl}/rest/v1/sa_sold_sales?on_conflict=vin`, {
+            method: 'POST', headers: hdr({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+            body: JSON.stringify(batch),
+          });
+          if (res.ok) soldSaved += batch.length;
+          else config.log(`sa_sold_sales batch failed: ${(await res.text()).slice(0, 160)}`, 'warn');
+        }
+        config.log(`sa_sold_sales: saved ${soldSaved} sold buyer row(s)`, 'ok');
+        // New sold rows carry buyer contacts → fire GHL sync (idempotent; only
+        // never-contacted buyers get pushed). Best-effort — never blocks the upload.
+        if (soldSaved > 0) {
+          try {
+            const gres = await fetch(`${config.supabaseUrl}/functions/v1/ghl-lead-sync`, {
+              method: 'POST', headers: hdr(), body: '{}',
+            });
+            const gout = await gres.json().catch(() => ({}));
+            if (gres.ok && gout.ok) {
+              config.log(`GHL: ${gout.pushed} new buyer(s) pushed to GoHighLevel of ${gout.candidates} candidate(s)${gout.failed ? `, ${gout.failed} failed` : ''}`, gout.failed ? 'warn' : 'ok');
+            } else {
+              config.log(`GHL sync failed: ${gout.error || gres.status}`, 'warn');
+            }
+          } catch (ge) {
+            config.log(`GHL sync failed: ${ge.message}`, 'warn');
+          }
+        }
+      }
+    } catch (e) {
+      config.log(`sa_sold_sales / GHL sync failed: ${e.message}`, 'warn');
+    }
+
     // Auto-mark active vehicles as listed in the queue
     const activeVehicles = upserts.filter(u => u.sa_status === 'active');
     if (activeVehicles.length > 0) {
@@ -2425,11 +2475,25 @@
       const noteMap = new Map();
       for (const n of uploadNotes) noteMap.set(n.stock_number, n);
 
-      // Sort: stuck cars (>=7d at same source) first, then oldest→newest
+      // Sort by lane, then run/lot number — the physical order cars run at the
+      // sale, so the list can be walked lane-by-lane. Numeric where possible
+      // (lot "0029" → 29); anything without a lane/run falls to the bottom.
+      // Stuck cars are still flagged red + counted below, just not floated up.
+      const laneRunKey = (v) => {
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return { n: Infinity, s: '' };
+        const m = s.match(/\d+/);
+        return { n: m ? parseInt(m[0], 10) : Infinity, s: s.toUpperCase() };
+      };
       rows.sort((a, b) => {
-        const da = daysSince(locUpdatedByStock.get(a.stock_number));
-        const db = daysSince(locUpdatedByStock.get(b.stock_number));
-        return (db === '' ? -1 : db) - (da === '' ? -1 : da);
+        const na = noteMap.get(a.stock_number) || {};
+        const nb = noteMap.get(b.stock_number) || {};
+        const la = laneRunKey(na.lane), lb = laneRunKey(nb.lane);
+        if (la.n !== lb.n) return la.n - lb.n;
+        if (la.s !== lb.s) return la.s.localeCompare(lb.s);
+        const ra = laneRunKey(na.lot), rb = laneRunKey(nb.lot);
+        if (ra.n !== rb.n) return ra.n - rb.n;
+        return ra.s.localeCompare(rb.s);
       });
       const stuck = rows.filter((r) => {
         const d = daysSince(locUpdatedByStock.get(r.stock_number));

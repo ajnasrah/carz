@@ -223,6 +223,7 @@
         if (!raw.length) throw new Error('Empty file');
 
         const activeRows = [];
+        const soldRows = [];   // full sold rows (buyer contacts) → sa_sold_sales training data
         const soldVins = [];
         const activeVins = [];
         const counts = { active: 0, sold: 0, removed: 0, hold: 0, other: 0 };
@@ -235,22 +236,35 @@
             if (m.vin) { activeRows.push(m); activeVins.push(m.vin); }
           } else if (st === 'sold' && vin) {
             soldVins.push(vin);
+            const m = mapSold(r);
+            if (m.vin && m.buyer_name) soldRows.push(m);   // only rows that carry a buyer feed training
           }
         }
         const uniqActive = dedupeByKey(activeRows, 'vin');
         const uniqSoldVins = [...new Set(soldVins)];
         const uniqActiveVins = [...new Set(activeVins)];
+        // oldest→newest so upsert dedupe keeps the newest sale per VIN (mirrors handle('sold'))
+        soldRows.sort((a, b) => String(a.sale_date || '').localeCompare(String(b.sale_date || '')));
 
         setStatus(id, `Replacing ${uniqActive.length} active…`);
         await clearTable('sa_active_cars');
         if (uniqActive.length) await upsert('sa_active_cars', uniqActive, 'vin');
 
+        // Sold rows carry buyer contacts → accumulate into sa_sold_sales (buyer-match training).
+        setStatus(id, `Adding ${soldRows.length} sold…`);
+        const soldSaved = soldRows.length ? await upsert('sa_sold_sales', soldRows, 'vin') : 0;
+
         setStatus(id, 'Marking sold…');
         const soldMarked = uniqSoldVins.length ? await rpc('marketplace_mark_sold', { p_vins: uniqSoldVins }) : 0;
         const reactivated = uniqActiveVins.length ? await rpc('marketplace_unmark_sold', { p_vins: uniqActiveVins }) : 0;
 
-        setStatus(id, `✓ ${uniqActive.length} active · ${soldMarked} sold hidden`, 'loaded');
-        log(`Full report: ${uniqActive.length} active priced · ${soldMarked} sold hidden · ${reactivated} relisted`, 'ok');
+        // New sold rows just landed → push never-contacted buyers to GHL.
+        setStatus(id, 'Syncing GHL…');
+        const gh = soldRows.length ? await triggerGhlSync() : 'GHL: skipped (no sold rows)';
+
+        setStatus(id, `✓ ${uniqActive.length} active · ${soldSaved} sold saved · ${soldMarked} hidden`, 'loaded');
+        log(`Full report: ${uniqActive.length} active priced · ${soldSaved} sold rows saved · ${soldMarked} sold hidden · ${reactivated} relisted`, 'ok');
+        log(`  ${gh}`, gh.startsWith('GHL sync failed') ? 'err' : 'ok');  // ← new-buyer confirmation: "GHL: N new lead(s) pushed of M"
         log(`  rows — active ${counts.active}, sold ${counts.sold}, removed ${counts.removed}, hold ${counts.hold}, other ${counts.other}`, 'ok');
       } catch (e) {
         setStatus(id, '✗ failed', 'error');
