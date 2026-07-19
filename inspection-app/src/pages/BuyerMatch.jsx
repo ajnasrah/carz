@@ -6,6 +6,8 @@ import {
   saveActive, saveSold, saveRecommendations,
 } from '../services/buyerMatchData'
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
+import BuyerAnalytics from '../components/BuyerAnalytics'
+import HistoryButton from '../components/HistoryButton'
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 const CONF = {
@@ -25,6 +27,7 @@ export default function BuyerMatch() {
   const [expanded, setExpanded] = useState(null)
   const [copied, setCopied] = useState('')
   const [ghl, setGhl] = useState('')
+  const [view, setView] = useState('cars')  // 'cars' = recommendations · 'buyers' = performance analytics
 
   useEffect(() => { load() }, [])
 
@@ -137,6 +140,15 @@ export default function BuyerMatch() {
           </p>
         </div>
         <div className="flex items-center gap-1">
+          <div className="flex rounded-lg border border-slate-700 overflow-hidden mr-1">
+            {['cars', 'buyers'].map((v) => (
+              <button key={v} onClick={() => setView(v)}
+                className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                  view === v ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'}`}>
+                {v}
+              </button>
+            ))}
+          </div>
           <a href="/listings" target="_blank" rel="noreferrer" className="p-2 text-slate-400 hover:text-emerald-400" title="Public listings">
             <ExternalLink size={18} />
           </a>
@@ -167,7 +179,15 @@ export default function BuyerMatch() {
         </button>
       </div>
 
-      {needData ? (
+      {view === 'buyers' ? (
+        sold.length ? (
+          <BuyerAnalytics sold={sold} />
+        ) : (
+          <p className="text-slate-400 text-sm p-4 text-center">
+            Upload a SmartAuction <b>sold</b> report to see buyer performance — top buyers by month and each buyer's MTD/QTD/YTD/90-day trend.
+          </p>
+        )
+      ) : needData ? (
         <p className="text-slate-400 text-sm p-4 text-center">
           Upload the SmartAuction <b>active</b> list and a <b>sold</b> report to see the top-3 buyers for each car.
           Sold data accumulates — upload daily to keep training the model.
@@ -194,7 +214,8 @@ export default function BuyerMatch() {
               const top = res.recommendations[0]
               return (
                 <div key={res.vin} className="bg-slate-800/60 border border-slate-700 rounded-lg overflow-hidden">
-                  <button onClick={() => setExpanded(open ? null : res.vin)} className="w-full text-left p-3">
+                  <div className="flex items-stretch">
+                  <button onClick={() => setExpanded(open ? null : res.vin)} className="flex-1 min-w-0 text-left p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="font-semibold text-slate-100 truncate">
@@ -216,6 +237,10 @@ export default function BuyerMatch() {
                       </div>
                     </div>
                   </button>
+                  <div className="flex items-center pr-2">
+                    <HistoryButton vin={res.vin} />
+                  </div>
+                  </div>
 
                   {open && (
                     <div className="border-t border-slate-700 divide-y divide-slate-700/60">
