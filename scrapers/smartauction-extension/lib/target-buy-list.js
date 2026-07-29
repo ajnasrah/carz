@@ -298,7 +298,7 @@
         net_profit: price - cost,
         days_on_lot: r.days_on_lot == null ? null : Number(r.days_on_lot),
       });
-      seenAuto.add(vin);
+      seenAuto.add(`${vin}|${r.sale_date}`);
     }
 
     const manual = await fetchAll('wholesale_sold',
@@ -306,7 +306,9 @@
     const storedRows = [];
     for (const r of manual) {
       const vin = String(r.vin || '').trim().toUpperCase();
-      if (!vin || seenAuto.has(vin)) continue;
+      // keyed on the sale EVENT, not the car — a bought-back car has two
+    // legitimate sales and both must survive the merge
+    if (!vin || seenAuto.has(`${vin}|${r.sale_date}`)) continue;
       storedRows.push(r);
     }
 
@@ -320,46 +322,23 @@
     return out;
   }
 
-  // Arbitration returns — a car that came back to us. Recorded with an "ARB"
-  // vendor: SMART AUCTION ARB, DAA ARB, UAX ARB, ADESA ARB. Verified to be a
-  // standalone token across all 111 vendors in the book, so \bARB\b is safe.
-  const ARB_VENDOR = /\bARB\b/i;
-
   // ── Clean the sold book ────────────────────────────────────────────────────
-  // Four kinds of row must not shape a buying decision:
-  //   1. Repeat sales of the same VIN — when we buy a car back and resell it,
-  //      the resale carries the arbitration damage (6 of 7 in the book lost
-  //      money, and cost rose every time). Only the original sale reflects the
-  //      buy decision. This is the vendor-agnostic buy-back detector.
-  //   2. Arbitration returns by vendor — 100% loss rate, avg -$2,270, 48 days.
-  //      Catches buy-backs whose original sale predates the window, so the
-  //      duplicate-VIN rule alone would miss them.
-  //   3. Pass-through title transfers ($0 profit, $0 recon) — not real deals.
-  //   4. Extreme outliers at either tail — the car that lost $8k because it was
-  //      a disaster, or made $7k because we got lucky. Neither repeats.
+  // Duplicates are KEPT. The same car sold twice is two real outcomes, and a
+  // buy-back loss is part of what that year/make/model/odometer actually costs
+  // us. No VIN de-duplication, no arbitration-vendor filter.
+  //
+  // Only two kinds of row are dropped:
+  //   1. Pass-through title transfers ($0 profit, $0 recon) — not real deals.
+  //   2. Extreme outliers at either tail — the car that lost $8k because it was
+  //      a disaster, or made $7k because we got lucky. Neither repeats. A
+  //      routine $2-3k buy-back loss sits inside the distribution and stays.
   function cleanBook(rows) {
     const usable = rows.filter((r) => r.net_profit !== null && r.net_profit !== undefined);
 
-    const removedArb = usable.filter((r) => ARB_VENDOR.test(r.vendor || ''));
-    const arbSet = new Set(removedArb);
-    let book = usable.filter((r) => !arbSet.has(r));
-
-    // Same VIN sold more than once = bought back. Keep the earliest sale only.
-    const byVin = new Map();
-    const removedRepeat = [];
-    for (const r of [...book].sort((a, b) =>
-      String(a.sale_date || '').localeCompare(String(b.sale_date || '')))) {
-      if (!r.vin) continue;
-      if (byVin.has(r.vin)) removedRepeat.push(r);
-      else byVin.set(r.vin, r);
-    }
-    const repeatSet = new Set(removedRepeat);
-    book = book.filter((r) => !repeatSet.has(r));
-
-    const removedPassthrough = book.filter(
+    const removedPassthrough = usable.filter(
       (r) => Number(r.net_profit) === 0 && Number(r.added_costs || 0) === 0);
     const ptSet = new Set(removedPassthrough);
-    book = book.filter((r) => !ptSet.has(r));
+    let book = usable.filter((r) => !ptSet.has(r));
 
     book.sort((a, b) => Number(a.net_profit) - Number(b.net_profit));
     const p = book.map((r) => Number(r.net_profit));
@@ -373,10 +352,15 @@
     while (hi > p.length - 1 - maxTrim && p[hi] - p[hi - 1] > OUTLIER_GAP) hi--;
     if (lo > hi) { lo = 0; hi = p.length - 1; }
 
+    // Reported for visibility only — these rows stay in the book.
+    const vinCounts = new Map();
+    for (const r of book) if (r.vin) vinCounts.set(r.vin, (vinCounts.get(r.vin) || 0) + 1);
+    const buyBacks = book.filter((r) => r.vin && vinCounts.get(r.vin) > 1);
+
     const removedOutliers = [...book.slice(0, lo), ...book.slice(hi + 1)];
     book = book.slice(lo, hi + 1);
 
-    return { book, removedOutliers, removedPassthrough, removedArb, removedRepeat };
+    return { book, removedOutliers, removedPassthrough, buyBacks };
   }
 
   function indexBook(book) {
