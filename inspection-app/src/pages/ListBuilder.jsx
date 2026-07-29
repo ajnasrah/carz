@@ -55,15 +55,15 @@ export default function ListBuilder() {
   async function loadBook() {
     setLoading(true); setErr('')
     try {
-      const { rows, autoCount, storedCount } = await fetchSoldBook()
-      if (!rows.length) throw new Error('Sold book is empty — no rows in `sold` or `wholesale_sold`.')
+      const { rows, total, from, to } = await fetchSoldBook()
+      if (!rows.length) throw new Error('Sold book is empty — list_all_sold() returned nothing.')
       const { book: cleaned, removedOutliers, removedPassthrough } = cleanBook(rows)
       setBook({
         byMake: indexBook(cleaned),
         size: cleaned.length,
-        raw: rows.length,
-        autoCount,
-        storedCount,
+        raw: total,
+        from,
+        to,
         removedOutliers,
         removedPassthrough,
       })
@@ -172,18 +172,13 @@ export default function ListBuilder() {
                 Sold book: <span className="font-semibold text-slate-100">{book.size.toLocaleString()}</span> cars
               </span>
               <span className="text-slate-500 text-xs">
-                {book.autoCount.toLocaleString()} auto-ingest · {book.storedCount.toLocaleString()} stored ·
-                {' '}{book.removedOutliers.length} outliers and {book.removedPassthrough.length} pass-throughs removed
+                {book.from} → {book.to} · {book.removedOutliers.length} outliers and{' '}
+                {book.removedPassthrough.length} pass-throughs removed
               </span>
               <button onClick={loadBook} className="text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1">
                 <RefreshCw size={12} /> refresh
               </button>
-              {book.autoCount === 0 && (
-                <span className="text-amber-400/90 text-xs inline-flex items-center gap-1">
-                  <AlertTriangle size={13} />
-                  the auto-ingest <code className="font-mono">sold</code> table is empty — book won't update on its own
-                </span>
-              )}
+
             </div>
           ) : null}
         </div>

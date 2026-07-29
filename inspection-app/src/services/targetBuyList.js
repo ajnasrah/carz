@@ -8,11 +8,10 @@
 // constants, cohort tiers and cleaning rules are deliberately identical — change
 // one, change the other, or the sale-day list and the dashboard will disagree.
 //
-// Sold book comes from two tables, merged by VIN:
-//   sold           — auto-ingest target of the frazer-ingest edge function.
-//                    No net_profit column, so profit = sales_price - total_cost.
-//                    Preferred, because it refreshes without anyone touching it.
-//   wholesale_sold — the same economics loaded from a Frazer sold export.
+// Sold book source:
+//   sold — the full wholesale book, ~6,200 sales over 19 months, fed by the
+//          frazer-ingest edge function. Read via the list_all_sold() RPC because
+//          the table itself is RLS-protected against the anon key.
 
 import { supabase, selectAll } from './supabase'
 
@@ -250,55 +249,64 @@ function median(a) {
 }
 
 // ── Sold book ────────────────────────────────────────────────────────────────
-// Rows are returned WITHOUT de-duplicating VINs. `sold` is truncated and
-// re-inserted on every ingest and has no VIN key, so a bought-back car legitimately
-// appears twice. cleanBook owns the "keep the earliest sale" rule so there is one
-// place that decides, rather than whichever row happened to be written last.
+// The sold book: every wholesale sale we've made, with its economics.
+//
+// Read through the list_all_sold() RPC rather than the table directly — `sold`
+// is RLS-protected, so an anon SELECT silently returns zero rows. The RPC is
+// SECURITY DEFINER and granted to anon for exactly this reason. Reading the
+// table straight was why this engine was previously scoring against a 57-day
+// spreadsheet import instead of the full 19-month book.
+//
+// Frazer stores these columns as text, so dates and money need coercing.
+const rpcNum = (x) => {
+  if (x === null || x === undefined || x === '') return null
+  const n = parseFloat(String(x).replace(/[^0-9.-]/g, ''))
+  return Number.isFinite(n) ? n : null
+}
+
+// Frazer writes sale_date as MM/DD/YY.
+function frazerDate(v) {
+  if (!v) return null
+  const m = String(v).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/)
+  if (!m) return toISODate(v)
+  const yy = m[3].length === 2 ? `20${m[3]}` : m[3]
+  return `${yy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+}
+
 export async function fetchSoldBook() {
-  const autoRows = []
-  const seenAuto = new Set()
-
-  let auto = []
-  try {
-    auto = await selectAll(() => supabase.from('sold').select(
-      'vehicle_vin,vehicle_year,vehicle_make,vehicle_model,mileage,sale_date,sales_price,total_cost,added_costs,days_on_lot,vendor'))
-  } catch {
-    // table may not exist / be empty — the manual book covers it
-  }
-  for (const r of auto) {
-    const vin = String(r.vehicle_vin || '').trim().toUpperCase()
-    if (vin.length !== 17) continue
-    const price = r.sales_price == null ? null : Number(r.sales_price)
-    const cost = r.total_cost == null ? null : Number(r.total_cost)
-    // `sold` has no net_profit column. The identity holds on 697/701 rows of the
-    // Frazer book; the few that differ carry a flat $499 adjustment.
-    if (price == null || cost == null) continue
-    autoRows.push({
-      vin, year: r.vehicle_year, make: r.vehicle_make, model: r.vehicle_model,
-      odometer: r.mileage == null ? null : Number(r.mileage),
-      sale_date: r.sale_date, sale_price: price, vendor: r.vendor,
-      added_costs: r.added_costs == null ? null : Number(r.added_costs),
-      net_profit: price - cost,
-      days_on_lot: r.days_on_lot == null ? null : Number(r.days_on_lot),
-    })
-    seenAuto.add(`${vin}|${r.sale_date}`)
+  const rows = []
+  const PAGE = 1000
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase.rpc('list_all_sold').range(offset, offset + PAGE - 1)
+    if (error) throw new Error(`list_all_sold failed: ${error.message}`)
+    if (!data || !data.length) break
+    rows.push(...data)
+    if (data.length < PAGE) break
+    if (offset > 100000) break // safety stop
   }
 
-  const manual = await selectAll(() => supabase.from('wholesale_sold').select(
-    'vin,year,make,model,odometer,sale_date,sale_price,added_costs,net_profit,days_on_lot,vendor'))
-  const storedRows = []
-  for (const r of manual) {
-    const vin = String(r.vin || '').trim().toUpperCase()
-    // keyed on the sale EVENT, not the car — a bought-back car has two
-  // legitimate sales and both must survive the merge
-  if (!vin || seenAuto.has(`${vin}|${r.sale_date}`)) continue
-    storedRows.push(r)
-  }
+  const mapped = rows.map((r) => ({
+    vin: String(r.vehicle_vin || '').trim().toUpperCase(),
+    year: rpcNum(r.vehicle_year),
+    make: r.vehicle_make,
+    model: r.vehicle_model,
+    odometer: rpcNum(r.mileage),
+    sale_date: frazerDate(r.sale_date),
+    sale_price: rpcNum(r.sales_price),
+    total_cost: rpcNum(r.total_cost),
+    added_costs: rpcNum(r.added_costs),
+    net_profit: rpcNum(r.profit_on_sale),
+    days_on_lot: rpcNum(r.days_on_lot),
+    vendor: r.vendor,
+    buyer: r.buyer,
+  }))
 
+  const dates = mapped.map((r) => r.sale_date).filter(Boolean).sort()
   return {
-    rows: [...autoRows, ...storedRows],
-    autoCount: autoRows.length,
-    storedCount: storedRows.length,
+    rows: mapped,
+    total: mapped.length,
+    from: dates[0] || null,
+    to: dates[dates.length - 1] || null,
   }
 }
 

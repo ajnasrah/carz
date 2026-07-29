@@ -9,15 +9,10 @@
 // The sold book is re-pulled from Supabase on EVERY upload — no caching — so the
 // list always reflects what we've sold as of right now.
 //
-// The sold book is read from two Supabase tables and merged by VIN:
-//   sold            — auto-ingest target of the frazer-ingest edge function
-//                     (Power Automate -> ?target=sold). Carries no net_profit
-//                     column, so profit is derived as sales_price - total_cost.
-//                     Preferred when present, since it refreshes on its own.
-//   wholesale_sold  — the same economics loaded from a Frazer sold export.
-//                     Backstop for whatever `sold` hasn't picked up.
-// Nothing here needs changing when the Power Automate "sold" flow is switched
-// on; `sold` simply starts winning.
+// Sold book source:
+//   sold — the full wholesale book, ~6,200 sales over 19 months, fed by the
+//          frazer-ingest edge function. Read via the list_all_sold() RPC because
+//          the table itself is RLS-protected against the anon key.
 //
 // Currently wired for the Edge Pipeline pre-sale format. ADESA / Manheim plug in
 // by adding an entry to FORMATS below.
@@ -274,80 +269,72 @@
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
   }
 
-  // ── Supabase reads (fresh on every upload) ─────────────────────────────────
-  // PostgREST caps an unbounded select at 1000 rows, so page explicitly.
-  async function fetchAll(table, select, order) {
-    const out = [];
+  // The sold book: every wholesale sale we've made, with its economics.
+  //
+  // Read through the list_all_sold() RPC rather than the table directly — `sold`
+  // is RLS-protected, so an anon SELECT silently returns zero rows. The RPC is
+  // SECURITY DEFINER and granted to anon for exactly this reason. Reading the
+  // table straight was why this engine previously scored against a 57-day
+  // spreadsheet import instead of the full 19-month book.
+  //
+  // Frazer stores these columns as text, so dates and money need coercing.
+  const rpcNum = (x) => {
+    if (x === null || x === undefined || x === '') return null;
+    const n = parseFloat(String(x).replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // Frazer writes sale_date as MM/DD/YY.
+  function frazerDate(v) {
+    if (!v) return null;
+    const m = String(v).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (!m) return toISODate(v);
+    const yy = m[3].length === 2 ? `20${m[3]}` : m[3];
+    return `${yy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  }
+
+  async function fetchSoldBook(log) {
+    const rows = [];
     const PAGE = 1000;
     for (let offset = 0; ; offset += PAGE) {
-      const url = `${cfg.supabaseUrl}/rest/v1/${table}?select=${select}` +
-        (order ? `&order=${order}` : '') + `&limit=${PAGE}&offset=${offset}`;
-      const res = await fetch(url, {
-        headers: { apikey: cfg.supabaseKey, Authorization: `Bearer ${cfg.supabaseKey}` },
+      const res = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/list_all_sold?limit=${PAGE}&offset=${offset}`, {
+        method: 'POST',
+        headers: {
+          apikey: cfg.supabaseKey,
+          Authorization: `Bearer ${cfg.supabaseKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
       });
-      if (!res.ok) throw new Error(`${table} fetch failed (${res.status})`);
+      if (!res.ok) throw new Error(`list_all_sold failed (${res.status})`);
       const batch = await res.json();
-      out.push(...batch);
+      if (!Array.isArray(batch) || !batch.length) break;
+      rows.push(...batch);
       if (batch.length < PAGE) break;
       if (offset > 100000) break; // safety stop
     }
-    return out;
-  }
 
-  // Pull both sold sources and merge by VIN. `sold` wins where it has a row,
-  // because it is the one that refreshes without anybody touching it.
-  // Rows are returned WITHOUT de-duplicating VINs — `sold` is truncated and
-  // re-inserted each ingest and has no VIN key, so a bought-back car legitimately
-  // appears twice. cleanBook owns the "keep the earliest sale" rule.
-  async function fetchSoldBook(log) {
-    const autoRows = [];
-    const seenAuto = new Set();
+    const mapped = rows.map((r) => ({
+      vin: String(r.vehicle_vin || '').trim().toUpperCase(),
+      year: rpcNum(r.vehicle_year),
+      make: r.vehicle_make,
+      model: r.vehicle_model,
+      odometer: rpcNum(r.mileage),
+      sale_date: frazerDate(r.sale_date),
+      sale_price: rpcNum(r.sales_price),
+      total_cost: rpcNum(r.total_cost),
+      added_costs: rpcNum(r.added_costs),
+      net_profit: rpcNum(r.profit_on_sale),
+      days_on_lot: rpcNum(r.days_on_lot),
+      vendor: r.vendor,
+      buyer: r.buyer,
+    }));
 
-    let auto = [];
-    try {
-      auto = await fetchAll('sold',
-        'vehicle_vin,vehicle_year,vehicle_make,vehicle_model,mileage,sale_date,sales_price,total_cost,added_costs,days_on_lot,vendor');
-    } catch (e) {
-      if (log) log(`  auto-ingest 'sold' unavailable (${e.message})`, '');
-    }
-    for (const r of auto) {
-      const vin = String(r.vehicle_vin || '').trim().toUpperCase();
-      if (vin.length !== 17) continue;
-      const price = r.sales_price == null ? null : Number(r.sales_price);
-      const cost = r.total_cost == null ? null : Number(r.total_cost);
-      // `sold` has no net_profit column. The identity holds on 697/701 rows of
-      // the Frazer book; the handful that differ carry a flat $499 adjustment.
-      if (price == null || cost == null) continue;
-      autoRows.push({
-        vin, year: r.vehicle_year, make: r.vehicle_make, model: r.vehicle_model,
-        odometer: r.mileage == null ? null : Number(r.mileage),
-        sale_date: r.sale_date, sale_price: price, vendor: r.vendor,
-        added_costs: r.added_costs == null ? null : Number(r.added_costs),
-        net_profit: price - cost,
-        days_on_lot: r.days_on_lot == null ? null : Number(r.days_on_lot),
-      });
-      seenAuto.add(`${vin}|${r.sale_date}`);
-    }
-
-    const manual = await fetchAll('wholesale_sold',
-      'vin,year,make,model,odometer,sale_date,sale_price,added_costs,net_profit,days_on_lot,vendor');
-    const storedRows = [];
-    for (const r of manual) {
-      const vin = String(r.vin || '').trim().toUpperCase();
-      // keyed on the sale EVENT, not the car — a bought-back car has two
-    // legitimate sales and both must survive the merge
-    if (!vin || seenAuto.has(`${vin}|${r.sale_date}`)) continue;
-      storedRows.push(r);
-    }
-
-    const out = [...autoRows, ...storedRows];
     if (log) {
-      log(`Sold book: ${autoRows.length} auto-ingest + ${storedRows.length} stored = ${out.length}`, 'ok');
-      if (!auto.length) {
-        log(`  note: 'sold' table is empty — book is frozen until the Frazer sold flow runs`, '');
-      }
+      const ds = mapped.map((r) => r.sale_date).filter(Boolean).sort();
+      log(`Sold book: ${mapped.length} sales${ds.length ? ` (${ds[0]} → ${ds[ds.length - 1]})` : ''}`, 'ok');
     }
-    return out;
+    return mapped;
   }
 
   // ── Clean the sold book ────────────────────────────────────────────────────
@@ -560,7 +547,7 @@
 
     setStatus('pulling sold book…', '');
     const rows = await fetchSoldBook(log);
-    if (!rows.length) throw new Error('sold book is empty — no rows in `sold` or `wholesale_sold`');
+    if (!rows.length) throw new Error('sold book is empty — list_all_sold() returned nothing');
 
     const { book, removedOutliers, removedPassthrough } = cleanBook(rows);
     log(`  ${rows.length} rows → ${book.length} after cleaning`, 'ok');
