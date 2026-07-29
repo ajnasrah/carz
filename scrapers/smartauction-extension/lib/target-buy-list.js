@@ -519,6 +519,8 @@
     ['Miles', 'odo', 10], ['Color', 'color', 11], ['CR Grade', 'grade', 9], ['Has CR', 'hasCR', 7],
     ['Photos', 'pics', 7], ['Drivetrain', 'drivetrain', 11], ['Engine', 'engine', 16],
     ['Transmission', 'transmission', 13], ['Fuel', 'fuel', 9],
+    ['Exact Matches', 'exactN', 13], ['Exact Avg Profit', 'exactProfit', 15],
+    ['Exact Med Profit', 'exactMedProfit', 15], ['Exact Avg Days', 'exactDays', 13],
     ['Avg Profit', 'meanProfit', 11], ['Median Profit', 'medProfit', 13], ['Avg Days', 'meanDays', 10],
     ['% Cleared $1k', 'hitRate', 13], ['Cars Matched', 'n', 12], ['Match Tier', 'tier', 11],
     ['Our Median Resale', 'medResale', 16], ['MMR / Auction Value', 'auctionValue', 18],
@@ -526,8 +528,8 @@
     ['Seller', 'seller', 22], ['Location', 'location', 22], ['Channel', 'channel', 12],
     ['Title Status', 'titleStatus', 13], ['Announcements', 'announcements', 30],
   ];
-  const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValue']);
-  const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year']);
+  const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValue', 'exactProfit', 'exactMedProfit']);
+  const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year', 'exactN', 'exactDays']);
 
   function exportXlsx() {
     if (!lastResult || typeof window.XLSXWriter === 'undefined') return;
