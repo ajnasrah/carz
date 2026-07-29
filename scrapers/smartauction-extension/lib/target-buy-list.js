@@ -268,13 +268,17 @@
 
   // Pull both sold sources and merge by VIN. `sold` wins where it has a row,
   // because it is the one that refreshes without anybody touching it.
+  // Rows are returned WITHOUT de-duplicating VINs — `sold` is truncated and
+  // re-inserted each ingest and has no VIN key, so a bought-back car legitimately
+  // appears twice. cleanBook owns the "keep the earliest sale" rule.
   async function fetchSoldBook(log) {
-    const merged = new Map();
+    const autoRows = [];
+    const seenAuto = new Set();
 
     let auto = [];
     try {
       auto = await fetchAll('sold',
-        'vehicle_vin,vehicle_year,vehicle_make,vehicle_model,mileage,sale_date,sales_price,total_cost,added_costs,days_on_lot');
+        'vehicle_vin,vehicle_year,vehicle_make,vehicle_model,mileage,sale_date,sales_price,total_cost,added_costs,days_on_lot,vendor');
     } catch (e) {
       if (log) log(`  auto-ingest 'sold' unavailable (${e.message})`, '');
     }
@@ -286,46 +290,76 @@
       // `sold` has no net_profit column. The identity holds on 697/701 rows of
       // the Frazer book; the handful that differ carry a flat $499 adjustment.
       if (price == null || cost == null) continue;
-      merged.set(vin, {
+      autoRows.push({
         vin, year: r.vehicle_year, make: r.vehicle_make, model: r.vehicle_model,
         odometer: r.mileage == null ? null : Number(r.mileage),
-        sale_date: r.sale_date, sale_price: price,
+        sale_date: r.sale_date, sale_price: price, vendor: r.vendor,
         added_costs: r.added_costs == null ? null : Number(r.added_costs),
         net_profit: price - cost,
         days_on_lot: r.days_on_lot == null ? null : Number(r.days_on_lot),
       });
+      seenAuto.add(vin);
     }
 
     const manual = await fetchAll('wholesale_sold',
-      'vin,year,make,model,odometer,sale_date,sale_price,added_costs,net_profit,days_on_lot');
-    let added = 0;
+      'vin,year,make,model,odometer,sale_date,sale_price,added_costs,net_profit,days_on_lot,vendor');
+    const storedRows = [];
     for (const r of manual) {
       const vin = String(r.vin || '').trim().toUpperCase();
-      if (!vin || merged.has(vin)) continue;
-      merged.set(vin, r);
-      added++;
+      if (!vin || seenAuto.has(vin)) continue;
+      storedRows.push(r);
     }
 
+    const out = [...autoRows, ...storedRows];
     if (log) {
-      log(`Sold book: ${auto.length} auto-ingest + ${added} stored = ${merged.size}`, 'ok');
+      log(`Sold book: ${autoRows.length} auto-ingest + ${storedRows.length} stored = ${out.length}`, 'ok');
       if (!auto.length) {
         log(`  note: 'sold' table is empty — book is frozen until the Frazer sold flow runs`, '');
       }
     }
-    return [...merged.values()];
+    return out;
   }
 
+  // Arbitration returns — a car that came back to us. Recorded with an "ARB"
+  // vendor: SMART AUCTION ARB, DAA ARB, UAX ARB, ADESA ARB. Verified to be a
+  // standalone token across all 111 vendors in the book, so \bARB\b is safe.
+  const ARB_VENDOR = /\bARB\b/i;
+
   // ── Clean the sold book ────────────────────────────────────────────────────
-  // Two kinds of rows must not shape a buying decision:
-  //   1. Pass-through title transfers — $0 profit, $0 recon. Not wholesale deals.
-  //   2. Extreme outliers at either tail — the car that lost $8k because it was a
-  //      disaster, or made $7k because we got lucky. Neither repeats.
+  // Four kinds of row must not shape a buying decision:
+  //   1. Repeat sales of the same VIN — when we buy a car back and resell it,
+  //      the resale carries the arbitration damage (6 of 7 in the book lost
+  //      money, and cost rose every time). Only the original sale reflects the
+  //      buy decision. This is the vendor-agnostic buy-back detector.
+  //   2. Arbitration returns by vendor — 100% loss rate, avg -$2,270, 48 days.
+  //      Catches buy-backs whose original sale predates the window, so the
+  //      duplicate-VIN rule alone would miss them.
+  //   3. Pass-through title transfers ($0 profit, $0 recon) — not real deals.
+  //   4. Extreme outliers at either tail — the car that lost $8k because it was
+  //      a disaster, or made $7k because we got lucky. Neither repeats.
   function cleanBook(rows) {
     const usable = rows.filter((r) => r.net_profit !== null && r.net_profit !== undefined);
 
-    const passthrough = usable.filter((r) => Number(r.net_profit) === 0 && Number(r.added_costs || 0) === 0);
-    const ptSet = new Set(passthrough.map((r) => r.vin));
-    let book = usable.filter((r) => !ptSet.has(r.vin));
+    const removedArb = usable.filter((r) => ARB_VENDOR.test(r.vendor || ''));
+    const arbSet = new Set(removedArb);
+    let book = usable.filter((r) => !arbSet.has(r));
+
+    // Same VIN sold more than once = bought back. Keep the earliest sale only.
+    const byVin = new Map();
+    const removedRepeat = [];
+    for (const r of [...book].sort((a, b) =>
+      String(a.sale_date || '').localeCompare(String(b.sale_date || '')))) {
+      if (!r.vin) continue;
+      if (byVin.has(r.vin)) removedRepeat.push(r);
+      else byVin.set(r.vin, r);
+    }
+    const repeatSet = new Set(removedRepeat);
+    book = book.filter((r) => !repeatSet.has(r));
+
+    const removedPassthrough = book.filter(
+      (r) => Number(r.net_profit) === 0 && Number(r.added_costs || 0) === 0);
+    const ptSet = new Set(removedPassthrough);
+    book = book.filter((r) => !ptSet.has(r));
 
     book.sort((a, b) => Number(a.net_profit) - Number(b.net_profit));
     const p = book.map((r) => Number(r.net_profit));
@@ -339,10 +373,10 @@
     while (hi > p.length - 1 - maxTrim && p[hi] - p[hi - 1] > OUTLIER_GAP) hi--;
     if (lo > hi) { lo = 0; hi = p.length - 1; }
 
-    const removed = [...book.slice(0, lo), ...book.slice(hi + 1)];
+    const removedOutliers = [...book.slice(0, lo), ...book.slice(hi + 1)];
     book = book.slice(lo, hi + 1);
 
-    return { book, removedOutliers: removed, removedPassthrough: passthrough };
+    return { book, removedOutliers, removedPassthrough, removedArb, removedRepeat };
   }
 
   function indexBook(book) {

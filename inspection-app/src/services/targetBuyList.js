@@ -221,13 +221,18 @@ function median(a) {
 }
 
 // ── Sold book ────────────────────────────────────────────────────────────────
+// Rows are returned WITHOUT de-duplicating VINs. `sold` is truncated and
+// re-inserted on every ingest and has no VIN key, so a bought-back car legitimately
+// appears twice. cleanBook owns the "keep the earliest sale" rule so there is one
+// place that decides, rather than whichever row happened to be written last.
 export async function fetchSoldBook() {
-  const merged = new Map()
+  const autoRows = []
+  const seenAuto = new Set()
 
   let auto = []
   try {
     auto = await selectAll(() => supabase.from('sold').select(
-      'vehicle_vin,vehicle_year,vehicle_make,vehicle_model,mileage,sale_date,sales_price,total_cost,added_costs,days_on_lot'))
+      'vehicle_vin,vehicle_year,vehicle_make,vehicle_model,mileage,sale_date,sales_price,total_cost,added_costs,days_on_lot,vendor'))
   } catch {
     // table may not exist / be empty — the manual book covers it
   }
@@ -239,40 +244,71 @@ export async function fetchSoldBook() {
     // `sold` has no net_profit column. The identity holds on 697/701 rows of the
     // Frazer book; the few that differ carry a flat $499 adjustment.
     if (price == null || cost == null) continue
-    merged.set(vin, {
+    autoRows.push({
       vin, year: r.vehicle_year, make: r.vehicle_make, model: r.vehicle_model,
       odometer: r.mileage == null ? null : Number(r.mileage),
-      sale_date: r.sale_date, sale_price: price,
+      sale_date: r.sale_date, sale_price: price, vendor: r.vendor,
       added_costs: r.added_costs == null ? null : Number(r.added_costs),
       net_profit: price - cost,
       days_on_lot: r.days_on_lot == null ? null : Number(r.days_on_lot),
     })
+    seenAuto.add(vin)
   }
 
   const manual = await selectAll(() => supabase.from('wholesale_sold').select(
-    'vin,year,make,model,odometer,sale_date,sale_price,added_costs,net_profit,days_on_lot'))
-  let stored = 0
+    'vin,year,make,model,odometer,sale_date,sale_price,added_costs,net_profit,days_on_lot,vendor'))
+  const storedRows = []
   for (const r of manual) {
     const vin = String(r.vin || '').trim().toUpperCase()
-    if (!vin || merged.has(vin)) continue
-    merged.set(vin, r)
-    stored++
+    if (!vin || seenAuto.has(vin)) continue
+    storedRows.push(r)
   }
 
-  return { rows: [...merged.values()], autoCount: auto.length, storedCount: stored }
+  return {
+    rows: [...autoRows, ...storedRows],
+    autoCount: autoRows.length,
+    storedCount: storedRows.length,
+  }
 }
 
+// Arbitration returns — a car that came back to us. Recorded with an "ARB"
+// vendor: SMART AUCTION ARB, DAA ARB, UAX ARB, ADESA ARB. Verified to be a
+// standalone token across all 111 vendors in the book, so \bARB\b is safe.
+const ARB_VENDOR = /\bARB\b/i
+
 // ── Clean the book ───────────────────────────────────────────────────────────
-// Two kinds of row must not shape a buying decision: pass-through title
-// transfers ($0 profit, $0 recon), and extreme outliers at either tail — the car
-// that lost $8k because it was a disaster, or made $7k because we got lucky.
+// Four kinds of row must not shape a buying decision:
+//   1. Arbitration returns — 100% loss rate, avg -$2,270, 48 days on lot. These
+//      are a car coming back, not a purchase that went badly, and counting them
+//      against a year/make/model/odometer poisons that cohort.
+//   2. Repeat sales of the same VIN — when we buy a car back and resell it, the
+//      resale carries the arbitration damage (6 of 7 in the book lost money, and
+//      cost rose every time). Only the original sale reflects the buy decision.
+//   3. Pass-through title transfers ($0 profit, $0 recon) — not wholesale deals.
+//   4. Extreme outliers at either tail — the car that lost $8k because it was a
+//      disaster, or made $7k because we got lucky. Neither repeats.
 export function cleanBook(rows) {
   const usable = rows.filter((r) => r.net_profit !== null && r.net_profit !== undefined)
 
-  const removedPassthrough = usable.filter(
+  const removedArb = usable.filter((r) => ARB_VENDOR.test(r.vendor || ''))
+  const arbSet = new Set(removedArb)
+  let book = usable.filter((r) => !arbSet.has(r))
+
+  // Same VIN sold more than once = bought back. Keep the earliest sale only.
+  const byVin = new Map()
+  const removedRepeat = []
+  for (const r of [...book].sort((a, b) => String(a.sale_date || '').localeCompare(String(b.sale_date || '')))) {
+    if (!r.vin) continue
+    if (byVin.has(r.vin)) removedRepeat.push(r)
+    else byVin.set(r.vin, r)
+  }
+  const repeatSet = new Set(removedRepeat)
+  book = book.filter((r) => !repeatSet.has(r))
+
+  const removedPassthrough = book.filter(
     (r) => Number(r.net_profit) === 0 && Number(r.added_costs || 0) === 0)
-  const ptSet = new Set(removedPassthrough.map((r) => r.vin))
-  let book = usable.filter((r) => !ptSet.has(r.vin))
+  const ptSet = new Set(removedPassthrough)
+  book = book.filter((r) => !ptSet.has(r))
 
   book.sort((a, b) => Number(a.net_profit) - Number(b.net_profit))
   const p = book.map((r) => Number(r.net_profit))
@@ -289,7 +325,7 @@ export function cleanBook(rows) {
   const removedOutliers = [...book.slice(0, lo), ...book.slice(hi + 1)]
   book = book.slice(lo, hi + 1)
 
-  return { book, removedOutliers, removedPassthrough }
+  return { book, removedOutliers, removedPassthrough, removedArb, removedRepeat }
 }
 
 export function indexBook(book) {
