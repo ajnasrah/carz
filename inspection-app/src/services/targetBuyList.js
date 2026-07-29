@@ -42,6 +42,7 @@ const TIERS = [
   { id: 'broad', label: 'broad', years: 3, miles: 40000, min: 5, cap: 'WATCH' },
 ]
 
+const SAME_YEAR_VETO_N = 5 // model-years with this many sales can veto a target
 const MIN_VALID_ODO = 100 // below this the run list's mileage is a data error
 const OUTLIER_GAP = 500 // median consecutive profit gap is ~$5; $500 is a real break
 
@@ -204,11 +205,39 @@ function normModel(model, make) {
   return s
 }
 
-// Prefix match absorbs trim tails: SILVERADO vs SILVERADO1500.
+// Tonnage is part of a vehicle's identity; trim and body style are not. A bare
+// prefix match let a Sierra 3500HD draw the same 20 half-tons as a Sierra 1500 —
+// a one-ton dually priced off half-tons is a different truck, different buyer,
+// different market. Trim variants (Unlimited, Sport) DO comp against each other:
+// all Wranglers are Wranglers.
+const SERIES_RE = /(1500|2500|3500)/
+const TRIM_RE = /UNLIMITED|UNLIMI|SPORT/
+
+function modelParts(norm) {
+  // The sold export truncates at 15 chars, so "WRANGLER UNLIMI" has to reduce to
+  // the same nameplate as "WRANGLER".
+  let base = norm.replace(TRIM_RE, '')
+
+  let series = ''
+  const stem = (base.match(/^[A-Z]+/) || [''])[0]
+  // Only read digits as a series when the alphabetic stem is itself the
+  // nameplate (SILVERADO 1500). For F150 / F250 the digits ARE the nameplate.
+  if (stem.length >= 4) {
+    const m = base.match(SERIES_RE)
+    if (m) { series = m[1]; base = base.replace(SERIES_RE, '') }
+  }
+  return { base: base.replace(/HD$/, ''), series }
+}
+
 function modelMatch(a, b) {
   if (!a || !b) return false
-  if (a === b) return true
-  const [s, l] = a.length < b.length ? [a, b] : [b, a]
+  const A = modelParts(a), B = modelParts(b)
+  // A heavy-duty truck must never borrow half-ton history. Where a side is
+  // silent on series — the sold export usually is — treat it as a half-ton,
+  // which is the dominant case: 1500 still matches, 2500 and 3500 cannot.
+  if ((A.series || '1500') !== (B.series || '1500')) return false
+  if (A.base === B.base) return true
+  const [s, l] = A.base.length < B.base.length ? [A.base, B.base] : [B.base, A.base]
   return s.length >= 4 && l.startsWith(s)
 }
 
@@ -329,6 +358,8 @@ export function indexBook(book) {
       days: r.days_on_lot == null ? null : Number(r.days_on_lot),
       price: r.sale_price == null ? null : Number(r.sale_price),
       nmodel: normModel(r.model, r.make),
+      vin: r.vin,
+      saleDate: r.sale_date,
     })
   }
   return byMake
@@ -336,7 +367,7 @@ export function indexBook(book) {
 
 // ── Scoring ──────────────────────────────────────────────────────────────────
 function cohortStats(cohort) {
-  if (!cohort.length) return { n: 0, meanProfit: null, medProfit: null, meanDays: null, hitRate: null, medResale: null }
+  if (!cohort.length) return { n: 0, meanProfit: null, medProfit: null, meanDays: null, hitRate: null, lossRate: null, medResale: null }
   const profits = cohort.map((s) => s.profit)
   const days = cohort.map((s) => s.days).filter((d) => d != null)
   const prices = cohort.map((s) => s.price).filter((v) => v != null)
@@ -346,6 +377,7 @@ function cohortStats(cohort) {
     medProfit: median(profits),
     meanDays: days.length ? mean(days) : null,
     hitRate: (profits.filter((v) => v > 1000).length / profits.length) * 100,
+    lossRate: (profits.filter((v) => v <= 0).length / profits.length) * 100,
     medResale: median(prices),
   }
 }
@@ -366,65 +398,96 @@ export function evaluateCar(car, byMake) {
   const base = {
     ...car, badOdo, tier: null, n: 0, meanProfit: null, medProfit: null,
     meanDays: null, hitRate: null, confidence: 'NONE', medResale: null,
-    // The exact-car cohort is reported on every row, match or not.
-    exactN: 0, exactProfit: null, exactMedProfit: null, exactDays: null, exactHit: null,
+    exactN: 0, exactProfit: null, exactMedProfit: null, exactDays: null,
+    exactHit: null, exactLoss: null, sameYearN: 0, sameYearProfit: null,
+    compPool: '', compShared: 1,
   }
 
-  if (!pool.length) return { ...base, verdict: 'PASS', why: 'No record of us selling this model' }
-  // A missing year makes every year-distance NaN, and NaN fails every
-  // comparison — the car would silently match cars of any age.
+  if (!pool.length) return { ...base, verdict: 'NO DATA', why: 'No record of us selling this model' }
   if (car.year == null) {
-    return { ...base, n: pool.length, verdict: 'PASS', why: 'Run list has no year — cannot match on age' }
+    return { ...base, n: pool.length, verdict: 'NO DATA', why: 'Run list has no year — cannot match on age' }
   }
   if (badOdo) {
     return {
-      ...base, n: pool.length, verdict: 'PASS',
+      ...base, n: pool.length, verdict: 'NO DATA',
       why: `Run-list mileage looks wrong (${car.odo == null ? 'blank' : car.odo}) — can't match on miles`,
     }
   }
 
-  // Always compute how this exact car has performed, even when there are too
-  // few to act on — seeing "we've sold 1 of these" is itself the answer.
-  const exact = cohortStats(inTier(pool, car, EXACT))
-  const withExact = {
-    ...base,
-    exactN: exact.n, exactProfit: exact.meanProfit, exactMedProfit: exact.medProfit,
-    exactDays: exact.meanDays, exactHit: exact.hitRate,
-  }
+  // The exact car: same year, same model, odometer in range. This is the only
+  // cohort allowed to produce a verdict.
+  const exactCohort = inTier(pool, car, EXACT)
+  const exact = cohortStats(exactCohort)
+  // Two run-list cars close enough to draw the same sold cars are one bet, not
+  // two. Stamp the cohort so shared evidence is visible instead of implied.
+  const compPool = exactCohort.length
+    ? exactCohort.map((s) => `${s.vin}|${s.saleDate}`).sort().join(',')
+    : ''
 
+  // Same year, any mileage. Used ONLY to veto — never to promote. It catches
+  // model-years that are broadly bad (2022 F150: 7 sold, -$1,776 avg) which a
+  // narrow mileage band can miss.
+  const sameYearCohort = pool.filter((s) => s.year === car.year)
+  const sameYear = cohortStats(sameYearCohort)
+
+  // Looser cohorts are computed for context and shown in their own columns.
+  // They never set the verdict and never drive the ranking.
+  let context = null
   for (const tier of TIERS) {
+    if (tier.id === 'exact') continue
     const cohort = inTier(pool, car, tier)
     if (cohort.length < tier.min) continue
-    const st = cohortStats(cohort)
+    context = { tier, st: cohortStats(cohort) }
+    break
+  }
 
-    let verdict = 'PASS'
-    if (st.meanDays != null && st.meanProfit > TARGET_PROFIT && st.meanDays < TARGET_DAYS && st.medProfit > TARGET_MEDIAN_FLOOR) {
-      verdict = 'TARGET'
-    } else if (st.meanDays != null && st.meanProfit > WATCH_PROFIT && st.meanDays < WATCH_DAYS) {
-      verdict = 'WATCH'
-    }
-    // Only an exact-car match may call something a TARGET.
-    if (verdict === 'TARGET' && tier.cap === 'WATCH') verdict = 'WATCH'
+  const withStats = {
+    ...base,
+    compPool,
+    exactN: exact.n, exactProfit: exact.meanProfit, exactMedProfit: exact.medProfit,
+    exactDays: exact.meanDays, exactHit: exact.hitRate, exactLoss: exact.lossRate,
+    sameYearN: sameYear.n, sameYearProfit: sameYear.meanProfit,
+    tier: context ? context.tier.label : null,
+    n: context ? context.st.n : 0,
+    meanProfit: context ? context.st.meanProfit : null,
+    medProfit: context ? context.st.medProfit : null,
+    meanDays: context ? context.st.meanDays : null,
+    hitRate: context ? context.st.hitRate : null,
+    medResale: context ? context.st.medResale : exact.medResale,
+  }
 
-    const confidence = tier.id !== 'exact' ? 'LOW' : cohort.length >= 4 ? 'HIGH' : 'MEDIUM'
-    const scope = tier.id === 'exact'
-      ? `same year, ±${tier.miles / 1000}k mi`
-      : `±${tier.years}yr / ±${tier.miles / 1000}k mi — context only`
+  const contextNote = context
+    ? ` Context only: ${context.st.n} within ±${context.tier.years}yr/±${context.tier.miles / 1000}k, avg ${fmtMoney(context.st.meanProfit)}.`
+    : ''
 
+  if (exact.n < EXACT.min) {
     return {
-      ...withExact,
-      tier: tier.label, n: cohort.length,
-      meanProfit: st.meanProfit, medProfit: st.medProfit, meanDays: st.meanDays,
-      hitRate: st.hitRate, medResale: st.medResale, confidence, verdict,
-      why: `${cohort.length} sold (${scope}) · avg ${fmtMoney(st.meanProfit)}, median ${fmtMoney(st.medProfit)} · ` +
-           `${st.meanDays == null ? '—' : Math.round(st.meanDays)}d avg on lot · ${Math.round(st.hitRate)}% cleared $1k`,
+      ...withStats, verdict: 'NO DATA', confidence: 'NONE',
+      why: `Only ${exact.n} exact match${exact.n === 1 ? '' : 'es'} (same year, ±${EXACT.miles / 1000}k mi) — not enough to judge.${contextNote}`,
     }
   }
 
-  const near = exact.n ? ` Closest: ${exact.n} exact match${exact.n > 1 ? 'es' : ''}, avg ${fmtMoney(exact.meanProfit)}.` : ''
+  let verdict = 'PASS'
+  if (exact.meanDays != null && exact.meanProfit > TARGET_PROFIT &&
+      exact.meanDays < TARGET_DAYS && exact.medProfit > TARGET_MEDIAN_FLOOR) {
+    verdict = 'TARGET'
+  } else if (exact.meanDays != null && exact.meanProfit > WATCH_PROFIT && exact.meanDays < WATCH_DAYS) {
+    verdict = 'WATCH'
+  }
+
+  // Veto: this model-year loses money across the board, whatever the mileage.
+  let veto = ''
+  if (verdict !== 'PASS' && sameYear.n >= SAME_YEAR_VETO_N && sameYear.meanProfit < 0) {
+    veto = ` VETO: all ${sameYear.n} ${car.year} ${car.model}s we sold average ${fmtMoney(sameYear.meanProfit)}.`
+    verdict = 'PASS'
+  }
+
   return {
-    ...withExact, n: pool.length, verdict: 'PASS',
-    why: `${pool.length} of this model sold, but none close enough on year+miles to judge.${near}`,
+    ...withStats, verdict,
+    confidence: exact.n >= 5 ? 'HIGH' : exact.n >= 3 ? 'MEDIUM' : 'LOW',
+    why: `${exact.n} sold same year, ±${EXACT.miles / 1000}k mi · avg ${fmtMoney(exact.meanProfit)}, ` +
+         `median ${fmtMoney(exact.medProfit)} · ${exact.meanDays == null ? '—' : Math.round(exact.meanDays)}d on lot · ` +
+         `${Math.round(exact.hitRate)}% cleared $1k, ${Math.round(exact.lossRate)}% lost money.${veto}${contextNote}`,
   }
 }
 
@@ -441,9 +504,16 @@ export function scoreRunList(rawRows, fmt, byMake) {
   })
 
   const scored = cars.map((c) => evaluateCar(c, byMake))
-  const rank = { TARGET: 0, WATCH: 1, PASS: 2 }
-  scored.sort((a, b) => rank[a.verdict] - rank[b.verdict] || (b.meanProfit ?? -1e9) - (a.meanProfit ?? -1e9))
+  // Rank on the exact-car number only. Sorting by a context-tier average would
+  // let cars with no real history outrank ones that have it.
+  const rank = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 }
+  scored.sort((a, b) => rank[a.verdict] - rank[b.verdict] || (b.exactProfit ?? -1e9) - (a.exactProfit ?? -1e9))
   scored.forEach((c, i) => { c.rank = i + 1 })
+
+  // Flag rows whose verdict rests on the exact same sold cars.
+  const poolCounts = new Map()
+  for (const c of scored) if (c.compPool) poolCounts.set(c.compPool, (poolCounts.get(c.compPool) || 0) + 1)
+  for (const c of scored) c.compShared = c.compPool ? poolCounts.get(c.compPool) : 1
 
   return { scored, duplicatesDropped: mapped.length - cars.length }
 }

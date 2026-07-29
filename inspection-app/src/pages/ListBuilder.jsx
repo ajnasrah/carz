@@ -19,24 +19,27 @@ const CONF = { HIGH: 'text-emerald-400', MEDIUM: 'text-yellow-400', LOW: 'text-s
 
 // Every column the auction gave us, plus what our sold book says about it.
 const COLUMNS = [
-  ['Rank', 'rank', 6], ['Verdict', 'verdict', 9], ['Confidence', 'confidence', 11],
+  ['Rank', 'rank', 6], ['Verdict', 'verdict', 10], ['Confidence', 'confidence', 11],
+  ['Exact Matches', 'exactN', 13], ['Exact Avg Profit', 'exactProfit', 15],
+  ['Exact Med Profit', 'exactMedProfit', 15], ['Exact Avg Days', 'exactDays', 13],
+  ['Exact % Cleared $1k', 'exactHit', 18], ['Exact % Lost Money', 'exactLoss', 18],
+  ['Shared Comps', 'compShared', 12],
+  ['Same-Yr Sold', 'sameYearN', 12], ['Same-Yr Avg Profit', 'sameYearProfit', 17],
   ['Run #', 'run', 9], ['Lane', 'lane', 6], ['Lot', 'lot', 7], ['Sale Date', 'saleDate', 11],
   ['Year', 'year', 6], ['Make', 'make', 14], ['Model', 'model', 18], ['Trim / Style', 'style', 18],
   ['Miles', 'odo', 10], ['Color', 'color', 11], ['CR Grade', 'grade', 9], ['Has CR', 'hasCR', 7],
   ['Photos', 'pics', 7], ['Drivetrain', 'drivetrain', 11], ['Engine', 'engine', 16],
   ['Transmission', 'transmission', 13], ['Fuel', 'fuel', 9],
-  ['Exact Matches', 'exactN', 13], ['Exact Avg Profit', 'exactProfit', 15],
-  ['Exact Med Profit', 'exactMedProfit', 15], ['Exact Avg Days', 'exactDays', 13],
-  ['Avg Profit', 'meanProfit', 11], ['Median Profit', 'medProfit', 13], ['Avg Days', 'meanDays', 10],
-  ['% Cleared $1k', 'hitRate', 13], ['Cars Matched', 'n', 12], ['Match Tier', 'tier', 11],
+  ['Context Avg Profit', 'meanProfit', 17], ['Context Avg Days', 'meanDays', 16],
+  ['Context Cars', 'n', 12], ['Context Tier', 'tier', 12],
   ['Our Median Resale', 'medResale', 16], ['MMR / Auction Value', 'auctionValue', 18],
-  ['Why', 'why', 62], ['VIN', 'vin', 20], ['Stock', 'stock', 11],
+  ['Why', 'why', 70], ['VIN', 'vin', 20], ['Stock', 'stock', 11],
   ['Seller', 'seller', 22], ['Location', 'location', 22], ['Channel', 'channel', 12],
   ['Title Status', 'titleStatus', 13], ['Announcements', 'announcements', 30],
 ]
 
-const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValue', 'exactProfit', 'exactMedProfit'])
-const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year', 'exactN', 'exactDays'])
+const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValue', 'exactProfit', 'exactMedProfit', 'sameYearProfit'])
+const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year', 'exactN', 'exactDays', 'exactHit', 'exactLoss', 'compShared', 'sameYearN'])
 
 export default function ListBuilder() {
   const [book, setBook] = useState(null) // { byMake, size, autoCount, storedCount, removed }
