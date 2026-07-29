@@ -36,6 +36,7 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'pro_auto', label: 'Pro Auto' },
     { value: 'andys_auto', label: "Andy's Auto" },
     { value: 'summit_tire', label: 'Summit Tire' },
+    { value: 'santa_maria', label: 'Santa Maria Tire & Alignment' },
     { value: 'tri_state', label: 'Tri State' },
     { value: 'city_auto', label: 'City Auto' },
     { value: 'upholstery', label: 'Upholstery' },

@@ -288,6 +288,7 @@ export default function Inventory() {
     jim_keras_nissan: "Jim Keras Nissan",
     jim_keras_chevy_service: "Jim Keras Chevy Svc",
     muffler_cs: "Muffler C&S",
+    santa_maria: "Santa Maria Tire & Alignment",
     // Denver + West Coast expansion
     otta_body: "Otta Body Shop",
     manheim_denver: "Manheim Denver",
@@ -332,6 +333,7 @@ export default function Inventory() {
     muffler_cs: "bg-fuchsia-500",
     jim_keras_nissan: "bg-violet-500",
     summit_tire: "bg-amber-500",
+    santa_maria: "bg-teal-600",
     // Denver + West Coast expansion
     otta_body: "bg-pink-500",
     manheim_denver: "bg-red-500",
@@ -553,6 +555,7 @@ export default function Inventory() {
         "jim_keras_nissan",
         "jim_keras_chevy_service",
         "muffler_cs",
+        "santa_maria",
         "unknown",
       ];
       
@@ -1451,6 +1454,7 @@ export default function Inventory() {
                 <option value="tri_state_glass">Tri State Glass</option>
                 <option value="upholstery">Upholstery</option>
                 <option value="muffler_cs">Muffler C&amp;S</option>
+                <option value="santa_maria">Santa Maria Tire &amp; Alignment</option>
                 <option value="otta_body">Otta Body Shop</option>
                 <option value="marc_pdr">Marc Dent Doctor (Denver)</option>
                 <option value="rocky_mountain_dent">Rocky Mountain Dent (Denver)</option>
