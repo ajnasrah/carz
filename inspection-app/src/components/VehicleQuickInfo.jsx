@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Copy, Check, Package, MapPin, Clock, ChevronDown } from 'lucide-react'
+import { Copy, Check, Package, MapPin, Clock, ChevronDown, ExternalLink } from 'lucide-react'
 import { toInt, toMoney, timeAgo } from '../services/utils'
 import HistoryTimeline from './HistoryTimeline'
 
@@ -14,6 +14,7 @@ const LOCATION_CODES = { M: 'Memphis', J: 'Jackson', Z: 'In Transport', X: 'In T
 export default function VehicleQuickInfo({ result }) {
   const [copied, setCopied] = useState(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [imgError, setImgError] = useState(false)
 
   const v = result?.vehicle
   const c = result?.cost || {}
@@ -21,6 +22,8 @@ export default function VehicleQuickInfo({ result }) {
   const status = result?.status || { state: 'unknown' }
   const sale = result?.sale
   const history = result?.history || []
+  const photo = result?.media?.photo || null
+  const listingUrl = result?.media?.listingUrl || null
   if (!v) return null
 
   const isSold = status.state === 'sold'
@@ -48,6 +51,37 @@ export default function VehicleQuickInfo({ result }) {
 
   return (
     <div className="space-y-3">
+      {/* First "main" photo (from a completed inspection or ready-to-sell intake) */}
+      {photo && !imgError && (
+        <a
+          href={photo}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block rounded-xl overflow-hidden border border-slate-700 bg-slate-800"
+        >
+          <img
+            src={photo}
+            alt={label || 'Vehicle photo'}
+            loading="lazy"
+            onError={() => setImgError(true)}
+            className="w-full h-48 object-cover"
+          />
+        </a>
+      )}
+
+      {/* Live marketplace (SmartAuction) listing link */}
+      {listingUrl && (
+        <a
+          href={listingUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-secondary w-full flex items-center justify-center gap-2 text-sm !border-emerald-500/40 text-emerald-400"
+        >
+          <ExternalLink size={14} />
+          View marketplace listing
+        </a>
+      )}
+
       {/* Vehicle header + status badge */}
       <div className={`card ${isSold ? 'border-red-500/30' : 'border-emerald-500/30'}`}>
         <div className="flex items-center gap-2 mb-3">

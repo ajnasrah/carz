@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Search, Loader, Package } from 'lucide-react'
+import { ArrowLeft, Search, Loader, Package, ChevronRight } from 'lucide-react'
 import { searchVin } from '../services/vinSearch'
 import VehicleQuickInfo from '../components/VehicleQuickInfo'
 
@@ -12,24 +12,32 @@ export default function VinCheck() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
+  const [choices, setChoices] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const inputRef = useRef(null)
+
+  async function lookup(q) {
+    setLoading(true)
+    setResult(null)
+    setChoices(null)
+    setNotFound(false)
+    const r = await searchVin(q)
+    if (r?.multiple) setChoices(r.multiple)
+    else setResult(r)
+    setNotFound(!r)
+    setLoading(false)
+  }
 
   async function handleSearch(e) {
     e?.preventDefault()
     if (input.trim().replace(/[^A-HJ-NPR-Z0-9-]/gi, '').length < 4) return
-    setLoading(true)
-    setResult(null)
-    setNotFound(false)
-    const r = await searchVin(input)
-    setResult(r)
-    setNotFound(!r)
-    setLoading(false)
+    await lookup(input.trim())
   }
 
   function clearSearch() {
     setInput('')
     setResult(null)
+    setChoices(null)
     setNotFound(false)
     inputRef.current?.focus()
   }
@@ -80,6 +88,32 @@ export default function VinCheck() {
         </div>
       )}
 
+      {choices && (
+        <div>
+          <p className="text-xs text-slate-400 mb-3">
+            {choices.length} cars contain "{input}" — pick one:
+          </p>
+          <div className="space-y-2">
+            {choices.map((c) => (
+              <button
+                key={c.stock_number || c.vehicle_vin}
+                onClick={() => lookup(c.vehicle_vin || c.stock_number)}
+                className="w-full flex items-center justify-between gap-2 p-3 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700 text-left"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{c.label || 'Unknown Vehicle'}</p>
+                  <p className="text-xs text-slate-400 font-mono truncate">
+                    {c.vehicle_vin || c.last_6_vin || '—'}
+                    {c.stock_number && ` · ${c.stock_number}`}
+                  </p>
+                </div>
+                <ChevronRight size={16} className="shrink-0 text-slate-500" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {result && (
         <div className="space-y-3">
           <VehicleQuickInfo result={result} />
@@ -87,7 +121,7 @@ export default function VinCheck() {
         </div>
       )}
 
-      {!result && !notFound && !loading && (
+      {!result && !choices && !notFound && !loading && (
         <div className="text-center py-16">
           <Package size={48} className="mx-auto text-slate-600 mb-4" />
           <p className="text-slate-400 font-semibold">Check if a car is in inventory</p>

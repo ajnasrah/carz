@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Search, Loader, X, Package } from 'lucide-react'
+import { Search, Loader, X, Package, ChevronRight } from 'lucide-react'
 import { searchVin } from '../services/vinSearch'
 import VehicleQuickInfo from './VehicleQuickInfo'
 
@@ -11,30 +11,38 @@ export default function VinSearchBar() {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
+  const [choices, setChoices] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [term, setTerm] = useState('')
 
   const canSearch = input.trim().replace(/[^A-HJ-NPR-Z0-9-]/gi, '').length >= 4
 
-  async function run(e) {
-    e?.preventDefault()
-    if (!canSearch) return
-    const q = input.trim()
+  async function lookup(q) {
     setTerm(q)
     setOpen(true)
     setLoading(true)
     setResult(null)
+    setChoices(null)
     setNotFound(false)
     const r = await searchVin(q)
-    setResult(r)
+    // A partial VIN can match several cars — offer a picker instead of guessing.
+    if (r?.multiple) setChoices(r.multiple)
+    else setResult(r)
     setNotFound(!r)
     setLoading(false)
+  }
+
+  async function run(e) {
+    e?.preventDefault()
+    if (!canSearch) return
+    await lookup(input.trim())
   }
 
   function close() {
     setOpen(false)
     setInput('')
     setResult(null)
+    setChoices(null)
     setNotFound(false)
     setLoading(false)
     setTerm('')
@@ -84,6 +92,34 @@ export default function VinSearchBar() {
             {loading && (
               <div className="text-center py-12">
                 <Loader size={32} className="mx-auto text-emerald-400 animate-spin" />
+              </div>
+            )}
+
+            {!loading && choices && (
+              <div>
+                <p className="text-xs text-slate-400 mb-3">
+                  {choices.length} cars contain "{term}" — pick one:
+                </p>
+                <div className="space-y-2">
+                  {choices.map((c) => (
+                    <button
+                      key={c.stock_number || c.vehicle_vin}
+                      onClick={() => lookup(c.vehicle_vin || c.stock_number)}
+                      className="w-full flex items-center justify-between gap-2 p-3 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700 text-left"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white truncate">
+                          {c.label || 'Unknown Vehicle'}
+                        </p>
+                        <p className="text-xs text-slate-400 font-mono truncate">
+                          {c.vehicle_vin || c.last_6_vin || '—'}
+                          {c.stock_number && ` · ${c.stock_number}`}
+                        </p>
+                      </div>
+                      <ChevronRight size={16} className="shrink-0 text-slate-500" />
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 

@@ -20,6 +20,26 @@ export async function searchVin(raw) {
   const vinQ = cleaned.replace(/[^A-HJ-NPR-Z0-9]/g, '')
   if (vinQ.length < 4) return null
 
+  // A partial VIN (not a stock #, not the full 17 chars) is a "contains anywhere"
+  // search and can hit several cars. Gather them first; if more than one matches,
+  // hand the caller a { multiple: [...] } list to disambiguate in the popup. When
+  // exactly one matches, pin to its full VIN / stock and resolve normally.
+  const isStock = /-/.test(cleaned)
+  if (!isStock && vinQ.length !== 17) {
+    const candidates = await gatherCandidates(vinQ)
+    if (candidates.length === 0) return null
+    if (candidates.length > 1) return { multiple: candidates }
+    const only = candidates[0]
+    const pin =
+      only.vehicle_vin && only.vehicle_vin.length === 17
+        ? only.vehicle_vin
+        : only.stock_number && /-/.test(only.stock_number)
+          ? only.stock_number
+          : null
+    if (pin && pin.toUpperCase() !== cleaned) return await searchVin(pin)
+    // else: fall through and resolve the single partial match directly.
+  }
+
   // 1. Identify the car from inventory sources (gives year/make/model + cost).
   const inv = await findInventory(cleaned, vinQ)
 
@@ -42,8 +62,10 @@ export async function searchVin(raw) {
   // 4. Fold status/sale out of the location row (source of truth for sold).
   const { status, sale } = deriveStatus(loc, history, Boolean(inv))
 
+  const vehicle = inv?.vehicle || locToVehicle(loc, history)
+
   return {
-    vehicle: inv?.vehicle || locToVehicle(loc, history),
+    vehicle,
     cost: inv?.cost || {},
     location: loc
       ? {
@@ -55,7 +77,70 @@ export async function searchVin(raw) {
     status,
     sale,
     history,
+    // 5. First "main" photo + live marketplace (SmartAuction) listing link.
+    media: await loadMedia(vehicle),
   }
+}
+
+// --- candidate gathering (partial VIN → possibly many cars) -----------------
+
+const labelOf = (r) =>
+  [r.vehicle_year, r.vehicle_make, r.vehicle_model].filter(Boolean).join(' ') || null
+
+// Every distinct car whose VIN CONTAINS vinQ anywhere, across inventory + the
+// location table (so sold/removed cars surface too). Keyed by stock (stable id)
+// when present, else by VIN, so the same car from two sources dedupes to one.
+async function gatherCandidates(vinQ) {
+  const map = new Map()
+  const add = (vin, stock, label) => {
+    const key = stock ? `S:${stock}` : `V:${vin || ''}`
+    const prev = map.get(key)
+    if (!prev) {
+      map.set(key, {
+        vehicle_vin: vin || null,
+        stock_number: stock || null,
+        last_6_vin: (vin || '').slice(-6) || null,
+        label: label || null,
+      })
+    } else {
+      if (!prev.vehicle_vin && vin) prev.vehicle_vin = vin
+      if (!prev.last_6_vin && vin) prev.last_6_vin = vin.slice(-6)
+      if (!prev.label && label) prev.label = label
+    }
+  }
+
+  const { data: inv } = await supabase
+    .from('vehicle_lot_status')
+    .select('stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model')
+    .or(`last_6_vin.ilike.%${vinQ}%,vehicle_vin.ilike.%${vinQ}%`)
+    .limit(25)
+  for (const r of inv || []) add(r.vehicle_vin, r.stock_number, labelOf(r))
+
+  const { data: locs } = await supabase
+    .from('vehicle_locations')
+    .select('stock_number, vin')
+    .ilike('vin', `%${vinQ}%`)
+    .limit(25)
+  for (const r of locs || []) add(r.vin, r.stock_number, null)
+
+  return [...map.values()]
+}
+
+// --- media (photo + marketplace link) --------------------------------------
+
+async function loadMedia(v) {
+  if (!v) return null
+  const vin = v.vehicle_vin || null
+  const last6 = v.last_6_vin || (vin ? vin.slice(-6) : null)
+  const stock = v.stock_number || null
+  const { data } = await supabase.rpc('vehicle_media', {
+    p_vin: vin,
+    p_last6: last6,
+    p_stock: stock,
+  })
+  const row = data?.[0]
+  if (!row) return null
+  return { photo: row.first_photo || null, listingUrl: row.sa_url || null }
 }
 
 // --- inventory lookup (current stock) --------------------------------------
@@ -73,7 +158,7 @@ async function findInventory(cleaned, vinQ) {
 
   let query = supabase.from('vehicle_lot_status').select('*')
   if (vinQ.length === 17) query = query.eq('vehicle_vin', vinQ)
-  else query = query.or(`last_6_vin.eq.${vinQ},vehicle_vin.ilike.%${vinQ}`)
+  else query = query.or(`last_6_vin.ilike.%${vinQ}%,vehicle_vin.ilike.%${vinQ}%`)
   const { data: vehicles, error } = await query.limit(5)
 
   if (!error && vehicles && vehicles.length) return await withCost(vehicles[0])
@@ -81,7 +166,7 @@ async function findInventory(cleaned, vinQ) {
   // Fallback to the plain inventory table (view may be missing the car).
   let fb = supabase.from('inventory').select('*')
   if (vinQ.length === 17) fb = fb.eq('vehicle_vin', vinQ)
-  else fb = fb.or(`last_6_vin.eq.${vinQ},vehicle_vin.ilike.%${vinQ}`)
+  else fb = fb.or(`last_6_vin.ilike.%${vinQ}%,vehicle_vin.ilike.%${vinQ}%`)
   const { data: rows } = await fb.limit(5)
   if (rows && rows.length) return { vehicle: rows[0], cost: rows[0] }
 
@@ -111,7 +196,7 @@ async function findLocation(stockNumber, vinQ) {
   // No inventory match — search vehicle_locations by VIN directly.
   let q = supabase.from('vehicle_locations').select('*')
   if (vinQ.length === 17) q = q.eq('vin', vinQ)
-  else q = q.ilike('vin', `%${vinQ}`)
+  else q = q.ilike('vin', `%${vinQ}%`)
   const { data } = await q.limit(1)
   return data?.[0] || null
 }

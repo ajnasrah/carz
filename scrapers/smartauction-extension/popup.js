@@ -739,6 +739,14 @@
       });
     }
 
+    // Wire the Target Buy List (auction run list → cars worth bidding on)
+    if (typeof window.TargetBuyList !== 'undefined') {
+      window.TargetBuyList.bindUI({
+        supabaseUrl: SUPABASE_URL,
+        supabaseKey: SUPABASE_ANON_KEY,
+      });
+    }
+
     // Wire the Buyer Match uploader (active + sold → sa_active_cars / sa_sold_sales)
     if (typeof window.BuyerMatchUploader !== 'undefined') {
       window.BuyerMatchUploader.bindUI({

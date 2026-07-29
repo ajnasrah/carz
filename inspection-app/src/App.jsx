@@ -30,6 +30,7 @@ import UnmatchedVehicles from './pages/UnmatchedVehicles'
 import ExecutiveDashboard from './pages/ExecutiveDashboard'
 import Reports from './pages/Reports'
 import BuyerMatch from './pages/BuyerMatch'
+import ListBuilder from './pages/ListBuilder'
 import Listings from './pages/Listings'
 // Inbound Inspection Pages
 import InboundDashboard from './pages/InboundDashboard'
@@ -143,6 +144,9 @@ function AppRoutes() {
 
       {/* Buyer Match — top-3 likely buyers per active car (SmartAuction) */}
       <Route path="/buyer-match" element={<ProtectedRoute><BuyerMatch /></ProtectedRoute>} />
+
+      {/* List Builder — auction run list -> cars worth bidding on */}
+      <Route path="/list-builder" element={<ProtectedRoute><ListBuilder /></ProtectedRoute>} />
 
       {/* Pull List — sold cars that need to be removed from auctions */}
       <Route path="/pull-list" element={<ProtectedRoute><PullList /></ProtectedRoute>} />

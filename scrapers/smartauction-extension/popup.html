@@ -122,6 +122,22 @@
         </div>
       </details>
 
+      <!-- Target Buy List — cross-check an auction run list against what we've actually sold -->
+      <details class="paste-details" id="targetBuyListBlock">
+        <summary class="paste-summary">🎯 Target Buy List — run list → cars worth bidding on</summary>
+        <div style="padding:4px 0;">
+          <div class="upload-row">
+            <label class="btn btn-small upload-label-btn" style="background:#1b5e20;color:#fff;">
+              Run List
+              <input type="file" id="tblRunListInput" accept=".csv" style="display:none" />
+            </label>
+            <span id="tblRunListStatus" class="upload-file-status">Edge Pipeline or ADESA CSV</span>
+          </div>
+          <div id="tblPanel" style="margin-top:6px;"></div>
+          <div id="tblLog" style="font-size:10px;font-family:ui-monospace,monospace;max-height:150px;overflow-y:auto;padding:6px 8px;background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;margin-top:6px;line-height:1.4;"></div>
+        </div>
+      </details>
+
       <!-- Buyer Match — feed active + sold SmartAuction lists to the web app's Buyer Match engine -->
       <details class="paste-details" id="buyerMatchBlock">
         <summary class="paste-summary">🎯 Buyer Match — upload active + sold for buyer recommendations</summary>
@@ -417,6 +433,8 @@
   </div><!-- /wizardSection -->
   </div><!-- /container -->
   <script src="lib/xlsx-parser.js"></script>
+  <script src="lib/xlsx-writer.js"></script>
+  <script src="lib/target-buy-list.js"></script>
   <script src="lib/photo-db.js"></script>
   <script src="lib/damage-mapper.js"></script>
   <script src="lib/inspection-transform.js"></script>

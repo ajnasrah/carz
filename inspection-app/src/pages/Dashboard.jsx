@@ -171,6 +171,7 @@ export default function Dashboard() {
         <ActionTile to="/lot" emoji="🚶" label="Walk Lot" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
         <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
+        <ActionTile to="/list-builder" emoji="🔨" label="List Builder" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
         <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
