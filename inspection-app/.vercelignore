@@ -1,0 +1,29 @@
+# Keep the deploy archive to what actually ships. Without this the upload was
+# ~155MB and kept dying mid-transfer with EPIPE.
+
+# Build output — Vercel builds from source, so shipping dist/ uploads every
+# asset twice (it was 166MB, mostly a copy of public/training).
+dist
+dist-ssr
+
+node_modules
+
+# Nested git repositories. public/training is a checkout of another repo and
+# carried a 71MB pack file. It sat under public/, so it was being SERVED as
+# well as uploaded — a reachable .git directory exposes source history.
+**/.git
+**/.gitignore
+
+# Local tooling and state that has no business in a deploy
+supabase
+scripts
+docs
+.vscode
+.idea
+*.log
+*.local
+
+# One-off scripts kept in the project root
+test-*.mjs
+*.py
+*.sql
