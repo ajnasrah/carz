@@ -27,3 +27,10 @@ docs
 test-*.mjs
 *.py
 *.sql
+
+# Training course source material. 47 of the 55 PDFs under examples/ (75MB of
+# 94MB) are referenced by nothing — leftover working files. The 9 the final exam
+# actually uses were copied to public/training/exam-files/ under clean names;
+# the originals live in folders with spaces and even a trailing space ("ram2 /"),
+# which is a URL hazard. Source is kept on disk, just not shipped.
+public/training/examples
