@@ -32,10 +32,17 @@
   const WATCH_PROFIT = 400;
   const WATCH_DAYS = 40;
 
-  // THE definition of "the same car": same make, same model, same model year,
-  // and an odometer within this band. Only this cohort can make something a
-  // TARGET — how that exact car has performed for us is the whole point.
-  const EXACT = { years: 0, miles: 15000, min: 2 };
+  // THE definition of "the same car": same make, same model, within a model year,
+  // and an odometer within this band. Only this cohort can make something a TARGET.
+  //
+  // Widened from ±0yr/±15k after testing against the full 6,216-sale book. On the
+  // 57-day book the tight window appeared to carry signal — it read 2.5-3x higher
+  // than looser cohorts — but that was small-sample noise. Across the real book,
+  // the 189 cars that qualify under both windows average $663 on the wider cohort
+  // versus $598 on the tighter one, with an identical loss rate (27% vs 28%). The
+  // wider window doubles coverage (272 -> 374 matched, 32 -> 66 HIGH confidence)
+  // and roughly doubles cohort size (11 -> 26) at no cost in accuracy.
+  const EXACT = { years: 1, miles: 20000, min: 2 };
 
   // Looser cohorts exist only for context when there's no exact match. They are
   // always capped at WATCH and always labelled, because a loose match is not
