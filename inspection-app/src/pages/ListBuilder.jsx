@@ -38,6 +38,10 @@ const COLUMNS = [
   ['Title Status', 'titleStatus', 13], ['Announcements', 'announcements', 30],
 ]
 
+// Identifier columns must stay text. "4-0131" imports as a number and
+// "5E-0027" as scientific notation (5.00E-27) if the cell has no explicit text
+// format — which also splits sorting into a number block and a text block.
+const TEXT_KEYS = new Set(['run', 'lane', 'lot', 'stock', 'vin', 'saleDate', 'grade'])
 const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValue', 'exactProfit', 'exactMedProfit', 'sameYearProfit'])
 const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year', 'exactN', 'exactDays', 'exactHit', 'exactLoss', 'compShared', 'sameYearN'])
 
@@ -115,6 +119,7 @@ export default function ListBuilder() {
         const v = c[key]
         if (key === 'verdict') return { v, s: verdictStyle[v] }
         if (v == null || v === '') return ''
+        if (TEXT_KEYS.has(key)) return { v: String(v), s: S.TEXT }
         if (key === 'hasCR') return v ? 'Y' : ''
         if (MONEY_KEYS.has(key)) {
           const n = Number(v)

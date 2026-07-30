@@ -499,6 +499,28 @@ export function evaluateCar(car, byMake) {
   }
 }
 
+// Run-order comparator. Lanes sort numerically where they're numbers ("4"
+// before "15", not "15" before "4"), with the letter suffix breaking ties
+// ("5" before "5E" before "5R"), then lot number.
+function runOrder(c) {
+  const lane = String(c.lane ?? '').trim()
+  const lm = lane.match(/^(\d*)([A-Za-z]*)$/) || []
+  const lotRaw = String(c.lot ?? '').trim() || (String(c.run ?? '').match(/(\d+)\s*$/) || [])[1] || ''
+  return {
+    laneNum: lm[1] ? parseInt(lm[1], 10) : Number.MAX_SAFE_INTEGER,
+    laneAlpha: (lm[2] || '').toUpperCase(),
+    lot: lotRaw ? parseInt(lotRaw, 10) : Number.MAX_SAFE_INTEGER,
+  }
+}
+
+function byRunNumber(a, b) {
+  const x = runOrder(a), y = runOrder(b)
+  return x.laneNum - y.laneNum ||
+    x.laneAlpha.localeCompare(y.laneAlpha) ||
+    x.lot - y.lot ||
+    String(a.run || '').localeCompare(String(b.run || ''))
+}
+
 // ── Whole-list run ───────────────────────────────────────────────────────────
 export function scoreRunList(rawRows, fmt, byMake) {
   // ADESA exports repeat rows (~20 in a 134-row list), so collapse on VIN.
@@ -514,8 +536,11 @@ export function scoreRunList(rawRows, fmt, byMake) {
   const scored = cars.map((c) => evaluateCar(c, byMake))
   // Rank on the exact-car number only. Sorting by a context-tier average would
   // let cars with no real history outrank ones that have it.
-  const rank = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 }
-  scored.sort((a, b) => rank[a.verdict] - rank[b.verdict] || (b.exactProfit ?? -1e9) - (a.exactProfit ?? -1e9))
+  // Verdict bands stay in order — targets, then watch, then no-data, then pass —
+  // and within each band the cars come out in run order, the order they cross
+  // the block.
+  const rankOrder = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 }
+  scored.sort((a, b) => rankOrder[a.verdict] - rankOrder[b.verdict] || byRunNumber(a, b))
   scored.forEach((c, i) => { c.rank = i + 1 })
 
   // Flag rows whose verdict rests on the exact same sold cars.

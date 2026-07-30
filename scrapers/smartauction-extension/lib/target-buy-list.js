@@ -524,6 +524,28 @@
   }
 
 
+  // Run-order comparator. Lanes sort numerically where they're numbers ("4"
+  // before "15", not "15" before "4"), with the letter suffix breaking ties
+  // ("5" before "5E" before "5R"), then lot number.
+  function runOrder(c) {
+    const lane = String(c.lane ?? '').trim()
+    const lm = lane.match(/^(\d*)([A-Za-z]*)$/) || []
+    const lotRaw = String(c.lot ?? '').trim() || (String(c.run ?? '').match(/(\d+)\s*$/) || [])[1] || ''
+    return {
+      laneNum: lm[1] ? parseInt(lm[1], 10) : Number.MAX_SAFE_INTEGER,
+      laneAlpha: (lm[2] || '').toUpperCase(),
+      lot: lotRaw ? parseInt(lotRaw, 10) : Number.MAX_SAFE_INTEGER,
+    }
+  }
+
+  function byRunNumber(a, b) {
+    const x = runOrder(a), y = runOrder(b)
+    return x.laneNum - y.laneNum ||
+      x.laneAlpha.localeCompare(y.laneAlpha) ||
+      x.lot - y.lot ||
+      String(a.run || '').localeCompare(String(b.run || ''))
+  }
+
   // ── Run-list handling ──────────────────────────────────────────────────────
   async function handleRunList(file, log, setStatus) {
     setStatus('reading…', '');
@@ -562,9 +584,11 @@
     // TARGET first, then by average profit.
     // Rank on the exact-car number only. Sorting by a context-tier average would
     // let cars with no real history outrank ones that have it.
-    const rank = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 };
-    scored.sort((a, b) =>
-      rank[a.verdict] - rank[b.verdict] || (b.exactProfit ?? -1e9) - (a.exactProfit ?? -1e9));
+    // Verdict bands stay in order — targets, then watch, then no-data, then pass
+    // — and within each band the cars come out in run order, the order they
+    // cross the block.
+    const rankOrder = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 };
+    scored.sort((a, b) => rankOrder[a.verdict] - rankOrder[b.verdict] || byRunNumber(a, b));
     scored.forEach((c, i) => { c.rank = i + 1; });
 
     // Flag rows whose verdict rests on the exact same sold cars.
@@ -605,6 +629,10 @@
     ['Seller', 'seller', 22], ['Location', 'location', 22], ['Channel', 'channel', 12],
     ['Title Status', 'titleStatus', 13], ['Announcements', 'announcements', 30],
   ];
+  // Identifier columns must stay text. "4-0131" imports as a number and
+  // "5E-0027" as scientific notation (5.00E-27) if the cell has no explicit text
+  // format — which also splits sorting into a number block and a text block.
+  const TEXT_KEYS = new Set(['run', 'lane', 'lot', 'stock', 'vin', 'saleDate', 'grade']);
   const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValue', 'exactProfit', 'exactMedProfit', 'sameYearProfit']);
   const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year', 'exactN', 'exactDays', 'exactHit', 'exactLoss', 'compShared', 'sameYearN']);
 
@@ -619,6 +647,7 @@
         const v = c[key];
         if (key === 'verdict') return { v, s: vStyle[v] };
         if (v == null || v === '') return '';
+        if (TEXT_KEYS.has(key)) return { v: String(v), s: S.TEXT };
         if (key === 'hasCR') return v ? 'Y' : '';
         if (MONEY_KEYS.has(key)) {
           const n = Number(v);
