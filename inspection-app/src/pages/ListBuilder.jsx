@@ -19,7 +19,10 @@ const CONF = { HIGH: 'text-emerald-400', MEDIUM: 'text-yellow-400', LOW: 'text-s
 
 // Every column the auction gave us, plus what our sold book says about it.
 const COLUMNS = [
-  ['Rank', 'rank', 6], ['Verdict', 'verdict', 10], ['Confidence', 'confidence', 11],
+  // VIN sits up front, not out past the stats. Manheim/OVE timed sales carry
+  // no run number, lane or lot, so on those lists the VIN is the only thing
+  // that identifies the car at all.
+  ['Rank', 'rank', 6], ['Verdict', 'verdict', 10], ['VIN', 'vin', 20], ['Confidence', 'confidence', 11],
   ['Exact Matches', 'exactN', 13], ['Exact Avg Profit', 'exactProfit', 15],
   ['Exact Med Profit', 'exactMedProfit', 15], ['Exact Avg Days', 'exactDays', 13],
   ['Exact % Cleared $1k', 'exactHit', 18], ['Exact % Lost Money', 'exactLoss', 18],
@@ -33,7 +36,7 @@ const COLUMNS = [
   ['Context Avg Profit', 'meanProfit', 17], ['Context Avg Days', 'meanDays', 16],
   ['Context Cars', 'n', 12], ['Context Tier', 'tier', 12],
   ['Our Median Resale', 'medResale', 16], ['MMR / Auction Value', 'auctionValue', 18],
-  ['Why', 'why', 70], ['VIN', 'vin', 20], ['Stock', 'stock', 11],
+  ['Why', 'why', 70], ['Stock', 'stock', 11],
   ['Seller', 'seller', 22], ['Location', 'location', 22], ['Channel', 'channel', 12],
   ['Title Status', 'titleStatus', 13], ['Announcements', 'announcements', 30],
 ]
@@ -151,6 +154,15 @@ export default function ListBuilder() {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(kind)
       setTimeout(() => setCopied(''), 1500)
+    })
+  }
+
+  // Last 6 is enough to recognise a car but not to search for one — copy hands
+  // back the full 17.
+  function copyVin(vin) {
+    navigator.clipboard.writeText(vin).then(() => {
+      setCopied(vin)
+      setTimeout(() => setCopied(''), 1000)
     })
   }
 
@@ -276,7 +288,14 @@ export default function ListBuilder() {
                         {c.confidence === 'NONE' ? '—' : c.confidence}
                       </td>
                       <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{money(c.auctionValue)}</td>
-                      <td className="px-2.5 py-1.5 font-mono text-[11px] text-slate-500">{c.vin ? c.vin.slice(-6) : '—'}</td>
+                      <td className="px-2.5 py-1.5 font-mono text-[11px] text-slate-500">
+                        {c.vin
+                          ? <button onClick={() => copyVin(c.vin)} title={`${c.vin} — click to copy`}
+                              className="hover:text-slate-200 border-b border-dotted border-slate-700">
+                              {copied === c.vin ? 'copied' : c.vin.slice(-6)}
+                            </button>
+                          : '—'}
+                      </td>
                     </tr>
                   ))}
                   {visible.length === 0 && (

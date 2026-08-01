@@ -618,7 +618,10 @@
   // Keep in lockstep with COLUMNS in inspection-app/src/pages/ListBuilder.jsx —
   // both exports are meant to be the same workbook.
   const COLUMNS = [
-    ['Rank', 'rank', 6], ['Verdict', 'verdict', 10], ['Confidence', 'confidence', 11],
+    // VIN sits up front, not out past the stats. Manheim/OVE timed sales carry
+    // no run number, lane or lot, so on those lists the VIN is the only thing
+    // that identifies the car at all.
+    ['Rank', 'rank', 6], ['Verdict', 'verdict', 10], ['VIN', 'vin', 20], ['Confidence', 'confidence', 11],
     ['Exact Matches', 'exactN', 13], ['Exact Avg Profit', 'exactProfit', 15],
     ['Exact Med Profit', 'exactMedProfit', 15], ['Exact Avg Days', 'exactDays', 13],
     ['Exact % Cleared $1k', 'exactHit', 18], ['Exact % Lost Money', 'exactLoss', 18],
@@ -632,7 +635,7 @@
     ['Context Avg Profit', 'meanProfit', 17], ['Context Avg Days', 'meanDays', 16],
     ['Context Cars', 'n', 12], ['Context Tier', 'tier', 12],
     ['Our Median Resale', 'medResale', 16], ['MMR / Auction Value', 'auctionValue', 18],
-    ['Why', 'why', 70], ['VIN', 'vin', 20], ['Stock', 'stock', 11],
+    ['Why', 'why', 70], ['Stock', 'stock', 11],
     ['Seller', 'seller', 22], ['Location', 'location', 22], ['Channel', 'channel', 12],
     ['Title Status', 'titleStatus', 13], ['Announcements', 'announcements', 30],
   ];
@@ -677,7 +680,168 @@
     window.XLSXWriter.download(blob, `target-buy-list-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  // ── Open the listings straight off the auction page ────────────────────────
+  // A run list carries no listing URLs, and on a Manheim/OVE timed sale there
+  // is no run number to call out either — so the only handle on a car is its
+  // VIN, and the only place that VIN maps to a link is the search-results page
+  // already sitting in the active tab. This pulls VIN -> listing link out of
+  // that page's DOM, which is the ⌘F-then-click loop done in one shot.
+  const OPEN_BATCH = 10;
+  const opened = new Set();
+
+  // Runs in the page, not here — everything it needs must be inside it.
+  function scrapeVinLinks(items) {
+    // Smallest element whose text carries the VIN: the card's VIN line, not the
+    // card, not the whole results list. OVE splits the VIN across a plain and a
+    // bold span, so match on textContent with the punctuation stripped rather
+    // than on individual text nodes.
+    const best = new Map();
+    const els = document.body.getElementsByTagName('*');
+    for (let i = 0; i < els.length; i++) {
+      const raw = els[i].textContent;
+      if (!raw || raw.length < 17 || raw.length > 5000) continue;
+      const t = raw.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+      if (t.length < 17) continue;
+      for (const it of items) {
+        if (t.indexOf(it.vin) === -1) continue;
+        const prev = best.get(it.vin);
+        if (!prev || t.length < prev.len) best.set(it.vin, { el: els[i], len: t.length });
+      }
+    }
+
+    const hrefOf = (a) => {
+      const raw = a.getAttribute('href') || '';
+      if (!raw || raw.charAt(0) === '#' || /^(javascript|mailto|tel):/i.test(raw)) return '';
+      return a.href;
+    };
+    // Links that live in a result card but never open the car.
+    const NOT_A_LISTING = /carfax|autocheck|experian|\/seller|\/dealer|feedback|rating|logout|help|report/i;
+
+    // The VIN itself is never a link — the vehicle title sitting directly above
+    // it is. So a card is scored by which of its anchors is that title, best
+    // signal first:
+    //   vin   the href carries the VIN outright — unambiguous, nothing to infer
+    //   title anchor text reads "2019 VOLKSWAGEN JETTA S" — year first, then make
+    //   year  anchor text leads with the model year but the make didn't match
+    //   weak  no title-shaped anchor at all; last resort, and reported as such
+    // Requiring year AND make also keeps us honest when the climb overshoots
+    // into a container holding more than one card.
+    const RANK = { vin: 0, title: 1, year: 2, weak: 3 };
+    const pickHref = (root, it) => {
+      const anchors = root.querySelectorAll('a[href]');
+      let bestHit = null;
+      for (let i = 0; i < anchors.length; i++) {
+        const h = hrefOf(anchors[i]);
+        if (!h) continue;
+        const txt = (anchors[i].textContent || '').trim().toUpperCase();
+        let how = '';
+        if (h.toUpperCase().indexOf(it.vin) !== -1) how = 'vin';
+        else if (it.year && txt.indexOf(String(it.year)) === 0) {
+          how = it.make && txt.indexOf(it.make.toUpperCase()) !== -1 ? 'title' : 'year';
+        } else if (!NOT_A_LISTING.test(h) && !NOT_A_LISTING.test(txt)) how = 'weak';
+        if (!how) continue;
+        if (!bestHit || RANK[how] < RANK[bestHit.how]) bestHit = { href: h, how, text: txt.slice(0, 60) };
+        if (bestHit.how === 'vin') break;
+      }
+      return bestHit;
+    };
+
+    const out = {};
+    for (const it of items) {
+      const hit = best.get(it.vin);
+      if (!hit) continue;
+      // Climb until a card-shaped ancestor yields a link. Keep climbing past a
+      // weak hit — one more level up usually reaches the title anchor — but
+      // hold onto it in case nothing better turns up.
+      let p = hit.el, fallback = null;
+      for (let d = 0; d < 12 && p && p !== document.body; d++) {
+        const got = pickHref(p, it);
+        if (got && got.how !== 'weak') { out[it.vin] = got; break; }
+        if (got && !fallback) fallback = got;
+        p = p.parentElement;
+      }
+      if (!out[it.vin] && fallback) out[it.vin] = fallback;
+    }
+    return out;
+  }
+
+  async function resolveOnPage(cars, setNote) {
+    const items = cars.map((c) => ({ vin: c.vin, year: c.year, make: c.make, model: c.model }));
+    setNote(`looking for ${items.length} on the page…`, '#666');
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) { setNote('no active tab', '#c62828'); return null; }
+
+    try {
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id }, func: scrapeVinLinks, args: [items],
+      });
+      return { items, links: (res && res.result) || {} };
+    } catch (err) {
+      // Chrome refuses to inject into its own pages and into the Web Store.
+      setNote(`can't read that tab — ${err.message}`, '#c62828');
+      return null;
+    }
+  }
+
+  // Dry run: show what each VIN resolved to without opening anything, so a bad
+  // pick is caught before it becomes ten wrong tabs.
+  async function checkOnPage(cars, setNote, log) {
+    const got = await resolveOnPage(cars, setNote);
+    if (!got) return;
+    const { items, links } = got;
+    let good = 0, weak = 0, missing = 0;
+    for (const it of items) {
+      const hit = links[it.vin];
+      if (!hit) { missing++; log(`  ✗ ${it.vin} — not on the page`, 'err'); continue; }
+      if (hit.how === 'weak') { weak++; log(`  ? ${it.vin} → ${hit.href}  [no title link found]`, 'err'); }
+      else { good++; log(`  ✓ ${it.vin} → ${hit.href}  [${hit.how}: ${hit.text}]`, 'ok'); }
+    }
+    setNote(`${good} matched · ${weak} unsure · ${missing} not on page — see log`,
+      weak || missing ? '#e65100' : '#1b5e20');
+  }
+
+  // Resolve VINs to links on the active tab and open them in background tabs so
+  // the side panel keeps focus and the batch order is preserved.
+  async function openOnPage(cars, setNote, log) {
+    const got = await resolveOnPage(cars, setNote);
+    if (!got) return;
+    const { items, links } = got;
+
+    let n = 0, weak = 0;
+    for (const it of items) {
+      const hit = links[it.vin];
+      if (!hit) continue;
+      if (hit.how === 'weak') { weak++; log(`  ? ${it.vin} → ${hit.href}  [guessed — no title link]`, 'err'); }
+      chrome.tabs.create({ url: hit.href, active: false });
+      opened.add(it.vin);
+      n++;
+    }
+    const missed = items.length - n;
+    // A miss means the car isn't rendered in that tab — wrong saved search, or
+    // it's on a page/scroll position that hasn't loaded yet.
+    if (!n) setNote(`none of these ${items.length} are on that page`, '#c62828');
+    else setNote(`opened ${n}${weak ? ` · ${weak} guessed` : ''}${missed ? ` · ${missed} not on the page` : ''}`,
+      weak ? '#e65100' : '#1b5e20');
+    // Don't re-offer VINs the page doesn't have; they'd block every later batch.
+    for (const it of items) opened.add(it.vin);
+  }
+
   // ── UI ─────────────────────────────────────────────────────────────────────
+  // Same log pane handleRunList writes to, reachable from the rendered panel.
+  function logLine(msg, kind) {
+    const el = document.getElementById('tblLog');
+    if (!el) return;
+    const line = document.createElement('div');
+    line.style.color = kind === 'err' ? '#c62828' : kind === 'ok' ? '#1b5e20' : '#777';
+    line.textContent = msg;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
   function renderPanel(result) {
     const el = document.getElementById('tblPanel');
     if (!el) return;
@@ -689,35 +853,86 @@
       ${targets.length} TARGET · ${watch.length} WATCH · ${scored.length} cars on the list</div>`;
     html += `<div style="font-size:10px;color:#666;margin-bottom:5px;">
       vs ${bookSize} sold cars · avg profit &gt; $${TARGET_PROFIT} and under ${TARGET_DAYS} days</div>`;
-    html += `<div style="display:flex;gap:4px;margin-bottom:6px;">
+    html += `<div style="display:flex;gap:4px;margin-bottom:4px;">
       <button id="tblExport" class="btn btn-small" style="background:#1b5e20;font-size:10px;padding:3px 8px;">⬇ Excel</button>
       <button id="tblCopyRuns" class="btn btn-small" style="background:#1565c0;font-size:10px;padding:3px 8px;">Copy Run #s</button>
       <button id="tblCopyVins" class="btn btn-small" style="background:#6a1b9a;font-size:10px;padding:3px 8px;">Copy VINs</button>
     </div>`;
+    html += `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+      <button id="tblOpenBatch" class="btn btn-small" style="background:#e65100;font-size:10px;padding:3px 8px;">↗ Open next ${OPEN_BATCH}</button>
+      <button id="tblOpenCheck" class="btn btn-small" style="background:#455a64;font-size:10px;padding:3px 8px;">🔍 Check</button>
+      <button id="tblOpenReset" class="btn btn-small" style="background:#9e9e9e;font-size:10px;padding:3px 8px;">Reset</button>
+      <span id="tblOpenNote" style="font-size:10px;color:#666;"></span>
+    </div>`;
+
+    // The listable set, in the order the table shows it — TARGETs first, so the
+    // first batches are always the cars worth bidding on.
+    const listable = scored.filter((x) => x.verdict !== 'PASS' && x.vin);
 
     html += `<div style="max-height:260px;overflow-y:auto;font-size:10px;"><table style="width:100%;border-collapse:collapse;">
       <tr style="background:#f0f0f0;font-weight:700;position:sticky;top:0;">
-      <td>Run</td><td>Vehicle</td><td>Miles</td><td>Avg $</td><td>Days</td><td>n</td></tr>`;
+      <td>Run</td><td>VIN</td><td>Vehicle</td><td>Miles</td><td>Avg $</td><td>Days</td><td>n</td><td></td></tr>`;
     for (const c of scored.filter((x) => x.verdict !== 'PASS')) {
       const bg = c.verdict === 'TARGET' ? '#e8f5e9' : '#fffde7';
-      html += `<tr style="border-top:1px solid #e0e0e0;background:${bg};" title="${c.why}">
-        <td style="font-family:monospace;">${c.run || ''}</td>
-        <td>${[c.year, c.make, c.model].filter(Boolean).join(' ')}</td>
+      const vin = esc(c.vin || '');
+      html += `<tr style="border-top:1px solid #e0e0e0;background:${bg};" title="${esc(c.why)}">
+        <td style="font-family:monospace;">${esc(c.run || '')}</td>
+        <td>${vin ? `<span class="tbl-vin" data-vin="${vin}" title="${vin} — click to copy"
+          style="font-family:monospace;cursor:pointer;border-bottom:1px dotted #999;">${vin.slice(-8)}</span>` : ''}</td>
+        <td>${esc([c.year, c.make, c.model].filter(Boolean).join(' '))}</td>
         <td>${c.odo != null ? c.odo.toLocaleString() : ''}</td>
         <td style="font-weight:700;">$${Math.round(c.meanProfit).toLocaleString()}</td>
         <td>${Math.round(c.meanDays)}</td>
-        <td>${c.n}</td></tr>`;
+        <td>${c.n}</td>
+        <td>${vin ? `<span class="tbl-open" data-vin="${vin}" title="open this listing from the page"
+          style="cursor:pointer;color:#e65100;font-weight:700;">↗</span>` : ''}</td></tr>`;
     }
     html += `</table></div>`;
     html += `<div style="font-size:10px;color:#888;padding-top:4px;">
-      Showing TARGET + WATCH — all ${scored.length} cars are in the Excel export.</div>`;
+      VIN shows the last 8 — click it to copy the full 17. ↗ opens that car from the
+      auction page in the active tab. Showing TARGET + WATCH; all ${scored.length} cars are in the Excel export.</div>`;
     el.innerHTML = html;
+
+    const noteEl = document.getElementById('tblOpenNote');
+    const setNote = (text, color) => { if (noteEl) { noteEl.textContent = text; noteEl.style.color = color || '#666'; } };
+    const remaining = () => listable.filter((c) => !opened.has(c.vin));
+    const setProgress = () => {
+      const left = remaining().length;
+      setNote(left ? `${listable.length - left}/${listable.length} opened` : 'all opened');
+    };
+    opened.clear();
+    setProgress();
 
     document.getElementById('tblExport')?.addEventListener('click', exportXlsx);
     document.getElementById('tblCopyRuns')?.addEventListener('click', () =>
       navigator.clipboard.writeText(targets.map((c) => c.run).filter(Boolean).join('\n')));
     document.getElementById('tblCopyVins')?.addEventListener('click', () =>
       navigator.clipboard.writeText(targets.map((c) => c.vin).filter(Boolean).join('\n')));
+
+    document.getElementById('tblOpenBatch')?.addEventListener('click', async () => {
+      const batch = remaining().slice(0, OPEN_BATCH);
+      if (!batch.length) { setNote('nothing left — hit Reset to go again', '#666'); return; }
+      await openOnPage(batch, setNote, logLine);
+    });
+    // Check reports on the next batch without opening or consuming it.
+    document.getElementById('tblOpenCheck')?.addEventListener('click', async () => {
+      const batch = remaining().slice(0, OPEN_BATCH);
+      if (!batch.length) { setNote('nothing left — hit Reset to go again', '#666'); return; }
+      logLine(`Checking ${batch.length} against the active tab…`, '');
+      await checkOnPage(batch, setNote, logLine);
+    });
+    document.getElementById('tblOpenReset')?.addEventListener('click', () => { opened.clear(); setProgress(); });
+
+    el.querySelectorAll('.tbl-vin').forEach((n) => n.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(n.dataset.vin);
+      const was = n.textContent;
+      n.textContent = 'copied';
+      setTimeout(() => { n.textContent = was; }, 700);
+    }));
+    el.querySelectorAll('.tbl-open').forEach((n) => n.addEventListener('click', () => {
+      const car = listable.find((c) => c.vin === n.dataset.vin);
+      if (car) openOnPage([car], setNote, logLine);
+    }));
   }
 
   function bindUI(config) {
