@@ -27,6 +27,13 @@ function dropTrainingAssets() {
       await rm(path.join(dist, 'training'), { recursive: true, force: true })
       // Local debugging page, not part of the product.
       await rm(path.join(dist, 'test-location.html'), { force: true })
+      // The service worker must not ship in the native build at all. main.jsx
+      // already skips registration and unregisters on native, but that code
+      // only runs if the new bundle loads — and a stale SW serves the OLD
+      // bundle, so it never does. The app then keeps showing a previous build
+      // through reinstalls, since simctl install preserves WebKit storage.
+      // Deleting the file makes the state unreachable rather than recoverable.
+      await rm(path.join(dist, 'sw.js'), { force: true })
     },
   }
 }

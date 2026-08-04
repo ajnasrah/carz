@@ -200,7 +200,7 @@ export default function MarketplaceListing() {
   const totalDamages = extDamages.length + intDamages.length
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="min-h-screen bg-slate-950 text-white safe-top">
       <div className="max-w-2xl mx-auto px-4 py-4">
         {/* Header */}
         <div className="flex items-center gap-3 mb-4">

@@ -103,7 +103,14 @@ export const FORMATS = [
   {
     id: 'edge_pipeline',
     label: 'Edge Pipeline',
-    detect: (r) => 'Vin' in r && 'Run Number' in r && 'Lane' in r,
+    // Edge Pipeline ships two exports and both belong here: the pre-sale run
+    // list (Run Number / Lane / Lot) and the vehicle search, which has no run
+    // columns whatsoever because a timed sale has no lane to run in. Keying on
+    // Run Number alone rejected every search export. `!('MMR' in r)` keeps
+    // Manheim — the other feed with a 'Vin' header — out, since it's matched
+    // further down.
+    detect: (r) => 'Vin' in r && !('MMR' in r)
+      && ('Run Number' in r || ('Picture Count' in r && 'Has Condition Report' in r)),
     map: (r) => ({
       vin: (r['Vin'] || '').trim().toUpperCase(),
       stock: (r['Stock Number'] || '').trim(),
@@ -120,6 +127,10 @@ export const FORMATS = [
       grade: (r['Grade'] || '').trim(),
       hasCR: String(r['Has Condition Report'] || '').toLowerCase() === 'true',
       pics: int(r['Picture Count']),
+      // Only the search export carries these, and they were being dropped into
+      // an Announcements column that then exported blank.
+      announcements: [r['Announcements'], r['Lights']]
+        .map((x) => (x || '').trim()).filter(Boolean).join(' | '),
     }),
   },
   {
@@ -197,6 +208,26 @@ export const FORMATS = [
 ]
 
 export const detectFormat = (rows) => (rows.length ? FORMATS.find((f) => f.detect(rows[0])) || null : null)
+
+// Both sites accept a VIN where they normally want their own internal listing
+// id and redirect to the right car themselves — verified against live pages.
+// That is what makes opening cars possible from here at all: no page to scrape
+// and no extension needed, just a URL built from the run list.
+//
+// Keyed by the format the run list was recognised as, because that is what says
+// which site the cars live on — a Manheim export is browsed on OVE, an ADESA
+// export on the ADESA marketplace.
+//
+// Edge Pipeline is deliberately absent: its detail route is an opaque 32-hex
+// hash with no VIN form, so those cars can only be reached by reading the
+// links off the results page, which the browser extension does and this can't.
+//
+// Keep in lockstep with DIRECT_URL in
+// scrapers/smartauction-extension/lib/target-buy-list.js
+export const DIRECT_URL = {
+  manheim: (vin) => `https://www.ove.com/search/results#/details/${vin}/OVE`,
+  adesa: (vin) => `https://marketplace.adesa.com/details/${vin}`,
+}
 
 // ── Normalisation ────────────────────────────────────────────────────────────
 const normMake = (m) => String(m || '').toUpperCase().replace(/[^A-Z]/g, '')

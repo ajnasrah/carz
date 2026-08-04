@@ -33,7 +33,7 @@ export default function Listings() {
   }, [cars, query, make])
 
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-200">
+    <div className="min-h-screen bg-slate-900 text-slate-200 safe-top">
       <header className="bg-slate-950 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
         <h1 className="text-xl font-bold text-emerald-400">CARZ INC — Available Now</h1>
         <p className="text-xs text-slate-400">{cars.length} vehicles on SmartAuction</p>

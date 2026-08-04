@@ -12,13 +12,22 @@
   }
 
   html {
+    /* Restored. This was suspected of breaking scrolling in the native shell
+       and removed — wrongly. Instrumenting the webview showed the document
+       scrolling normally with overflow present (scrollHeight > clientHeight,
+       programmatic scroll moved it); the gesture simply wasn't reaching it in
+       the Simulator, which needs a click-and-drag. Keeps sideways drift out. */
     overflow-x: hidden;
+    /* Density. Tailwind sizing is rem-based, so this scales every padding,
+       gap, and font at once — the phone UI was rendering too large to fit a
+       useful amount on screen. 15px against the 16px default is ~6% tighter
+       while keeping tap targets above the 44pt minimum. */
+    font-size: 15px;
   }
 
   body {
     @apply bg-slate-900 text-white min-h-screen;
     -webkit-tap-highlight-color: transparent;
-    overflow-x: hidden;
     /* Landscape on a notched phone (the corner photo shots force it) puts the
        notch on one side — keep content clear of it. */
     padding-left: var(--safe-left);

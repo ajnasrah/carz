@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../services/supabase'
 import { AuthContext } from './useAuth'
 // Removed automatic admin setup - handled by database migration instead
@@ -10,28 +10,65 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Primary admin is now handled by database migration
-    // No need to call ensurePrimaryAdmin() from frontend
-    
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) loadProfile(session.user.id)
-      else setLoading(false)
-    })
+    let cancelled = false
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    function hydrate(session) {
+      if (cancelled) return
       setUser(session?.user ?? null)
-      if (session?.user) loadProfile(session.user.id)
-      else {
+      if (session?.user) {
+        // Back to loading while the profile is fetched. Without this, signing
+        // in flashed "Couldn't load your account": the initial getSession()
+        // found no session and set loading=false, so by the time the auth
+        // listener set `user`, ProtectedRoute saw user + null profile + not
+        // loading — which is its fail-closed state — and rendered the error for
+        // the duration of the profile query before correcting itself.
+        //
+        // That gate means "the profile genuinely failed to load", not "it
+        // hasn't arrived yet". Only the query settling may clear this.
+        setLoading(true)
+        loadProfile(session.user.id)
+      } else {
         setProfile(null)
         setLoading(false)
       }
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => hydrate(session))
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      // Supabase runs this callback while holding its internal auth lock, and
+      // loadProfile calls supabase.from(...) / supabase.auth.getUser(). Calling
+      // back into the client from inside the callback deadlocks until the lock
+      // times out, so the profile query never resolved and the first login
+      // landed on "Couldn't load your account" — while a refresh worked, because
+      // that path comes through getSession() with no lock held.
+      //
+      // Deferring to the next tick lets the callback return and release the
+      // lock before we touch the client again.
+      setTimeout(() => hydrate(session), 0)
     })
 
-    return () => subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [])
 
-  async function loadProfile(userId) {
+  // getSession() and onAuthStateChange both fire on a fresh login, so without a
+  // guard the first login runs two concurrent profile loads — and for a brand
+  // new user, two concurrent upserts of the same row. Collapse to one in-flight
+  // load per user id.
+  const inFlight = useRef(new Map())
+
+  function loadProfile(userId) {
+    const existing = inFlight.current.get(userId)
+    if (existing) return existing
+    const p = doLoadProfile(userId).finally(() => inFlight.current.delete(userId))
+    inFlight.current.set(userId, p)
+    return p
+  }
+
+  async function doLoadProfile(userId) {
     try {
       const { data, error } = await supabase
         .from('profiles')

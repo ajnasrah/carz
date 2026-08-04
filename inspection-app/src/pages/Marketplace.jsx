@@ -146,7 +146,7 @@ export default function Marketplace() {
   }, [cars, hidden, search, makeFilter, yearRange, mileRange, sort])
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="min-h-screen bg-slate-950 text-white safe-top">
       <div className="max-w-5xl mx-auto px-4 py-6">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-emerald-400">CARZ INC</h1>

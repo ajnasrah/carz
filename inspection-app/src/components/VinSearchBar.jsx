@@ -57,10 +57,15 @@ export default function VinSearchBar() {
             ref={inputRef}
             type="text"
             inputMode="text"
-            placeholder="Search VIN, last 6, or stock #"
+            /* Placeholder is short enough to survive the narrowest phone. The
+               old one ("Search VIN, last 6, or stock #") truncated mid-word at
+               iPhone width because the mono face plus tracking-wide is far wider
+               than the label suggests. Mono stays — it's what makes a VIN
+               readable — but the letter-spacing goes. */
+            placeholder="VIN, last 6, or stock"
             value={input}
             onChange={(e) => setInput(e.target.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9-]/g, '').slice(0, 17))}
-            className="pl-9 pr-20 font-mono tracking-wide"
+            className="pl-9 pr-20 font-mono"
             spellCheck={false}
           />
           <button

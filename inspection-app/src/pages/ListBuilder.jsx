@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw, ExternalLink } from 'lucide-react'
 import XLSXWriter from '../services/xlsxWriter'
 import { copyText } from '../native/clipboard'
 import {
   parseCSV, detectFormat, fetchSoldBook, cleanBook, indexBook, scoreRunList,
-  TARGET_PROFIT, TARGET_DAYS,
+  TARGET_PROFIT, TARGET_DAYS, DIRECT_URL,
 } from '../services/targetBuyList'
+
+// Matches the extension. Enough to work a band in one go without asking the
+// browser to spawn hundreds of tabs at once.
+const OPEN_BATCH = 50
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 const num = (n) => (n == null ? '—' : Math.round(n).toLocaleString())
@@ -57,6 +61,8 @@ export default function ListBuilder() {
   const [result, setResult] = useState(null) // { scored, fmt, fileName, duplicatesDropped }
   const [filter, setFilter] = useState('ACTION') // ACTION | TARGET | WATCH | ALL
   const [copied, setCopied] = useState('')
+  const [opened, setOpened] = useState(() => new Set()) // VINs already sent to a tab
+  const [openNote, setOpenNote] = useState('')
 
   useEffect(() => { loadBook() }, [])
 
@@ -93,6 +99,7 @@ export default function ListBuilder() {
       const { scored, duplicatesDropped } = scoreRunList(raw, fmt, book.byMake)
       setResult({ scored, fmt, fileName: file.name, duplicatesDropped })
       setFilter('ACTION')
+      setOpened(new Set()); setOpenNote('')
     } catch (e) {
       setErr(e.message || String(e))
     } finally { setBusy('') }
@@ -104,6 +111,48 @@ export default function ListBuilder() {
     for (const r of result.scored) c[r.verdict]++
     return c
   }, [result])
+
+  // The builder for whichever site this run list's cars live on, or null when
+  // the source has no VIN-addressable URL (Edge Pipeline).
+  const linkFor = result ? DIRECT_URL[result.fmt.id] : null
+
+  // Cars in a band that can actually be opened: scored that way, carrying a
+  // VIN to build the URL from, and not already sent to a tab.
+  const bandQueue = (band) => (result?.scored || [])
+    .filter((c) => c.verdict === band && c.vin && !opened.has(c.vin))
+
+  const bandTotal = (band) => (result?.scored || [])
+    .filter((c) => c.verdict === band && c.vin).length
+
+  // TARGET and WATCH open separately — one means "bid on this", the other
+  // "keep an eye on it", and opening both at once buries the handful that
+  // matter in a pile that doesn't.
+  function openBand(band) {
+    if (!linkFor) return
+    const queue = bandQueue(band)
+    if (!queue.length) {
+      setOpenNote(bandTotal(band)
+        ? `Every ${band.toLowerCase()} is already open — Reset to go again.`
+        : `No ${band.toLowerCase()} cars on this list.`)
+      return
+    }
+    const batch = queue.slice(0, OPEN_BATCH)
+    // Synchronous inside the click so the browser still counts this as the
+    // user gesture that authorised the tabs.
+    const next = new Set(opened)
+    let blocked = 0
+    for (const c of batch) {
+      const w = window.open(linkFor(c.vin), '_blank', 'noopener')
+      if (w) next.add(c.vin)   // a blocked car stays queued for the next press
+      else blocked++
+    }
+    setOpened(next)
+    const left = queue.length - batch.length
+    setOpenNote(blocked
+      ? `Opened ${batch.length - blocked} of ${batch.length}. Your browser blocked ${blocked} — `
+        + `allow pop-ups for this site, then press again; the blocked cars are still queued.`
+      : `Opened ${batch.length} ${band.toLowerCase()}${left ? ` · ${left} left, press again` : ''}.`)
+  }
 
   const visible = useMemo(() => {
     if (!result) return []
@@ -172,7 +221,7 @@ export default function ListBuilder() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-slate-950 text-slate-100 safe-top">
       <div className="max-w-[1600px] mx-auto px-4 py-5">
         <div className="flex items-center gap-3 mb-1">
           <Link to="/" className="text-slate-400 hover:text-slate-200"><ArrowLeft size={20} /></Link>
@@ -259,12 +308,45 @@ export default function ListBuilder() {
               ))}
             </div>
 
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              {linkFor ? (
+                <>
+                  <button onClick={() => openBand('TARGET')} disabled={!bandTotal('TARGET')}
+                    title={`Open TARGET cars only, ${OPEN_BATCH} at a time`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold
+                      bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white transition-colors">
+                    <ExternalLink size={13} /> Open Target ({bandQueue('TARGET').length}/{bandTotal('TARGET')})
+                  </button>
+                  <button onClick={() => openBand('WATCH')} disabled={!bandTotal('WATCH')}
+                    title={`Open WATCH cars only, ${OPEN_BATCH} at a time`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold
+                      bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:hover:bg-amber-600 text-white transition-colors">
+                    <ExternalLink size={13} /> Open Watch ({bandQueue('WATCH').length}/{bandTotal('WATCH')})
+                  </button>
+                  {opened.size > 0 && (
+                    <button onClick={() => { setOpened(new Set()); setOpenNote('') }}
+                      title="offer every car again from the top"
+                      className="px-3 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:text-slate-200">
+                      Reset opens
+                    </button>
+                  )}
+                  <span className="text-xs text-slate-500">{openNote}</span>
+                </>
+              ) : (
+                <span className="text-xs text-slate-500">
+                  {result.fmt.label} listings are only reachable by an internal id, not by VIN, so they
+                  can't be opened from here — use the browser extension, which reads the links off the
+                  results page. Copy VINs below and search them on the auction site instead.
+                </span>
+              )}
+            </div>
+
             <div className="overflow-x-auto rounded-lg border border-slate-800">
               <table className="w-full text-sm">
                 <thead className="bg-slate-900 text-slate-400 text-xs uppercase tracking-wide">
                   <tr>
-                    {['Run', 'Lane', 'Vehicle', 'Trim', 'Miles', 'CR', 'Avg Profit', 'Median', 'Days', 'Hit', 'n', 'Tier', 'Conf', 'MMR', 'VIN']
-                      .map((h) => <th key={h} className="text-left font-medium px-2.5 py-2 whitespace-nowrap">{h}</th>)}
+                    {['Run', 'Lane', 'Vehicle', 'Trim', 'Miles', 'CR', 'Avg Profit', 'Median', 'Days', 'Hit', 'n', 'Tier', 'Conf', 'MMR', 'VIN', '']
+                      .map((h, i) => <th key={h || `open-${i}`} className="text-left font-medium px-2.5 py-2 whitespace-nowrap">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -301,10 +383,22 @@ export default function ListBuilder() {
                             </button>
                           : '—'}
                       </td>
+                      {/* A real link rather than a scripted window.open, so a
+                          single car always opens even with pop-ups blocked. */}
+                      <td className="px-2.5 py-1.5">
+                        {linkFor && c.vin
+                          ? <a href={linkFor(c.vin)} target="_blank" rel="noopener noreferrer"
+                              title="open this car on the auction site"
+                              onClick={() => setOpened((s) => new Set(s).add(c.vin))}
+                              className="text-slate-500 hover:text-emerald-400 inline-flex">
+                              <ExternalLink size={13} />
+                            </a>
+                          : null}
+                      </td>
                     </tr>
                   ))}
                   {visible.length === 0 && (
-                    <tr><td colSpan={15} className="px-3 py-8 text-center text-slate-500">
+                    <tr><td colSpan={16} className="px-3 py-8 text-center text-slate-500">
                       Nothing on this list met the bar.
                     </td></tr>
                   )}
@@ -312,8 +406,11 @@ export default function ListBuilder() {
               </table>
             </div>
             <p className="text-xs text-slate-500 mt-2">
-              Hover a row for the full reasoning. The Excel download carries every column the auction
-              provided plus the sold-book stats — {COLUMNS.length} in total.
+              Hover a row for the full reasoning. Click a VIN to copy it in full.
+              {linkFor && ' The ↗ on a row opens that one car; Open Target and Open Watch '
+                + `open a whole band ${OPEN_BATCH} at a time, built straight from the VIN, so nothing gets skipped.`}
+              {' '}The Excel download carries every column the auction provided plus the sold-book
+              stats — {COLUMNS.length} in total.
             </p>
           </>
         )}

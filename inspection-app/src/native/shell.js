@@ -1,6 +1,5 @@
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { SplashScreen } from '@capacitor/splash-screen'
-import { Keyboard } from '@capacitor/keyboard'
 import { App } from '@capacitor/app'
 import { isNative, isAndroid } from './platform'
 
@@ -38,9 +37,10 @@ export async function initNativeShell({ onDeepLink, onBack } = {}) {
   // drop the inspector out entirely.
   const back = await App.addListener('backButton', (e) => onBack?.(e))
 
-  // Let the page scroll the focused input into view itself; the default
-  // resize mode fights the fixed bottom nav.
-  Keyboard.setScroll?.({ isDisabled: false }).catch(() => {})
+  // Deliberately NOT calling Keyboard.setScroll or setting a keyboard resize
+  // mode. Those touch the WKWebView's scroll view, and the page wouldn't scroll
+  // at all in the native shell while scrolling fine in a browser. Leave the
+  // scroll view alone unless there's a concrete keyboard problem to solve.
 
   return () => {
     urlOpen.remove?.()
