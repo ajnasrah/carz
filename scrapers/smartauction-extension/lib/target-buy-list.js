@@ -119,7 +119,15 @@
     {
       id: 'edge_pipeline',
       label: 'Edge Pipeline',
-      detect: (r) => 'Vin' in r && 'Run Number' in r && 'Lane' in r,
+      // Edge Pipeline ships two exports and both belong here: the pre-sale run
+      // list (Run Number / Lane / Lot) and the vehicle search, which has no run
+      // columns whatsoever because a timed sale has no lane to run in. Keying
+      // on Run Number alone rejected every search export. The run fields just
+      // come back empty in that case, which is exactly why the table grew a VIN
+      // column. `!('MMR' in r)` keeps Manheim — the other feed with a 'Vin'
+      // header — from being swallowed here, since it's matched further down.
+      detect: (r) => 'Vin' in r && !('MMR' in r)
+        && ('Run Number' in r || ('Picture Count' in r && 'Has Condition Report' in r)),
       map: (r) => ({
         vin: (r['Vin'] || '').trim().toUpperCase(),
         stock: (r['Stock Number'] || '').trim(),
@@ -136,6 +144,12 @@
         grade: (r['Grade'] || '').trim(),
         hasCR: String(r['Has Condition Report'] || '').toLowerCase() === 'true',
         pics: int(r['Picture Count']),
+        // The search export carries these and the pre-sale one doesn't; they
+        // were being dropped on the floor into an Announcements column that
+        // then exported blank. "RIDE AND DRIVE" vs a lights disclosure is the
+        // difference between a bid and a pass.
+        announcements: [r['Announcements'], r['Lights']]
+          .map((x) => (x || '').trim()).filter(Boolean).join(' | '),
       }),
     },
     {
@@ -607,7 +621,7 @@
     const w = scored.filter((c) => c.verdict === 'WATCH').length;
 
     lastResult = { scored, bookSize: book.length, rawBook: rows.length, source: fmt.label,
-                   removedOutliers, removedPassthrough };
+                   sourceId: fmt.id, removedOutliers, removedPassthrough };
 
     log(`${t} TARGET · ${w} WATCH · ${scored.length - t - w} PASS`, 'ok');
     setStatus(`✓ ${t} targets of ${scored.length}`, 'loaded');
@@ -686,11 +700,60 @@
   // VIN, and the only place that VIN maps to a link is the search-results page
   // already sitting in the active tab. This pulls VIN -> listing link out of
   // that page's DOM, which is the ⌘F-then-click loop done in one shot.
-  const OPEN_BATCH = 10;
+  // Every source paginates, and none of them agree on how: OVE renders ~100 at
+  // a time, Edge Pipeline paginates at 50, ADESA virtualises and keeps roughly
+  // a screenful of 19 alive. So the batch is not "the next ten in the report" —
+  // it's "every car in the report that this page is currently showing". You
+  // work a page, move to the next, press again. Nothing is ever written off for
+  // being absent; it just wasn't on that page.
+  //
+  // Still capped, because "all" on a 100-car OVE page means 100 windows. The
+  // overflow stays queued and the next press takes it.
+  const MAX_OPEN_AT_ONCE = 50;
   const opened = new Set();
 
+  // Both of these sites will take a VIN where they normally want their own
+  // internal listing id and redirect to the right car themselves — verified
+  // against live pages on both. That makes scraping unnecessary for them: the
+  // URL is built straight from the run list, so every car in the report is
+  // reachable whether or not it happens to be rendered, which is the whole
+  // problem on ADESA (append-only infinite scroll, ~20 of 2,340 loaded at a
+  // time — you would have to scroll for minutes to see the rest).
+  //
+  // Keyed by the format the run list was recognised as, because that is what
+  // says which site the cars live on: a Manheim export is browsed on OVE, an
+  // ADESA export on the ADESA marketplace.
+  const DIRECT_URL = {
+    manheim: (vin) => `https://www.ove.com/search/results#/details/${vin}/OVE`,
+    adesa: (vin) => `https://marketplace.adesa.com/details/${vin}`,
+  };
+  // Edge Pipeline is deliberately absent: its detail route is an opaque hash
+  // (/components/vehicle/detail/<32 hex>) with no VIN form, so those still have
+  // to be read off the page.
+
+  // ADESA virtualises: ~20 cards exist at a time out of 2,300 results, and a
+  // card is destroyed once it scrolls out. One snapshot can therefore only ever
+  // see a screenful, which is why most of the list looked "not on this page".
+  // So we sweep — scroll a step, harvest what rendered, repeat — and collect on
+  // the way down rather than reading once at the end. Their loader is async and
+  // extends the list as it goes (the scroll container grew 2,208px -> 13,077px
+  // in testing), so "reached the bottom" is only believed after it stops
+  // yielding anything new several times running.
+  const SWEEP_MAX_MS = 90000;
+  const SWEEP_SETTLE_MS = 600;
+  const SWEEP_MAX_STEPS = 400;
+  const SWEEP_STALLS = 4;
+
   // Runs in the page, not here — everything it needs must be inside it.
-  function scrapeVinLinks(items) {
+  function scrapeVinLinks(allItems) {
+    // The whole report gets handed over now, not a batch of ten, so narrow to
+    // the cars this page actually shows before touching the DOM element by
+    // element. One scan of the body text against 800 VINs is cheap; 800 VINs
+    // against every element on the page is not.
+    const bodyText = (document.body.textContent || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+    const items = allItems.filter((it) => bodyText.indexOf(it.vin) !== -1);
+    if (!items.length) return {};
+
     // Smallest element whose text carries the VIN: the card's VIN line, not the
     // card, not the whole results list. OVE splits the VIN across a plain and a
     // bold span, so match on textContent with the punctuation stripped rather
@@ -711,37 +774,80 @@
 
     const hrefOf = (a) => {
       const raw = a.getAttribute('href') || '';
-      if (!raw || raw.charAt(0) === '#' || /^(javascript|mailto|tel):/i.test(raw)) return '';
+      if (!raw || /^(javascript|mailto|tel):/i.test(raw)) return '';
+      // OVE is a hash-routed SPA and the listing link *is* the hash:
+      // "#/details/<VIN>/OVE". So a leading # is a real destination — only a
+      // bare "#" or an in-page jump ("#top") isn't. a.href resolves these to a
+      // full URL with the hash intact, which cold-loads to the right car.
+      if (raw.charAt(0) === '#' && raw.charAt(1) !== '/') return '';
       return a.href;
     };
     // Links that live in a result card but never open the car.
     const NOT_A_LISTING = /carfax|autocheck|experian|\/seller|\/dealer|feedback|rating|logout|help|report/i;
 
+    // A badge can sit flush against the model year — OVE renders the title as
+    // "NEW2023 Volkswagen Taos SE" — so drop leading letters that run straight
+    // into a year before asking whether the text leads with that year.
+    const deBadge = (txt) => txt.replace(/^[A-Z]+(?=(?:19|20)\d{2})/, '');
+
     // The VIN itself is never a link — the vehicle title sitting directly above
     // it is. So a card is scored by which of its anchors is that title, best
     // signal first:
     //   vin   the href carries the VIN outright — unambiguous, nothing to infer
+    //   card  the anchor wraps text containing the VIN, so it *is* that car's
+    //         card — ADESA links the whole card rather than the title
     //   title anchor text reads "2019 VOLKSWAGEN JETTA S" — year first, then make
     //   year  anchor text leads with the model year but the make didn't match
     //   weak  no title-shaped anchor at all; last resort, and reported as such
     // Requiring year AND make also keeps us honest when the climb overshoots
     // into a container holding more than one card.
-    const RANK = { vin: 0, title: 1, year: 2, weak: 3 };
+    const RANK = { vin: 0, card: 1, title: 2, year: 3, weak: 4 };
+    const flat = new Map();
+    const flatText = (a) => {
+      let v = flat.get(a);
+      if (v === undefined) { v = (a.textContent || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase(); flat.set(a, v); }
+      return v;
+    };
+    // An anchor's own text nodes, ignoring nested elements. A card that wraps
+    // its whole tile in one <a> inherits the text of every link inside it, so
+    // matching NOT_A_LISTING against the full textContent threw the ADESA card
+    // away for containing a CARFAX link somewhere beneath it. For an ordinary
+    // leaf link this is just its label, which is what the check always meant.
+    const ownText = (a) => {
+      const kids = a.childNodes || [];
+      let s = '';
+      for (let i = 0; i < kids.length; i++) if (kids[i].nodeType === 3) s += kids[i].nodeValue || '';
+      return s.trim().toUpperCase();
+    };
     const pickHref = (root, it) => {
-      const anchors = root.querySelectorAll('a[href]');
+      // querySelectorAll only ever returns descendants, so a card that is
+      // itself an <a> — ADESA wraps the entire card in one — was invisible
+      // here and the climb walked straight past the only link that mattered.
+      const anchors = [...root.querySelectorAll('a[href]')];
+      if (root.tagName === 'A' && root.getAttribute('href')) anchors.unshift(root);
       let bestHit = null;
       for (let i = 0; i < anchors.length; i++) {
         const h = hrefOf(anchors[i]);
         if (!h) continue;
         const txt = (anchors[i].textContent || '').trim().toUpperCase();
+        // Carrying the VIN doesn't make a link the listing: OVE's AutoCheck URL
+        // embeds the VIN in its query string, so it used to win at rank "vin"
+        // and open a history report instead of the car. The exclusion has to
+        // gate every branch, not just "weak".
+        if (NOT_A_LISTING.test(h) || NOT_A_LISTING.test(ownText(anchors[i]))) continue;
         let how = '';
         if (h.toUpperCase().indexOf(it.vin) !== -1) how = 'vin';
-        else if (it.year && txt.indexOf(String(it.year)) === 0) {
+        else if (flatText(anchors[i]).indexOf(it.vin) !== -1) how = 'card';
+        else if (it.year && deBadge(txt).indexOf(String(it.year)) === 0) {
           how = it.make && txt.indexOf(it.make.toUpperCase()) !== -1 ? 'title' : 'year';
-        } else if (!NOT_A_LISTING.test(h) && !NOT_A_LISTING.test(txt)) how = 'weak';
-        if (!how) continue;
-        if (!bestHit || RANK[how] < RANK[bestHit.how]) bestHit = { href: h, how, text: txt.slice(0, 60) };
-        if (bestHit.how === 'vin') break;
+        } else how = 'weak';
+        // On a tie, the shorter URL wins: the car is "#/details/<VIN>/OVE" and
+        // its condition-report tab is that same route plus a segment, so both
+        // carry the VIN and rank equally. Shortest-wins picks the car without
+        // depending on which one the page happens to render first.
+        const better = !bestHit || RANK[how] < RANK[bestHit.how]
+          || (RANK[how] === RANK[bestHit.how] && h.length < bestHit.href.length);
+        if (better) bestHit = { href: h, how, text: txt.slice(0, 60) };
       }
       return bestHit;
     };
@@ -765,18 +871,80 @@
     return out;
   }
 
+  // Runs in the page. Scrolls the results one viewport and says where it got
+  // to. The results rarely scroll the window itself — ADESA's document is
+  // exactly one screen tall and the list lives in an inner div — so the
+  // scroller is found by looking for the scrollable element holding the most
+  // links, which is the results list on every site tried.
+  function pageScrollStep(toTop) {
+    let sc = null, most = -1;
+    const els = document.body.getElementsByTagName('*');
+    for (let i = 0; i < els.length; i++) {
+      const e = els[i];
+      if (e.scrollHeight <= e.clientHeight + 50) continue;
+      const ov = getComputedStyle(e).overflowY;
+      if (ov !== 'auto' && ov !== 'scroll') continue;
+      const n = e.querySelectorAll('a[href]').length;
+      if (n > most) { most = n; sc = e; }
+    }
+    const winMax = () => (document.documentElement.scrollHeight - window.innerHeight);
+    if (toTop) {
+      if (sc) sc.scrollTop = 0; else window.scrollTo(0, 0);
+      return { y: 0, max: sc ? sc.scrollHeight - sc.clientHeight : winMax(), moved: true };
+    }
+    if (sc) {
+      const was = sc.scrollTop;
+      sc.scrollTop = was + Math.max(200, Math.round(sc.clientHeight * 0.85));
+      return { y: sc.scrollTop, max: sc.scrollHeight - sc.clientHeight, moved: sc.scrollTop > was };
+    }
+    const was = window.scrollY;
+    window.scrollBy(0, Math.max(200, Math.round(window.innerHeight * 0.85)));
+    return { y: window.scrollY, max: winMax(), moved: window.scrollY > was };
+  }
+
   async function resolveOnPage(cars, setNote) {
     const items = cars.map((c) => ({ vin: c.vin, year: c.year, make: c.make, model: c.model }));
-    setNote(`looking for ${items.length} on the page…`, '#666');
-
+    setNote(`scanning the list for ${items.length}…`, '#666');
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.id) { setNote('no active tab', '#c62828'); return null; }
 
+    const links = {};
+    let pending = items;
+    const run = (func, args) => chrome.scripting.executeScript({ target: { tabId: tab.id }, func, args })
+      .then(([r]) => (r && r.result));
+    // Each pass only asks about cars still missing, so the work shrinks as the
+    // sweep goes on even though the list it's walking gets longer.
+    const harvest = async () => {
+      const got = (await run(scrapeVinLinks, [pending])) || {};
+      const names = Object.keys(got);
+      if (names.length) {
+        Object.assign(links, got);
+        const have = new Set(names);
+        pending = pending.filter((p) => !have.has(p.vin));
+      }
+      return names.length;
+    };
+
     try {
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id }, func: scrapeVinLinks, args: [items],
-      });
-      return { items, links: (res && res.result) || {} };
+      // Start from the top so a sweep covers the whole list rather than
+      // whatever happens to be below the current scroll position.
+      await run(pageScrollStep, [true]);
+      await harvest();
+
+      let stalls = 0, steps = 0;
+      const started = Date.now();
+      while (pending.length && steps < SWEEP_MAX_STEPS && Date.now() - started < SWEEP_MAX_MS) {
+        const pos = (await run(pageScrollStep, [false])) || {};
+        steps++;
+        await new Promise((r) => setTimeout(r, SWEEP_SETTLE_MS));
+        const found = await harvest();
+        // Their loader appends asynchronously, so a motionless step at the
+        // bottom isn't the end until several in a row come back empty.
+        const atEnd = !pos.moved && pos.y >= (pos.max || 0) - 2;
+        if (!found && atEnd) { if (++stalls >= SWEEP_STALLS) break; } else stalls = 0;
+        setNote(`scanning… ${Object.keys(links).length} found`, '#666');
+      }
+      return { items, links, tabUrl: tab.url || '' };
     } catch (err) {
       // Chrome refuses to inject into its own pages and into the Web Store.
       setNote(`can't read that tab — ${err.message}`, '#c62828');
@@ -785,46 +953,87 @@
   }
 
   // Dry run: show what each VIN resolved to without opening anything, so a bad
-  // pick is caught before it becomes ten wrong tabs.
+  // pick is caught before it becomes a screenful of wrong windows.
   async function checkOnPage(cars, setNote, log) {
-    const got = await resolveOnPage(cars, setNote);
-    if (!got) return;
-    const { items, links } = got;
-    let good = 0, weak = 0, missing = 0;
-    for (const it of items) {
-      const hit = links[it.vin];
-      if (!hit) { missing++; log(`  ✗ ${it.vin} — not on the page`, 'err'); continue; }
-      if (hit.how === 'weak') { weak++; log(`  ? ${it.vin} → ${hit.href}  [no title link found]`, 'err'); }
-      else { good++; log(`  ✓ ${it.vin} → ${hit.href}  [${hit.how}: ${hit.text}]`, 'ok'); }
+    const direct = DIRECT_URL[lastResult && lastResult.sourceId];
+    if (direct) {
+      const shown = cars.slice(0, 10);
+      for (const c of shown) log(`  ✓ ${c.vin} → ${direct(c.vin)}  [direct link — no page needed]`, 'ok');
+      if (cars.length > shown.length) log(`  …and ${cars.length - shown.length} more, same form`, '');
+      setNote(`${cars.length} ready · built straight from the VIN`, '#1b5e20');
+      return;
     }
-    setNote(`${good} matched · ${weak} unsure · ${missing} not on page — see log`,
-      weak || missing ? '#e65100' : '#1b5e20');
-  }
-
-  // Resolve VINs to links on the active tab and open them in background tabs so
-  // the side panel keeps focus and the batch order is preserved.
-  async function openOnPage(cars, setNote, log) {
     const got = await resolveOnPage(cars, setNote);
     if (!got) return;
     const { items, links } = got;
-
-    let n = 0, weak = 0;
+    let good = 0, weak = 0;
+    // Only what the page has gets a line each. The remainder is a single count:
+    // the whole unopened report is handed over now, so listing every absent car
+    // would bury the handful that matter under hundreds of lines.
     for (const it of items) {
       const hit = links[it.vin];
       if (!hit) continue;
+      if (hit.how === 'weak') { weak++; log(`  ? ${it.vin} → ${hit.href}  [no title link found]`, 'err'); }
+      else { good++; log(`  ✓ ${it.vin} → ${hit.href}  [${hit.how}: ${hit.text}]`, 'ok'); }
+    }
+    const elsewhere = items.length - good - weak;
+    if (elsewhere) log(`  ${elsewhere} of ${items.length} weren't in that list`, '');
+    setNote(`${good} matched · ${weak} unsure · ${elsewhere} not found`,
+      weak || !good ? '#e65100' : '#1b5e20');
+  }
+
+  // Resolve VINs to links on the active tab and open each car in its own
+  // window. A window rather than a tab because these are hash routes on the
+  // same page the results live on — a tab would leave you scrubbing one
+  // address bar, and OVE's SPA can swallow a same-document hash change without
+  // re-rendering. Unfocused so the side panel keeps focus and the batch order
+  // is preserved; awaited in sequence so the windows land in table order.
+  async function openOnPage(cars, setNote, log) {
+    const direct = DIRECT_URL[lastResult && lastResult.sourceId];
+    let items, links;
+    if (direct) {
+      // No page needed, so nothing can be "not on this page".
+      items = cars.map((c) => ({ vin: c.vin }));
+      links = {};
+      for (const it of items) links[it.vin] = { href: direct(it.vin), how: 'direct', text: '' };
+    } else {
+      const got = await resolveOnPage(cars, setNote);
+      if (!got) return;
+      items = got.items; links = got.links;
+    }
+
+    // Everything we have a link for, in report order.
+    const hits = items.map((it) => ({ it, hit: links[it.vin] })).filter((x) => x.hit);
+    const overflow = Math.max(0, hits.length - MAX_OPEN_AT_ONCE);
+    const batch = hits.slice(0, MAX_OPEN_AT_ONCE);
+
+    if (!hits.length) {
+      setNote(`none of your ${items.length} remaining cars are in that list`, '#c62828');
+      log(`  nothing from the report turned up — check it's the right saved search`, 'err');
+      return;
+    }
+    if (overflow) log(`  ${hits.length} found — opening ${MAX_OPEN_AT_ONCE}, press again for the other ${overflow}`, '');
+
+    let n = 0, weak = 0;
+    for (const { it, hit } of batch) {
       if (hit.how === 'weak') { weak++; log(`  ? ${it.vin} → ${hit.href}  [guessed — no title link]`, 'err'); }
-      chrome.tabs.create({ url: hit.href, active: false });
+      try {
+        await chrome.windows.create({ url: hit.href, focused: false });
+      } catch (err) {
+        // Don't let one refused window kill the rest of the batch.
+        log(`  ✗ ${it.vin} — couldn't open a window: ${err.message}`, 'err');
+        continue;
+      }
       opened.add(it.vin);
       n++;
     }
-    const missed = items.length - n;
-    // A miss means the car isn't rendered in that tab — wrong saved search, or
-    // it's on a page/scroll position that hasn't loaded yet.
-    if (!n) setNote(`none of these ${items.length} are on that page`, '#c62828');
-    else setNote(`opened ${n}${weak ? ` · ${weak} guessed` : ''}${missed ? ` · ${missed} not on the page` : ''}`,
+    // Cars this page didn't have are left completely alone — they're not gone,
+    // they're on another page, and the next press picks them up there.
+    const elsewhere = items.length - hits.length;
+    setNote(`opened ${n}${weak ? ` · ${weak} guessed` : ''}`
+      + `${overflow ? ` · ${overflow} more found` : ''}`
+      + `${elsewhere ? ` · ${elsewhere} not in that list` : ''}`,
       weak ? '#e65100' : '#1b5e20');
-    // Don't re-offer VINs the page doesn't have; they'd block every later batch.
-    for (const it of items) opened.add(it.vin);
   }
 
   // ── UI ─────────────────────────────────────────────────────────────────────
@@ -857,17 +1066,30 @@
       <button id="tblExport" class="btn btn-small" style="background:#1b5e20;font-size:10px;padding:3px 8px;">⬇ Excel</button>
       <button id="tblCopyRuns" class="btn btn-small" style="background:#1565c0;font-size:10px;padding:3px 8px;">Copy Run #s</button>
       <button id="tblCopyVins" class="btn btn-small" style="background:#6a1b9a;font-size:10px;padding:3px 8px;">Copy VINs</button>
+      <button id="tblNewList" class="btn btn-small" title="score a different run list — this one stays up until the new file loads"
+        style="background:#00695c;font-size:10px;padding:3px 8px;margin-left:auto;">＋ New list</button>
     </div>`;
-    html += `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
-      <button id="tblOpenBatch" class="btn btn-small" style="background:#e65100;font-size:10px;padding:3px 8px;">↗ Open next ${OPEN_BATCH}</button>
+    // "Reset opens", not "Reset" — it only rewinds the ↗ batching. Clearing the
+    // report itself is ＋ New list, and the two sat next to each other reading
+    // as if either might throw the run list away.
+    // TARGET and WATCH open separately. They mean different things — one is
+    // "bid on this", the other is "keep an eye on it" — and a single button
+    // that opened both buried a handful of targets in a pile of watches.
+    html += `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+      <button id="tblOpenTarget" class="btn btn-small" title="open TARGET cars only, ${MAX_OPEN_AT_ONCE} at a time"
+        style="background:#1b5e20;font-size:10px;padding:3px 8px;">↗ TARGET (${targets.filter((c) => c.vin).length})</button>
+      <button id="tblOpenWatch" class="btn btn-small" title="open WATCH cars only, ${MAX_OPEN_AT_ONCE} at a time"
+        style="background:#e65100;font-size:10px;padding:3px 8px;">↗ WATCH (${watch.filter((c) => c.vin).length})</button>
       <button id="tblOpenCheck" class="btn btn-small" style="background:#455a64;font-size:10px;padding:3px 8px;">🔍 Check</button>
-      <button id="tblOpenReset" class="btn btn-small" style="background:#9e9e9e;font-size:10px;padding:3px 8px;">Reset</button>
+      <button id="tblOpenReset" class="btn btn-small" title="offer every car again from the top"
+        style="background:#9e9e9e;font-size:10px;padding:3px 8px;">Reset opens</button>
       <span id="tblOpenNote" style="font-size:10px;color:#666;"></span>
     </div>`;
 
-    // The listable set, in the order the table shows it — TARGETs first, so the
-    // first batches are always the cars worth bidding on.
-    const listable = scored.filter((x) => x.verdict !== 'PASS' && x.vin);
+    // Each band in the order the table shows it, cars without a VIN dropped
+    // since there'd be nothing to open them by.
+    const bandOf = (v) => scored.filter((x) => x.verdict === v && x.vin);
+    const listable = bandOf('TARGET').concat(bandOf('WATCH'));
 
     html += `<div style="max-height:260px;overflow-y:auto;font-size:10px;"><table style="width:100%;border-collapse:collapse;">
       <tr style="background:#f0f0f0;font-weight:700;position:sticky;top:0;">
@@ -889,36 +1111,62 @@
     }
     html += `</table></div>`;
     html += `<div style="font-size:10px;color:#888;padding-top:4px;">
-      VIN shows the last 8 — click it to copy the full 17. ↗ opens that car from the
-      auction page in the active tab. Showing TARGET + WATCH; all ${scored.length} cars are in the Excel export.</div>`;
+      VIN shows the last 8 — click it to copy the full 17. ↗ opens that one car in its
+      own window. <b>↗ TARGET</b> and <b>↗ WATCH</b> open only their own band, up to
+      ${MAX_OPEN_AT_ONCE} at a time — press again for the next batch. ${DIRECT_URL[result.sourceId]
+        ? 'Links are built straight from the VIN, so no auction tab needs to be open and nothing gets skipped.'
+        : 'Links are read from the auction page in the active tab, so keep it on the results list.'}
+      Showing TARGET + WATCH; all ${scored.length} cars are in the Excel export.</div>`;
     el.innerHTML = html;
 
     const noteEl = document.getElementById('tblOpenNote');
     const setNote = (text, color) => { if (noteEl) { noteEl.textContent = text; noteEl.style.color = color || '#666'; } };
-    const remaining = () => listable.filter((c) => !opened.has(c.vin));
+    // Per band, so TARGET progress can't be hidden behind WATCH progress.
+    const remainingIn = (v) => bandOf(v).filter((c) => !opened.has(c.vin));
     const setProgress = () => {
-      const left = remaining().length;
-      setNote(left ? `${listable.length - left}/${listable.length} opened` : 'all opened');
+      const t = bandOf('TARGET').length - remainingIn('TARGET').length;
+      const w = bandOf('WATCH').length - remainingIn('WATCH').length;
+      setNote(`${t}/${bandOf('TARGET').length} target · ${w}/${bandOf('WATCH').length} watch opened`);
     };
     opened.clear();
     setProgress();
 
     document.getElementById('tblExport')?.addEventListener('click', exportXlsx);
+    // Reopens the same file picker the "Run List" button uses. Deliberately
+    // tears nothing down first: cancelling the dialog has to leave the current
+    // report standing, and the change handler already clears the log and
+    // re-renders over this panel once a file actually arrives.
+    document.getElementById('tblNewList')?.addEventListener('click', () =>
+      document.getElementById('tblRunListInput')?.click());
     document.getElementById('tblCopyRuns')?.addEventListener('click', () =>
       navigator.clipboard.writeText(targets.map((c) => c.run).filter(Boolean).join('\n')));
     document.getElementById('tblCopyVins')?.addEventListener('click', () =>
       navigator.clipboard.writeText(targets.map((c) => c.vin).filter(Boolean).join('\n')));
 
-    document.getElementById('tblOpenBatch')?.addEventListener('click', async () => {
-      const batch = remaining().slice(0, OPEN_BATCH);
-      if (!batch.length) { setNote('nothing left — hit Reset to go again', '#666'); return; }
-      await openOnPage(batch, setNote, logLine);
+    const nextBatch = (v) => {
+      const batch = remainingIn(v);
+      if (batch.length) return batch;
+      setNote(bandOf(v).length
+        ? `every ${v.toLowerCase()} is open — hit Reset opens to go again`
+        : `no ${v.toLowerCase()} cars on this list`, '#666');
+      return null;
+    };
+
+    document.getElementById('tblOpenTarget')?.addEventListener('click', async () => {
+      const batch = nextBatch('TARGET');
+      if (batch) await openOnPage(batch, setNote, logLine);
     });
-    // Check reports on the next batch without opening or consuming it.
+    document.getElementById('tblOpenWatch')?.addEventListener('click', async () => {
+      const batch = nextBatch('WATCH');
+      if (batch) await openOnPage(batch, setNote, logLine);
+    });
+    // Check reports without opening or consuming anything. It follows TARGET
+    // while any are left, since that's the band you'd act on first.
     document.getElementById('tblOpenCheck')?.addEventListener('click', async () => {
-      const batch = remaining().slice(0, OPEN_BATCH);
-      if (!batch.length) { setNote('nothing left — hit Reset to go again', '#666'); return; }
-      logLine(`Checking ${batch.length} against the active tab…`, '');
+      const band = remainingIn('TARGET').length ? 'TARGET' : 'WATCH';
+      const batch = nextBatch(band);
+      if (!batch) return;
+      logLine(`Checking ${batch.length} ${band} cars…`, '');
       await checkOnPage(batch, setNote, logLine);
     });
     document.getElementById('tblOpenReset')?.addEventListener('click', () => { opened.clear(); setProgress(); });
