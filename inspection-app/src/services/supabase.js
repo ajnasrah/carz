@@ -1,9 +1,33 @@
 import { createClient } from '@supabase/supabase-js'
+import { authStorage } from '../native/storage'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+// .trim() is load-bearing, not defensive tidying. Env values pulled from Vercel
+// arrive with a trailing carriage return, and it gets inlined into the bundle at
+// build time. The damage is silent and total:
+//
+//   • the anon key becomes "<jwt>\r"  → every request fails "Invalid API key"
+//   • the URL becomes "…supabase.co\r" and the URL parser rewrites the backslash
+//     to a slash, so requests go to …supabase.co/r/auth/v1/otp — a path that
+//     doesn't exist, which reports the same misleading "Invalid API key"
+//
+// Nothing in the error points at whitespace, so this reads like a broken key or
+// a dead SMS provider and sends you hunting in the wrong place. Trim at every
+// env boundary — see also services/ghlSync.js.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// authStorage is undefined on web, so the client keeps its localStorage default
+// and existing browser sessions stay valid. Inside the native shell it swaps in
+// a Preferences-backed store — WKWebView's localStorage is evictable, which was
+// logging the crew out mid-shift and forcing a fresh SMS OTP on a phone that
+// may have one bar out on the lot. See src/native/storage.js.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    ...(authStorage ? { storage: authStorage } : {}),
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+})
 
 // PostgREST caps an unbounded .select() at 1000 rows. Tables like
 // vehicle_locations have outgrown that, so loading the whole table into a

@@ -7,8 +7,11 @@
 import { supabase } from './supabase'
 import { parseCSV } from './buyerMatchData'
 
-const FN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ghl-lead-sync`
-const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY
+// .trim() both — Vercel-sourced env values carry a trailing carriage return that
+// gets baked into the bundle, breaking the URL path and the auth header. Same
+// reason as services/supabase.js; see the note there.
+const FN_URL = `${import.meta.env.VITE_SUPABASE_URL?.trim()}/functions/v1/ghl-lead-sync`
+const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
 // ── Identity normalization (keep in lock-step with the edge function) ──
 export function normPhone(p) {
