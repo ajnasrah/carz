@@ -14,6 +14,9 @@ import {
   fetchParts, addPart, updatePart, deletePart,
   fetchTechs, JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES,
   ageStyle, vehicleLabel, isBodyShopManager,
+  CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
+  isChargeApprover, isShopManager,
+  proposeCharge, approveCharge, counterCharge, acceptCounter,
 } from '../services/bodyShop'
 import {
   fetchVehiclePhotos, uploadVehiclePhoto, deleteVehiclePhoto, photoSourceLabel,
@@ -135,13 +138,18 @@ export default function BodyShopJob() {
         </div>
       </Section>
 
-      {/* Price */}
-      <Section title="Price">
-        <PriceEditor value={job.price} readOnly={!manager} onSave={(price) => patch({ price })} />
+      {/* Charge — negotiated, not just typed */}
+      <Section title="Charge">
+        <ChargeCard job={job} profile={profile} onDone={() => fetchJob(id).then(setJob)}
+          onError={setError} />
         {(job.parts_total > 0) && (
           <p className="text-[11px] text-slate-500 mt-2">
-            Parts logged on this job: <span className="text-slate-300">{money(job.parts_cost)}</span>
+            Parts on this job: <span className="text-slate-300">{money(job.parts_cost)}</span>
             {' '}across {job.parts_total} {job.parts_total === 1 ? 'part' : 'parts'}
+            {job.charge_status === 'agreed' && job.agreed_amount != null && (
+              <> · he collects <span className="text-emerald-400 font-semibold">
+                {money(job.agreed_amount - job.parts_cost)}</span></>
+            )}
           </p>
         )}
       </Section>
@@ -215,49 +223,134 @@ function Section({ title, children }) {
   )
 }
 
-function PriceEditor({ value, onSave, readOnly }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
+// The charge is a negotiation, not a number. Jorge names it, an owner approves
+// or counters with a reason, Jorge accepts. Only an AGREED charge is payable.
+// Every button here maps to a SECURITY DEFINER RPC that re-checks the caller's
+// role server-side, so hiding a button is convenience, not the control.
+function ChargeCard({ job, profile, onDone, onError }) {
+  const approver = isChargeApprover(profile)
+  const shopManager = isShopManager(profile)
+  const [mode, setMode] = useState(null)         // 'propose' | 'counter'
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  if (readOnly) {
-    return <div className="text-2xl font-bold text-emerald-400">{money(value)}</div>
+  const status = job.charge_status || 'draft'
+  const locked = !!job.paid
+
+  async function run(fn) {
+    setBusy(true)
+    try { await fn(); setMode(null); setNote(''); setAmount(''); await onDone() }
+    catch (e) { onError(e.message || 'Could not save') }
+    finally { setBusy(false) }
   }
 
-  if (!editing) {
-    return (
-      <button onClick={() => { setDraft(value == null ? '' : String(value)); setEditing(true) }}
-        className="w-full flex items-center justify-between active:opacity-70">
-        <span className={`text-2xl font-bold ${value == null ? 'text-yellow-400' : 'text-emerald-400'}`}>
-          {value == null ? 'Set a price' : money(value)}
-        </span>
-        <span className="text-[11px] text-slate-500 underline">edit</span>
-      </button>
-    )
-  }
-
-  const commit = () => {
-    const trimmed = draft.trim()
-    onSave(trimmed === '' ? null : Number(trimmed))
-    setEditing(false)
-  }
+  const headline = status === 'agreed' ? job.agreed_amount
+    : status === 'countered' ? job.counter_amount
+    : job.price
 
   return (
-    <div className="flex gap-2">
-      <div className="relative flex-1">
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-        <input
-          type="number" inputMode="decimal" min="0" step="1"
-          value={draft} onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') commit() }}
-          autoFocus className="!pl-7 text-lg font-bold"
-        />
+    <div>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className={`text-2xl font-bold ${
+            status === 'agreed' ? 'text-emerald-400'
+            : status === 'draft' ? 'text-yellow-400' : 'text-white'}`}>
+            {headline == null ? 'Not priced' : money(headline)}
+          </div>
+          {status === 'countered' && job.price != null && (
+            <div className="text-[11px] text-slate-500">
+              countered down from {money(job.price)}
+            </div>
+          )}
+        </div>
+        <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold ${CHARGE_STATUS_STYLES[status]}`}>
+          {CHARGE_STATUS_LABELS[status]}
+        </span>
       </div>
-      <button onClick={commit} className="px-4 rounded-lg bg-emerald-500 text-slate-900 font-bold">
-        <Check size={18} />
-      </button>
-      <button onClick={() => setEditing(false)} className="px-3 rounded-lg bg-slate-700 text-slate-300">
-        <X size={18} />
-      </button>
+
+      {status === 'countered' && job.counter_note && (
+        <p className="text-[11px] text-orange-300/90 mt-2 bg-orange-500/10 border border-orange-500/30 rounded-lg p-2">
+          “{job.counter_note}”{job.counter_by_name ? ` — ${job.counter_by_name}` : ''}
+        </p>
+      )}
+
+      {locked && <p className="text-[11px] text-sky-300 mt-2">Paid out — the amount is locked.</p>}
+
+      {/* Entry form for whichever move is in progress */}
+      {mode && !locked && (
+        <div className="mt-3 space-y-2">
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+            <input type="number" inputMode="decimal" min="0" value={amount} autoFocus
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder={mode === 'counter' ? 'Your counter' : 'Your charge'}
+              className="!pl-7 text-lg font-bold" />
+          </div>
+          {mode === 'counter' && (
+            <input value={note} onChange={(e) => setNote(e.target.value)}
+              placeholder="Why? (Jorge sees this)" className="!py-2 text-sm" />
+          )}
+          <div className="flex gap-2">
+            <button disabled={busy || !amount}
+              onClick={() => run(() => mode === 'counter'
+                ? counterCharge(job.id, amount, note)
+                : proposeCharge(job.id, amount))}
+              className="btn-primary !py-2 text-sm">
+              {busy ? 'Saving…' : mode === 'counter' ? 'Send Counter' : 'Send Charge'}
+            </button>
+            <button onClick={() => setMode(null)} className="btn-secondary !py-2 text-sm !w-auto px-4">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Whose move is it? */}
+      {!mode && !locked && (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {shopManager && status !== 'countered' && (
+            <button onClick={() => { setAmount(job.price == null ? '' : String(job.price)); setMode('propose') }}
+              className="btn-secondary !py-2 text-sm !w-auto px-4">
+              {status === 'draft' ? 'Set Charge' : 'Change Charge'}
+            </button>
+          )}
+          {shopManager && status === 'countered' && (
+            <>
+              <button disabled={busy} onClick={() => run(() => acceptCounter(job.id))}
+                className="btn-primary !py-2 text-sm !w-auto px-4">
+                Accept {money(job.counter_amount)}
+              </button>
+              <button onClick={() => { setAmount(''); setMode('propose') }}
+                className="btn-secondary !py-2 text-sm !w-auto px-4">Counter Back</button>
+            </>
+          )}
+          {approver && status === 'proposed' && (
+            <>
+              <button disabled={busy} onClick={() => run(() => approveCharge(job.id))}
+                className="btn-primary !py-2 text-sm !w-auto px-4">
+                Approve {money(job.price)}
+              </button>
+              <button onClick={() => { setAmount(''); setMode('counter') }}
+                className="btn-secondary !py-2 text-sm !w-auto px-4">Counter</button>
+            </>
+          )}
+          {approver && status === 'agreed' && (
+            <button onClick={() => { setAmount(''); setMode('counter') }}
+              className="text-[11px] text-slate-500 underline">reopen / counter</button>
+          )}
+        </div>
+      )}
+
+      {!shopManager && !approver && (
+        <p className="text-[11px] text-slate-500 mt-2">Only the shop manager and owners change the charge.</p>
+      )}
+      {status === 'proposed' && !approver && (
+        <p className="text-[11px] text-yellow-400/80 mt-2">Waiting on an owner to approve.</p>
+      )}
+      {status === 'countered' && !shopManager && (
+        <p className="text-[11px] text-orange-300/80 mt-2">Waiting on Jorge to accept the counter.</p>
+      )}
     </div>
   )
 }

@@ -36,6 +36,7 @@ import ListBuilder from './pages/ListBuilder'
 import Listings from './pages/Listings'
 import BodyShop from './pages/BodyShop'
 import BodyShopJob from './pages/BodyShopJob'
+import BodyShopPayout from './pages/BodyShopPayout'
 // Inbound Inspection Pages
 import InboundDashboard from './pages/InboundDashboard'
 import InboundStart from './pages/InboundStart'
@@ -169,6 +170,7 @@ function AppRoutes() {
       {/* Body Shop — cars in the shop, priced, parts-tracked, assigned to techs.
           Jobs open themselves from the Telegram body shop group. */}
       <Route path="/body-shop" element={<ProtectedRoute><BodyShop /></ProtectedRoute>} />
+      <Route path="/body-shop/payout" element={<ProtectedRoute><BodyShopPayout /></ProtectedRoute>} />
       <Route path="/body-shop/:id" element={<ProtectedRoute><BodyShopJob /></ProtectedRoute>} />
 
       {/* Inbound Inspection System */}

@@ -11,6 +11,7 @@ const ROLE_OPTIONS = [
   { key: 'body_shop_manager',  label: 'Body Shop Manager',       emoji: '🎨' },
   { key: 'body_shop_tech',     label: 'Body Shop Tech',          emoji: '🔨' },
   { key: 'detail_manager',     label: 'Detail Manager',          emoji: '✨' },
+  { key: 'accounting',         label: 'Accounting',              emoji: '🧾' },
   { key: 'owner_admin',        label: 'Owner / Admin',           emoji: '👑' },
 ]
 

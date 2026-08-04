@@ -230,3 +230,108 @@ export async function deletePart(id) {
   const { error } = await supabase.from('body_shop_parts').delete().eq('id', id)
   if (error) throw error
 }
+
+// ---------------------------------------------------------------- charges
+// The charge is negotiated: Jorge proposes, an owner approves or counters,
+// Jorge accepts. Only an AGREED charge is payable. Every transition is a
+// SECURITY DEFINER RPC that re-checks the caller's role server-side — these
+// client-side helpers only decide what buttons to draw.
+
+export const CHARGE_STATUS_LABELS = {
+  draft:     'Not priced',
+  proposed:  'Awaiting approval',
+  countered: 'Countered',
+  agreed:    'Agreed',
+}
+
+export const CHARGE_STATUS_STYLES = {
+  draft:     'bg-slate-700 text-slate-300',
+  proposed:  'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
+  countered: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
+  agreed:    'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+}
+
+// You and Omar. Admin covers you; Omar needs `owner_admin` or `accounting`.
+export function isChargeApprover(profile) {
+  if (!profile) return false
+  if (profile.role === 'admin') return true
+  const roles = profile.roles || []
+  return roles.includes('owner_admin') || roles.includes('accounting')
+}
+
+export function isAccounting(profile) {
+  return isChargeApprover(profile)
+}
+
+export function isShopManager(profile) {
+  if (!profile) return false
+  if (profile.role === 'admin') return true
+  return (profile.roles || []).includes('body_shop_manager')
+}
+
+export async function proposeCharge(jobId, amount) {
+  const { error } = await supabase.rpc('propose_body_shop_charge',
+    { p_job_id: jobId, p_amount: Number(amount) })
+  if (error) throw error
+}
+
+export async function approveCharge(jobId) {
+  const { error } = await supabase.rpc('approve_body_shop_charge', { p_job_id: jobId })
+  if (error) throw error
+}
+
+export async function counterCharge(jobId, amount, note) {
+  const { error } = await supabase.rpc('counter_body_shop_charge',
+    { p_job_id: jobId, p_amount: Number(amount), p_note: note?.trim() || null })
+  if (error) throw error
+}
+
+export async function acceptCounter(jobId) {
+  const { error } = await supabase.rpc('accept_body_shop_counter', { p_job_id: jobId })
+  if (error) throw error
+}
+
+// ---------------------------------------------------------------- payouts
+// Jorge collects every Saturday. He's owed the AGREED charge minus what the
+// parts cost. Unpaid work rolls over, so a car finished three weeks ago and
+// never collected still shows up.
+
+export async function fetchPayoutSummary() {
+  const { data, error } = await supabase.rpc('body_shop_payout_summary')
+  if (error) throw error
+  return (Array.isArray(data) ? data[0] : data) || null
+}
+
+// Everything finished and not yet collected, oldest first — the rollover sits
+// at the top where it can't be missed.
+export async function fetchPayoutLines() {
+  const { data, error } = await supabase
+    .from('body_shop_payout_lines').select('*')
+    .is('payout_id', null)
+    .order('completed_at', { ascending: true })
+  if (error) throw error
+  return data || []
+}
+
+export async function fetchPayoutHistory(limit = 20) {
+  const { data, error } = await supabase
+    .from('body_shop_payouts').select('*')
+    .order('paid_at', { ascending: false }).limit(limit)
+  if (error) throw error
+  return data || []
+}
+
+// Accounting ticking off a car as verified. Deliberately a different person
+// from the one who approved the charge amount.
+export async function confirmForPayment(jobId, approved = true) {
+  const { error } = await supabase.rpc('approve_body_shop_job',
+    { p_job_id: jobId, p_approved: approved })
+  if (error) throw error
+}
+
+export async function collectPayout(notes) {
+  const { data, error } = await supabase.rpc('collect_body_shop_payout',
+    { p_notes: notes?.trim() || null })
+  if (error) throw error
+  return (Array.isArray(data) ? data[0] : data) || null
+}

@@ -99,6 +99,9 @@ export default function BodyShop() {
             aria-label="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin text-slate-500' : 'text-slate-300'} />
           </button>
+          <button onClick={() => navigate('/body-shop/payout')}
+            className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm font-semibold active:bg-slate-700"
+            title="Saturday payout">💵</button>
           {manager && (
             <button onClick={() => setAdding(true)}
               className="flex items-center gap-1 px-3 py-2 rounded-lg bg-emerald-500 text-slate-900 font-bold text-sm active:bg-emerald-600">
