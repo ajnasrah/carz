@@ -1,3 +1,5 @@
+import { saveFile } from '../native/files';
+
 // Minimal XLSX writer (no dependencies).
 // Builds a valid .xlsx from rows of data using browser-native APIs:
 //   rows -> SpreadsheetML XML -> ZIP (STORE, no compression) -> Blob
@@ -260,14 +262,12 @@ const XLSXWriter = (() => {
     ]);
   }
 
-  // Trigger a browser download of a built workbook.
+  // Hand a built workbook to the user. On the web that's a browser download;
+  // inside the native app WKWebView has no download manager, so saveFile writes
+  // the workbook out and opens the share sheet instead. Returns a promise, but
+  // stays fire-and-forget safe for existing callers.
   function download(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return saveFile(blob, filename, { title: filename });
   }
 
   return { build, download, S, colName };

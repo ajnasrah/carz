@@ -19,7 +19,10 @@ export default function BottomNav() {
   if (pathname === '/pending') return null
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur border-t border-slate-800">
+    // safe-bottom extends the bar's background down through the home-indicator
+    // strip while keeping the tappable icons above it. Without it the tabs sit
+    // under the indicator and are hard to hit on a notched phone.
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur border-t border-slate-800 safe-bottom">
       <div className="max-w-lg mx-auto grid grid-cols-4">
         {TABS.map((t) => (
           <NavLink

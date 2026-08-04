@@ -1,5 +1,7 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
+import { initNativeShell } from './native/shell'
 import { useAuth } from './context/useAuth'
 import { isPrimaryAdmin } from './services/adminSetup'
 import Login from './pages/Login'
@@ -181,11 +183,58 @@ function AppRoutes() {
   )
 }
 
+// Bridges the native shell to the router. Must live inside <BrowserRouter> so
+// it can navigate. No-ops entirely on web.
+function NativeBridge() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    // initNativeShell is async, so the teardown may not exist yet when the
+    // effect is torn down (StrictMode's immediate double-invoke). Park it in a
+    // local and call whatever has arrived by then.
+    let teardown
+    let cancelled = false
+    initNativeShell({
+      // A shared marketplace link (carzinc.ai/marketplace/:id) opens the car
+      // in the app instead of bouncing out to Safari.
+      onDeepLink: (path) => navigate(path, { replace: false }),
+
+      // Android hardware back. Default behaviour suspends the app on any
+      // screen; here back means "up one screen", and on the dashboard or an
+      // in-flight inspection it does nothing rather than dropping the
+      // inspector out of a half-finished car.
+      onBack: ({ canGoBack }) => {
+        const path = window.location.pathname
+        if (path === '/' || path.startsWith('/inspect/') || path.startsWith('/inbound/')) return
+        if (canGoBack) navigate(-1)
+      },
+    }).then((fn) => {
+      teardown = fn
+      if (cancelled) teardown?.()
+    })
+
+    return () => {
+      cancelled = true
+      teardown?.()
+    }
+  }, [navigate])
+
+  // Scroll to top on route change — the webview keeps scroll position between
+  // routes, which lands you mid-page on every navigation.
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [location.pathname])
+
+  return null
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <div className="max-w-lg mx-auto pb-20">
+        <NativeBridge />
+        <div className="max-w-lg mx-auto app-shell">
           <AppRoutes />
         </div>
         <BottomNav />

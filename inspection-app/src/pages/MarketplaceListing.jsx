@@ -5,11 +5,13 @@ import { supabase } from '../services/supabase'
 import { toInt } from '../services/utils'
 import { STARTUP_ITEMS, TEST_DRIVE_ITEMS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
 import HistoryButton from '../components/HistoryButton'
+import { copyText } from '../native/clipboard'
+import { openExternal, smsUrl } from '../native/links'
 
 function CopyButton({ text, label }) {
   const [copied, setCopied] = useState(false)
   function handleCopy() {
-    navigator.clipboard.writeText(text).then(() => {
+    copyText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -30,7 +32,7 @@ function InlineCopy({ text }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
-      onClick={() => navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) })}
+      onClick={() => copyText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) })}
       className="shrink-0 text-slate-500 active:text-emerald-400"
       title="Copy"
     >
@@ -376,7 +378,9 @@ export default function MarketplaceListing() {
             <button
               onClick={() => {
                 const msg = `I'm interested in the ${vehicle} (VIN: ${fullVin}, ${miles.toLocaleString()} mi). Can you list it on SmartAuction?`
-                window.open(`sms:19018319661&body=${encodeURIComponent(msg)}`, '_self')
+                // WKWebView refuses to navigate to sms:, so this button was
+                // dead in the native app — openExternal hands it to the OS.
+                openExternal(smsUrl('19018319661', msg))
               }}
               className="w-full py-3 rounded-xl bg-emerald-500 text-slate-900 font-bold text-sm active:bg-emerald-600"
             >

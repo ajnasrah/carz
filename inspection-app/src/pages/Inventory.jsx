@@ -21,6 +21,8 @@ import {
 } from "../services/lotTracking";
 import VehicleHistoryModal from "../components/VehicleHistoryModal";
 import BulkLocationEdit from "../components/BulkLocationEdit";
+import { saveCsv } from "../native/files";
+import { copyText } from "../native/clipboard";
 
 // A car physically at one of these "settled" out-of-town destinations has
 // already been moved — it should NOT clutter Needs Dispatch or the Stale aging
@@ -710,7 +712,7 @@ export default function Inventory() {
     }
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     const fmtDate = (iso) =>
       iso ? new Date(iso).toISOString().slice(0, 10) : "";
     const csvEscape = (v) => {
@@ -784,15 +786,18 @@ export default function Inventory() {
           .join(","),
       );
     }
-    const blob = new Blob([lines.join("\n")], {
-      type: "text/csv;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `inventory-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await saveCsv(
+        lines.join("\n"),
+        `inventory-${new Date().toISOString().slice(0, 10)}.csv`,
+        { title: "Inventory export" },
+      );
+    } catch (err) {
+      // Native writes a file and opens the share sheet, either of which can
+      // fail. Cancelling the sheet resolves false, so reaching here is real.
+      console.error("Inventory export failed", err);
+      alert("Could not export: " + (err?.message || err));
+    }
   }
 
   return (
@@ -1206,7 +1211,7 @@ export default function Inventory() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              navigator.clipboard?.writeText(r.vehicle_vin);
+                              copyText(r.vehicle_vin);
                               const el = e.currentTarget;
                               const orig = el.textContent;
                               el.textContent = "✓";

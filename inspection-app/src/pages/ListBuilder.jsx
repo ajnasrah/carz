@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw } from 'lucide-react'
 import XLSXWriter from '../services/xlsxWriter'
+import { copyText } from '../native/clipboard'
 import {
   parseCSV, detectFormat, fetchSoldBook, cleanBook, indexBook, scoreRunList,
   TARGET_PROFIT, TARGET_DAYS,
@@ -144,14 +145,18 @@ export default function ListBuilder() {
       widths: COLUMNS.map(([, , w]) => w),
     })
     const src = result.fmt.id.replace(/_/g, '-')
+    // download() writes a file and opens the share sheet on native, so it can
+    // reject (no disk, share extension crash). Swallow it rather than leave an
+    // unhandled rejection — cancelling the sheet already resolves false.
     XLSXWriter.download(blob, `target-buy-list-${src}-${new Date().toISOString().slice(0, 10)}.xlsx`)
+      .catch((err) => console.error('Target buy list export failed', err))
   }
 
   function copyList(kind) {
     if (!result) return
     const targets = result.scored.filter((c) => c.verdict === 'TARGET')
     const text = targets.map((c) => (kind === 'runs' ? c.run : c.vin)).filter(Boolean).join('\n')
-    navigator.clipboard.writeText(text).then(() => {
+    copyText(text).then(() => {
       setCopied(kind)
       setTimeout(() => setCopied(''), 1500)
     })
@@ -160,7 +165,7 @@ export default function ListBuilder() {
   // Last 6 is enough to recognise a car but not to search for one — copy hands
   // back the full 17.
   function copyVin(vin) {
-    navigator.clipboard.writeText(vin).then(() => {
+    copyText(vin).then(() => {
       setCopied(vin)
       setTimeout(() => setCopied(''), 1000)
     })

@@ -8,6 +8,9 @@ import {
   fetchSections, recordScan, recordUnmatchedVehicle, filterInventory, parseSpokenDigits,
   extractVIN, matchVehicleByVIN,
 } from '../services/lotTracking'
+import { createSpeechSession, speechAvailable } from '../native/speech'
+import { store } from '../native/storage'
+import * as haptics from '../native/haptics'
 
 const RECENT_LIMIT = 6
 
@@ -22,10 +25,9 @@ export default function LotWalk() {
   const [toast, setToast] = useState(null)
   const [voiceOn, setVoiceOn] = useState(false)
   const [voiceText, setVoiceText] = useState('')
-  const [voiceSupported] = useState(
-    () => typeof window !== 'undefined' &&
-      !!(window.SpeechRecognition || window.webkitSpeechRecognition)
-  )
+  // Native has to ask the OS whether a recognizer exists, so support is
+  // resolved asynchronously and the mic button stays hidden until it answers.
+  const [voiceSupported, setVoiceSupported] = useState(false)
   const [cameraOn, setCameraOn] = useState(false)
   const [cameraError, setCameraError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -41,6 +43,7 @@ export default function LotWalk() {
   // Stable refs so the voice-recognition effect can read latest values without re-running
   const inventoryRef = useRef([])
   const submitScanRef = useRef(null)
+  const sectionRef = useRef('')
 
   const showToast = useCallback((kind, title, body) => {
     setToast({ kind, title, body, id: Date.now() })
@@ -72,8 +75,11 @@ export default function LotWalk() {
         if (secs.length === 0) {
           showToast('error', 'No sections', 'Run lot-tracking-schema.sql in Supabase SQL Editor.')
         } else {
-          // Restore last selected section from localStorage
-          const saved = localStorage.getItem('lotwalk:section')
+          // Restore last selected section. `store` is localStorage on web and
+          // Preferences in the app — WKWebView's localStorage is evictable, so
+          // the walker would otherwise lose their section every few days.
+          const saved = await store.get('lotwalk:section')
+          if (cancelled) return
           if (saved && secs.some((s) => s.name === saved)) setSection(saved)
           else setSection(secs[0].name)
         }
@@ -97,8 +103,18 @@ export default function LotWalk() {
 
   // Persist section choice across visits
   useEffect(() => {
-    if (section) localStorage.setItem('lotwalk:section', section)
+    if (section) store.set('lotwalk:section', section)
   }, [section])
+
+  // Voice availability is a runtime question on native (does the OS have a
+  // recognizer for this locale?), so it can't be answered during render.
+  useEffect(() => {
+    let cancelled = false
+    speechAvailable().then((ok) => {
+      if (!cancelled) setVoiceSupported(ok)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   // Toast auto-dismiss
   useEffect(() => {
@@ -138,6 +154,9 @@ export default function LotWalk() {
       })
       const label = [vehicle.vehicle_year, vehicle.vehicle_make, vehicle.vehicle_model]
         .filter(Boolean).join(' ')
+      // The walker is looking at the car, not the phone. A buzz is how they
+      // know the scan landed without stopping to read the toast.
+      haptics.success()
       showToast('success', `${label || vehicle.stock_number} → ${section}`,
         `Stock ${vehicle.stock_number}`)
       setRecent((prev) => [
@@ -149,6 +168,7 @@ export default function LotWalk() {
       // Refocus input for next scan
       setTimeout(() => inputRef.current?.focus(), 50)
     } catch (err) {
+      haptics.fail()
       showToast('error', 'Scan failed', err.message)
     }
   }, [section, showToast])
@@ -156,6 +176,7 @@ export default function LotWalk() {
   // Keep refs in sync so voice + camera effects can read latest without re-running
   useEffect(() => { inventoryRef.current = inventory }, [inventory])
   useEffect(() => { submitScanRef.current = submitScan }, [submitScan])
+  useEffect(() => { sectionRef.current = section }, [section])
 
   // ── Camera barcode scanner ──
   // Resolves a decoded barcode/QR text into a vehicle and logs the scan.
@@ -330,37 +351,41 @@ export default function LotWalk() {
     }
   }, [cameraOn, handleCameraDecoded, stopCameraSafely])
 
-  // Voice recognition setup — runs ONCE per mount so an active session survives section changes
+  // Voice recognition setup — runs ONCE per mount so an active session survives
+  // section changes. createSpeechSession picks the Web Speech API in a browser
+  // and the native recognizer inside the app; `webkitSpeechRecognition` simply
+  // doesn't exist in WKWebView, so this is what keeps voice entry alive on the
+  // App Store build. See src/native/speech.js.
   useEffect(() => {
     if (!voiceSupported) return
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    const rec = new SR()
-    rec.continuous = true
-    rec.interimResults = true
-    rec.lang = 'en-US'
-    rec.onresult = (e) => {
-      let interim = ''
-      let final = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript
-        if (e.results[i].isFinal) final += t
-        else interim += t
-      }
-      const heard = (final || interim).trim()
-      setVoiceText(heard)
-      const digits = parseSpokenDigits(final)
-      if (digits && digits.length >= 3) {
+
+    const session = createSpeechSession({
+      onResult: ({ text, isFinal }) => {
+        setVoiceText(text)
+        // Deliberately acts on partials, not just settled text: the native
+        // recognizer only emits partials until the session ends, so waiting for
+        // isFinal would stall every scan. A partial can only submit when it
+        // parses to >=3 digits AND matches exactly one car, and submitScan
+        // dedupes the same (stock, section) for 3s, so a revised partial can't
+        // double-log. Recording an *unmatched* vehicle is the destructive case,
+        // so that one still waits for isFinal.
+        const digits = parseSpokenDigits(text)
+        if (!digits || digits.length < 3) return
         const m = filterInventory(inventoryRef.current, digits)
         if (m.length === 1) {
           submitScanRef.current?.(m[0], 'voice')
         } else if (m.length > 1) {
           setQuery(digits)
-        } else {
-          // No match - record as unmatched
+        } else if (isFinal) {
+          // No match — record as unmatched, but only once the phrase settles,
+          // so a partial mid-word doesn't spam the unmatched list.
           recordUnmatchedVehicle({
             scanned_value: digits,
             scan_type: digits.length === 6 ? 'partial_vin' : 'unknown',
-            section,
+            // Read through a ref, not the closure — this effect must not
+            // re-run on section change or an active listening session would be
+            // torn down every time the walker moves to the next row.
+            section: sectionRef.current,
             scan_method: 'voice',
             notes: 'Voice input not found in inventory'
           }).then(() => {
@@ -370,40 +395,34 @@ export default function LotWalk() {
             showToast('error', 'No match', `Heard "${digits}" — not in inventory`)
           })
         }
-      }
-    }
-    rec.onend = () => {
-      // Auto-restart while voice mode is on (continuous)
-      if (rec._wantOn) {
-        try { rec.start() } catch { /* already started */ }
-      }
-    }
-    rec.onerror = (e) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture') {
-        rec._wantOn = false
-        showToast('error', 'Mic blocked', 'Allow microphone access in browser settings.')
-        setVoiceOn(false)
-      }
-    }
-    recognitionRef.current = rec
+      },
+      onError: (code) => {
+        if (code === 'not-allowed') {
+          showToast('error', 'Mic blocked', 'Allow microphone access in settings.')
+          setVoiceOn(false)
+          setVoiceText('')
+        }
+      },
+    })
+
+    recognitionRef.current = session
     return () => {
-      rec._wantOn = false
-      try { rec.stop() } catch { /* noop */ }
+      session.destroy()
       recognitionRef.current = null
     }
   }, [voiceSupported, showToast])
 
   function toggleVoice() {
-    const rec = recognitionRef.current
-    if (!rec) return
+    const session = recognitionRef.current
+    if (!session) return
     if (voiceOn) {
-      rec._wantOn = false
-      try { rec.stop() } catch { /* noop */ }
+      session.stop()
       setVoiceOn(false)
       setVoiceText('')
     } else {
-      rec._wantOn = true
-      try { rec.start() } catch { /* already started */ }
+      // Native asks for mic + speech permission on first start; the session
+      // reports back through onError if the user declines.
+      session.start()
       setVoiceOn(true)
     }
   }

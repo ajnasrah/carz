@@ -26,4 +26,10 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // Build config runs in Node, not the browser — it reads process.env to pick
+    // the web vs native asset set, and uses node: builtins to prune the bundle.
+    files: ['vite.config.js', 'capacitor.config.js'],
+    languageOptions: { globals: globals.node },
+  },
 ])

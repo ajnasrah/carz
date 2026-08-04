@@ -34,3 +34,9 @@ test-*.mjs
 # the originals live in folders with spaces and even a trailing space ("ram2 /"),
 # which is a URL hazard. Source is kept on disk, just not shipped.
 public/training/examples
+
+# Native app shells. Capacitor generates ios/ and android/ from capacitor.config.json
+# and the dist/ bundle; they're App Store / Play Store build inputs and have no
+# business in a web deploy. Together they're ~40MB of Xcode + Gradle scaffolding.
+ios
+android

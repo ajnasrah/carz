@@ -8,6 +8,7 @@ import {
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
 import BuyerAnalytics from '../components/BuyerAnalytics'
 import HistoryButton from '../components/HistoryButton'
+import { copyText } from '../native/clipboard'
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 const CONF = {
@@ -110,7 +111,7 @@ export default function BuyerMatch() {
   }, [results, query, byVin])
 
   function copy(text, tag) {
-    navigator.clipboard?.writeText(text)
+    copyText(text)
     setCopied(tag); setTimeout(() => setCopied(''), 1200)
   }
 

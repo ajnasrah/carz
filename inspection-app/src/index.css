@@ -1,6 +1,16 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    /* Inside the native shell the webview is full-screen, so content runs
+       under the notch and the home indicator unless we inset it ourselves.
+       env() resolves to 0px in a normal browser, so these are inert on web. */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+  }
+
   html {
     overflow-x: hidden;
   }
@@ -9,6 +19,10 @@
     @apply bg-slate-900 text-white min-h-screen;
     -webkit-tap-highlight-color: transparent;
     overflow-x: hidden;
+    /* Landscape on a notched phone (the corner photo shots force it) puts the
+       notch on one side — keep content clear of it. */
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 
   input, select, textarea {
@@ -34,10 +48,35 @@
   }
 
   .page {
-    @apply min-h-screen pb-24 px-4 pt-4;
+    @apply min-h-screen pb-24 px-4;
+    /* pt-4 plus the status bar / notch. Pages override pb, never pt, so the
+       bottom inset is handled by the app wrapper and BottomNav instead. */
+    padding-top: calc(1rem + var(--safe-top));
   }
 
   .page-title {
     @apply text-xl font-bold text-emerald-400 mb-4;
+  }
+
+  /* For fixed full-screen overlays (camera, modals, scanner) that need to keep
+     their own chrome out from under the notch and home indicator. */
+  .safe-inset {
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+  }
+
+  .safe-top {
+    padding-top: var(--safe-top);
+  }
+
+  .safe-bottom {
+    padding-bottom: var(--safe-bottom);
+  }
+
+  /* App content wrapper: clears the fixed bottom nav plus the home indicator.
+     A plain pb-20 utility can't express the env() term, and pages set their own
+     pb, so the combined value lives here on the shared wrapper. */
+  .app-shell {
+    padding-bottom: calc(5rem + var(--safe-bottom));
   }
 }

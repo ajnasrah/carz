@@ -1,0 +1,49 @@
+import { StatusBar, Style } from '@capacitor/status-bar'
+import { SplashScreen } from '@capacitor/splash-screen'
+import { Keyboard } from '@capacitor/keyboard'
+import { App } from '@capacitor/app'
+import { isNative, isAndroid } from './platform'
+
+// One-time native shell setup, called from main.jsx. Everything here is a
+// no-op on web.
+
+// Returns a teardown function. React StrictMode runs effects twice in dev, and
+// Capacitor's addListener stacks rather than replaces — without teardown every
+// deep link would navigate twice and every back press would pop two screens.
+export async function initNativeShell({ onDeepLink, onBack } = {}) {
+  if (!isNative()) return () => {}
+
+  // The app is dark-on-slate-900 everywhere; matching the status bar keeps the
+  // notch area from flashing white on launch and route changes.
+  await StatusBar.setStyle({ style: Style.Dark }).catch(() => {})
+  if (isAndroid()) {
+    await StatusBar.setBackgroundColor({ color: '#0f172a' }).catch(() => {})
+  }
+
+  await SplashScreen.hide().catch(() => {})
+
+  // Universal Links / App Links: a shared marketplace listing should open the
+  // car in the app rather than bouncing to Safari.
+  const urlOpen = await App.addListener('appUrlOpen', ({ url }) => {
+    try {
+      const { pathname, search } = new URL(url)
+      onDeepLink?.(pathname + search)
+    } catch {
+      /* malformed link — ignore rather than crash the launch */
+    }
+  })
+
+  // Android hardware back button. Without this, back from the dashboard
+  // suspends the app instead of doing nothing, and back mid-inspection can
+  // drop the inspector out entirely.
+  const back = await App.addListener('backButton', (e) => onBack?.(e))
+
+  // Let the page scroll the focused input into view itself; the default
+  // resize mode fights the fixed bottom nav.
+  Keyboard.setScroll?.({ isDisabled: false }).catch(() => {})
+
+  return () => {
+    urlOpen.remove?.()
+    back.remove?.()
+  }
+}

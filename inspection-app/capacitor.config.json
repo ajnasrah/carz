@@ -1,0 +1,30 @@
+{
+  "appId": "com.carzinc.ims",
+  "appName": "Carz IMS",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#0f172a",
+    "preferredContentMode": "mobile"
+  },
+  "android": {
+    "backgroundColor": "#0f172a",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 500,
+      "backgroundColor": "#0f172a",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    },
+    "Keyboard": {
+      "resize": "native",
+      "style": "DARK"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0f172a"
+    }
+  }
+}

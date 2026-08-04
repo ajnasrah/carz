@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, selectAll } from '../services/supabase';
 import { Download, AlertCircle, RefreshCw, Copy, Check, ArrowLeft, Clock } from 'lucide-react';
 import HistoryButton from '../components/HistoryButton';
+import { saveCsv } from '../native/files';
+import { copyText } from '../native/clipboard';
 
 // A car only counts as "front lot" if it's actually sitting on a sellable lot.
 // Everything else — mechanic, pro auto, body shop, wash, detail, in transit,
@@ -102,7 +104,7 @@ function FrontLotAging() {
 
   const copyVin = (vin, key) => {
     if (!vin) return;
-    navigator.clipboard.writeText(vin);
+    copyText(vin);
     setCopied(key);
     setTimeout(() => setCopied(null), 1500);
   };
@@ -110,12 +112,12 @@ function FrontLotAging() {
   const copyAllVins = () => {
     const vins = vehicles.map((v) => v.vin).filter(Boolean).join('\n');
     if (!vins) return;
-    navigator.clipboard.writeText(vins);
+    copyText(vins);
     setCopied('all');
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
     const headers = ['Stock Number', 'VIN', 'Vehicle', 'Location', 'Days on Lot', 'Last Updated'];
     const rows = vehicles.map((v) => [
       v.stock_number || '', v.vin || '', v.vehicle_info || '',
@@ -123,12 +125,16 @@ function FrontLotAging() {
       new Date(v.location_updated_at).toLocaleDateString(),
     ]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${c}"`).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `front_lot_aging_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await saveCsv(
+        csv,
+        `front_lot_aging_${new Date().toISOString().split('T')[0]}.csv`,
+        { title: 'Front lot aging' },
+      );
+    } catch (err) {
+      console.error('Front lot aging export failed', err);
+      setError('Could not export: ' + (err?.message || err));
+    }
   };
 
   const c1020 = vehicles.filter((v) => v.days_on_lot <= 20).length;

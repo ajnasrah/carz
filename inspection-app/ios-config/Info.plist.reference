@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CAPACITOR_DEBUG</key>
+	<string>$(CAPACITOR_DEBUG)</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+        <string>Carz IMS</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<!-- Usage strings. iOS kills the app on the spot if it touches one of these
+	     APIs without a matching string, and App Review rejects vague wording —
+	     each one has to say what the app actually does with the permission. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Carz IMS uses the camera to photograph vehicle damage and condition during an inspection, and to scan VIN barcodes while walking the lot.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Carz IMS uses the microphone so you can call out stock numbers hands-free while walking the lot instead of typing them.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Carz IMS converts spoken stock numbers into text so a vehicle can be logged to a lot section without stopping to type.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Carz IMS lets you attach an existing photo from your library to a vehicle inspection.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Carz IMS saves inspection photos and exported reports to your photo library when you choose to.</string>
+	<!-- Exports (inventory CSV, target buy list XLSX) are written here and handed
+	     to the share sheet; exposing the folder lets the user pull them out via
+	     the Files app instead of the file being a dead end. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+    <false/>
+    <key>UISceneConfigurations</key>
+    <dict>
+      <key>UIWindowSceneSessionRoleApplication</key>
+      <array>
+        <dict>
+            <key>UISceneConfigurationName</key>
+            <string>Default Configuration</string>
+            <key>UISceneDelegateClassName</key>
+            <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+            <key>UISceneStoryboardFile</key>
+            <string>Main</string>
+        </dict>
+      </array>
+    </dict>
+	</dict>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UIViewControllerBasedStatusBarAppearance</key>
+	<true/>
+</dict>
+</plist>

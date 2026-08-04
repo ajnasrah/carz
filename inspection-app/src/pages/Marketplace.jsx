@@ -4,8 +4,10 @@ import { Search, ChevronDown, Copy, Check } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { toInt } from '../services/utils'
 import HistoryButton from '../components/HistoryButton'
+import { saveCsv } from '../native/files'
+import { copyText } from '../native/clipboard'
 
-function exportCsv(cars) {
+async function exportCsv(cars) {
   const cols = [
     ['stock_number', 'Stock'], ['year', 'Year'], ['make', 'Make'], ['model', 'Model'],
     ['mileage', 'Mileage'], ['vehicle_color', 'Color'], ['vin_last6', 'VIN Last 6'], ['full_vin', 'VIN'],
@@ -14,13 +16,16 @@ function exportCsv(cars) {
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
   const lines = [cols.map(([, h]) => esc(h)).join(',')]
   for (const c of cars) lines.push(cols.map(([k]) => esc(c[k])).join(','))
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `carz-marketplace-${new Date().toISOString().slice(0, 10)}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  try {
+    await saveCsv(
+      lines.join('\n'),
+      `carz-marketplace-${new Date().toISOString().slice(0, 10)}.csv`,
+      { title: 'Marketplace export' },
+    )
+  } catch (err) {
+    console.error('Marketplace export failed', err)
+    alert('Could not export: ' + (err?.message || err))
+  }
 }
 
 // Small inline copy icon that sits right next to a value
@@ -28,7 +33,7 @@ function InlineCopy({ text }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
-      onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }) }}
+      onClick={(e) => { e.preventDefault(); copyText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }) }}
       className="shrink-0 text-slate-500 active:text-emerald-400"
       title="Copy"
     >

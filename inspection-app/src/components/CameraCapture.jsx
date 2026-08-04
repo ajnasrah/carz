@@ -153,13 +153,13 @@ export default function CameraCapture({ label, instructions, outline, onCapture,
               <p className="text-slate-300 text-sm mt-1">Do not close this screen</p>
             </div>
           )}
-          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent p-4 pt-6">
+          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent px-4 pb-4 pt-[calc(1.5rem+env(safe-area-inset-top))]">
             <p className="text-white font-bold text-base">{label}</p>
             <p className="text-slate-300 text-xs mt-0.5">
               {saving ? 'Uploading to cloud...' : saveError ? saveError : 'Review photo before saving'}
             </p>
           </div>
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-6 pb-10 flex items-center justify-between gap-4">
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-6 pt-6 pb-[calc(2.5rem+env(safe-area-inset-bottom))] flex items-center justify-between gap-4">
             <button
               onClick={handleRetake}
               disabled={saving}
@@ -192,7 +192,7 @@ export default function CameraCapture({ label, instructions, outline, onCapture,
             <CameraOutline />
           </div>
 
-          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent p-4 pt-6">
+          <div className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/80 to-transparent px-4 pb-4 pt-[calc(1.5rem+env(safe-area-inset-top))]">
             <div className="flex items-start gap-3">
               <button
                 onClick={onCancel}
@@ -214,7 +214,7 @@ export default function CameraCapture({ label, instructions, outline, onCapture,
             </div>
           </div>
 
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-6 pb-10 flex justify-center">
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-6 pt-6 pb-[calc(2.5rem+env(safe-area-inset-bottom))] flex justify-center">
             <button
               onClick={handleShutter}
               disabled={!ready || showRotatePrompt}

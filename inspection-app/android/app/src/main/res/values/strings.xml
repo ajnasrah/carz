@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Carz IMS</string>
+    <string name="title_activity_main">Carz IMS</string>
+    <string name="package_name">com.carzinc.ims</string>
+    <string name="custom_url_scheme">com.carzinc.ims</string>
+</resources>

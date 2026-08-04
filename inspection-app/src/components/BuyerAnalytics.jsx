@@ -5,6 +5,7 @@ import {
 import { TrendingUp, TrendingDown, Minus, Sparkle, ChevronDown, ChevronUp, Copy, Mail, Phone, Check } from 'lucide-react'
 import { computeBuyerAnalytics, buyerMonthlySeries } from '../services/buyerAnalytics'
 import { computeBuyerTrends } from '../services/buyerTrends'
+import { copyText } from '../native/clipboard'
 
 // Dark categorical slots (validated on the slate surface). Color follows the
 // buyer entity by rank index; "Other" is neutral gray, never a hue.
@@ -59,7 +60,7 @@ export default function BuyerAnalytics({ sold }) {
   }, [leaderboard])
 
   function copy(text, tag) {
-    navigator.clipboard?.writeText(text)
+    copyText(text)
     setCopied(tag); setTimeout(() => setCopied(''), 1200)
   }
 

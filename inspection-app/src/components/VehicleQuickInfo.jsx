@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Copy, Check, Package, MapPin, Clock, ChevronDown, ExternalLink } from 'lucide-react'
 import { toInt, toMoney, timeAgo } from '../services/utils'
 import HistoryTimeline from './HistoryTimeline'
+import { copyText } from '../native/clipboard'
 
 // Self-contained "quick info" card for a vehicle. Given a search result
 // ({ vehicle, cost, location, status, sale, history }), it renders a status
@@ -44,7 +45,7 @@ export default function VehicleQuickInfo({ result }) {
   const BadgeIcon = badge.icon
 
   function handleCopy(text, key) {
-    navigator.clipboard.writeText(text)
+    copyText(text)
     setCopied(key)
     setTimeout(() => setCopied(null), 1500)
   }
