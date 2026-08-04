@@ -269,7 +269,7 @@ export default function UnmatchedVehicles() {
                 </div>
                 
                 <div className="flex gap-1">
-                  <HistoryButton vin={vehicle.vin_last6} className="p-1.5 rounded bg-slate-700/50 text-slate-400" size={16} />
+                  <HistoryButton showPhotos vin={vehicle.vin_last6} className="p-1.5 rounded bg-slate-700/50 text-slate-400" size={16} />
                   {vehicle.resolution_status === 'pending' && (
                     <>
                       <button

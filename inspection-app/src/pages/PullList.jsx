@@ -244,7 +244,7 @@ export default function PullList() {
                     </p>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <HistoryButton stockNumber={a.stock_number} vin={a.vin} size={14} className="p-1.5 rounded bg-slate-700 text-slate-400 active:bg-slate-600" />
+                    <HistoryButton showPhotos stockNumber={a.stock_number} vin={a.vin} size={14} className="p-1.5 rounded bg-slate-700 text-slate-400 active:bg-slate-600" />
                     {!isResolved && !isDismissed && (
                       <button
                         onClick={() => dismissAlert(a.id)}

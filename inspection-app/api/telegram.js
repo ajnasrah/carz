@@ -128,10 +128,22 @@ async function processUpdate(update) {
     }
   } else if (chat.station === 'body_shop' || chat.station === 'mechanic') {
     const vins = extractAllVin6(text);
-    if (vins.length && chat.location_code) {
-      for (const v of vins) await updateLocation(db, v, chat.location_code, eventIso);
+    if (vins.length) {
+      if (chat.location_code) {
+        for (const v of vins) await updateLocation(db, v, chat.location_code, eventIso);
+      }
       vin6 = vins[0];
       await setSession(db, fromId, vin6, chat.station);
+      // Open a body shop job for every car mentioned, so the manager's board
+      // fills itself. Idempotent — an already-open job comes back untouched, so
+      // re-posting the same car never resets its age clock or doubles the card.
+      if (chat.station === 'body_shop') {
+        for (const v of vins) await ensureBodyShopJob(db, v, eventIso);
+      }
+      // Claim photos this sender parked before sending the VIN. The intake
+      // branch has always done this; the shop groups never did, so a photo that
+      // landed ahead of its VIN text could be orphaned here.
+      await resolvePendingForSender(db, fromId, vin6, chat.station);
     }
   } else {
     parsed = parseVehicleEntry(text);
@@ -210,6 +222,15 @@ async function processUpdate(update) {
     if (!lateVin) lateVin = await getSessionVin(db, fromId);
     if (lateVin) await resolvePendingForSender(db, fromId, lateVin, chat.station);
   }
+}
+
+// Open (or find) this car's body shop job. The RPC is SECURITY DEFINER and
+// idempotent; a car that isn't in inventory returns null and is skipped. Never
+// throws into the webhook — a body shop job failing must not cost us the
+// location update or the photos.
+async function ensureBodyShopJob(db, vin6, eventIso) {
+  const { error } = await db.rpc('ensure_body_shop_job', { p_vin6: vin6, p_event: eventIso });
+  if (error) console.error('ensure_body_shop_job failed for', vin6, error.message || error);
 }
 
 // Match a destination keyword anywhere in the message → location_code.

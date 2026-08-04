@@ -239,7 +239,7 @@ export default function BuyerMatch() {
                     </div>
                   </button>
                   <div className="flex items-center pr-2">
-                    <HistoryButton vin={res.vin} />
+                    <HistoryButton showPhotos vin={res.vin} />
                   </div>
                   </div>
 
@@ -297,7 +297,7 @@ export default function BuyerMatch() {
 }
 
 function Shell({ children }) {
-  return <div className="p-3 min-h-screen bg-slate-900 text-slate-200">{children}</div>
+  return <div className="p-3 min-h-screen bg-slate-900 text-slate-200 safe-top">{children}</div>
 }
 
 function UploadBox({ label, sub, onPick, done }) {

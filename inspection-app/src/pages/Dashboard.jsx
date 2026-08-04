@@ -174,11 +174,12 @@ export default function Dashboard() {
         <ActionTile to="/list-builder" emoji="🔨" label="List Builder" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
-        <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
+        <ActionTile to="/body-shop" emoji="🎨" label="Body Shop" />
         <ActionTile to="/reports" emoji="📈" label="Reports" />
         <ActionTile onClick={() => setShowMore((s) => !s)} emoji={showMore ? '✕' : '⋯'} label={showMore ? 'Less' : 'More'} />
         {showMore && (
           <>
+            <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
             <ActionTile to="/inspections" emoji="📝" label="Inspect" />
             <ActionTile to="/inbound" emoji="📥" label="Inbound" />
             <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />

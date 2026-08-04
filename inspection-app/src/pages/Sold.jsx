@@ -192,6 +192,7 @@ export default function Sold() {
 
       {historyFor && (
         <VehicleHistoryModal
+          showPhotos
           stockNumber={historyFor.stock_number}
           vin={historyFor.vin}
           onClose={() => setHistoryFor(null)}

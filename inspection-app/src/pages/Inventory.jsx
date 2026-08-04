@@ -1516,6 +1516,7 @@ export default function Inventory() {
       {/* Vehicle History Modal */}
       {historyStock && (
         <VehicleHistoryModal
+          showPhotos
           stockNumber={historyStock}
           vin={historyVin}
           onClose={() => {

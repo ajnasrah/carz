@@ -2,11 +2,18 @@ import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { supabase } from "../services/supabase";
 import HistoryTimeline from "./HistoryTimeline";
+import VehiclePhotoStrip from "./VehiclePhotoStrip";
 
-export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
+// showPhotos defaults to false — see HistoryButton. The photo strip pulls the
+// car's WHOLE photo history, car-history included, so it is internal-only.
+export default function VehicleHistoryModal({ stockNumber, vin, onClose, showPhotos = false }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentLocation, setCurrentLocation] = useState(null);
+  // Photos are keyed by the last 6 everywhere in this system. The caller may
+  // hand us a full VIN, a last-6, or neither — fall back to the VIN on the
+  // car's location row so a stock-number-only caller still gets pictures.
+  const [vin6, setVin6] = useState(null);
 
   useEffect(() => {
     loadHistory();
@@ -40,6 +47,9 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
       locQ = stockNumber ? locQ.eq("stock_number", stockNumber) : byVin(locQ);
       const { data: locRows } = await locQ.limit(1);
       setCurrentLocation(locRows?.[0] || null);
+
+      const vinForPhotos = cleanVin.length >= 6 ? cleanVin : (locRows?.[0]?.vin || "");
+      setVin6(vinForPhotos.length >= 6 ? vinForPhotos.slice(-6).toUpperCase() : null);
 
       // History key priority:
       //   1. Full 17-char VIN — exact and collision-proof (best).
@@ -123,7 +133,10 @@ export default function VehicleHistoryModal({ stockNumber, vin, onClose }) {
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-400"></div>
             </div>
           ) : (
-            <HistoryTimeline events={history} />
+            <>
+              {showPhotos && <VehiclePhotoStrip vin6={vin6} stockNumber={stockNumber} />}
+              <HistoryTimeline events={history} />
+            </>
           )}
         </div>
         

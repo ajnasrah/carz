@@ -34,6 +34,8 @@ import Reports from './pages/Reports'
 import BuyerMatch from './pages/BuyerMatch'
 import ListBuilder from './pages/ListBuilder'
 import Listings from './pages/Listings'
+import BodyShop from './pages/BodyShop'
+import BodyShopJob from './pages/BodyShopJob'
 // Inbound Inspection Pages
 import InboundDashboard from './pages/InboundDashboard'
 import InboundStart from './pages/InboundStart'
@@ -164,6 +166,11 @@ function AppRoutes() {
       {/* Back-compat: standalone routes still resolve (deep links / bottom nav) */}
       <Route path="/reports/executive" element={<ProtectedRoute><ExecutiveDashboard /></ProtectedRoute>} />
       
+      {/* Body Shop — cars in the shop, priced, parts-tracked, assigned to techs.
+          Jobs open themselves from the Telegram body shop group. */}
+      <Route path="/body-shop" element={<ProtectedRoute><BodyShop /></ProtectedRoute>} />
+      <Route path="/body-shop/:id" element={<ProtectedRoute><BodyShopJob /></ProtectedRoute>} />
+
       {/* Inbound Inspection System */}
       <Route path="/inbound" element={<ProtectedRoute><InboundDashboard /></ProtectedRoute>} />
       <Route path="/inbound/new" element={<ProtectedRoute><InboundStart /></ProtectedRoute>} />

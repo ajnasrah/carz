@@ -272,7 +272,7 @@ export default function InboundDashboard() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <HistoryButton stockNumber={inspection.stock_number} vin={inspection.vin} />
+                  <HistoryButton showPhotos stockNumber={inspection.stock_number} vin={inspection.vin} />
                   {inspection.status === 'complete' ? (
                     <CheckCircle size={20} className="text-green-500" />
                   ) : (

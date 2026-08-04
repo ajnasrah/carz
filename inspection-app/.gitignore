@@ -28,3 +28,9 @@ dist-ssr
 # Supabase CLI local state (linked project ref, version cache)
 supabase/.temp
 .env*.local
+
+# python venv for scripts/telegram_history_backfill.py
+.venv/
+carzinc_backfill.session
+__pycache__/
+*.pyc

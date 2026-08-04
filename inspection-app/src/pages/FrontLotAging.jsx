@@ -237,6 +237,7 @@ function FrontLotAging() {
                     {copied === key ? 'Copied' : 'VIN'}
                   </button>
                   <HistoryButton
+                    showPhotos
                     stockNumber={v.stock_number}
                     vin={v.vin}
                     size={11}

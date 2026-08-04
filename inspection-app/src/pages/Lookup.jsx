@@ -233,7 +233,7 @@ export default function Lookup() {
                   <p className="text-sm text-white font-semibold">{label}</p>
                   <p className="text-xs text-slate-500 font-mono">{row.vin} · {new Date(row.created_at).toLocaleString()}</p>
                 </button>
-                <HistoryButton vin={row.vin} />
+                <HistoryButton showPhotos vin={row.vin} />
                 <button onClick={() => clearRecent(row.id)} className="p-1 text-slate-600 active:text-red-400">
                   <X size={14} />
                 </button>

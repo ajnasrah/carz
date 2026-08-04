@@ -548,7 +548,7 @@ export default function LotWalk() {
                       {v.stock_number} · {v.last_6_vin || v.vehicle_vin?.slice(-6)}
                     </p>
                   </button>
-                  <HistoryButton stockNumber={v.stock_number} vin={v.vehicle_vin} />
+                  <HistoryButton showPhotos stockNumber={v.stock_number} vin={v.vehicle_vin} />
                 </div>
               )
             })}

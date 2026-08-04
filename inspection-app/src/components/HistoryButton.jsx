@@ -6,7 +6,13 @@ import VehicleHistoryModal from './VehicleHistoryModal'
 // state) so any page that renders a vehicle can add history access with a
 // single line: <HistoryButton stockNumber={r.stock_number} vin={r.vehicle_vin} />.
 // Works VIN-only too — the modal prefers VIN and falls back to stock number.
-export default function HistoryButton({ stockNumber, vin, className, size = 16, label }) {
+//
+// showPhotos is OFF by default and must be opted into. This component is used on
+// the PUBLIC marketplace pages (Listings, Marketplace, MarketplaceListing) as
+// well as internal ones, and the car's photo history includes car-history —
+// body shop / mechanic / transport shots that must never reach a buyer. Default
+// off means a new call site can't leak them by forgetting a flag.
+export default function HistoryButton({ stockNumber, vin, className, size = 16, label, showPhotos = false }) {
   const [open, setOpen] = useState(false)
   if (!stockNumber && !vin) return null
 
@@ -33,6 +39,7 @@ export default function HistoryButton({ stockNumber, vin, className, size = 16, 
         <VehicleHistoryModal
           stockNumber={stockNumber}
           vin={vin}
+          showPhotos={showPhotos}
           onClose={() => setOpen(false)}
         />
       )}

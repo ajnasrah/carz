@@ -9,6 +9,7 @@ const ROLE_OPTIONS = [
   { key: 'lot_manager',        label: 'Lot Manager',             emoji: '🚗' },
   { key: 'mechanic_manager',   label: 'Mechanic Shop Manager',   emoji: '🔧' },
   { key: 'body_shop_manager',  label: 'Body Shop Manager',       emoji: '🎨' },
+  { key: 'body_shop_tech',     label: 'Body Shop Tech',          emoji: '🔨' },
   { key: 'detail_manager',     label: 'Detail Manager',          emoji: '✨' },
   { key: 'owner_admin',        label: 'Owner / Admin',           emoji: '👑' },
 ]
