@@ -18,6 +18,15 @@ import { storePhoto, bucketForStation } from './_lib/photos.js';
 export const config = { runtime: 'edge' };
 
 const SESSION_TTL_MS = 10 * 60 * 1000;
+// How long a photo with no VIN of its own waits for its album's caption before
+// falling back to what the sender's session said when it landed. Telegram
+// delivers album members within about a second of each other; this is the
+// in-request wait, so it buys correctness at the cost of a slower 200 back.
+const PARK_SETTLE_MS = 3000;
+// The backstop sweep waits far longer, so it only ever picks up photos that
+// genuinely fell through — never one whose caption is still in flight in
+// somebody else's request.
+const PARK_SWEEP_MS = 60 * 1000;
 const TG = 'https://api.telegram.org';
 
 function admin() {
@@ -143,7 +152,7 @@ async function processUpdate(update) {
       // Claim photos this sender parked before sending the VIN. The intake
       // branch has always done this; the shop groups never did, so a photo that
       // landed ahead of its VIN text could be orphaned here.
-      await resolvePendingForSender(db, fromId, vin6, chat.station);
+      await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
     }
   } else {
     parsed = parseVehicleEntry(text);
@@ -151,7 +160,7 @@ async function processUpdate(update) {
       vin6 = parsed.vin6;
       await setSession(db, fromId, vin6, chat.station);
       // Claim any photos this sender already posted before sending the VIN.
-      await resolvePendingForSender(db, fromId, vin6, chat.station);
+      await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
       // Intake groups can also set a location (e.g. ready-to-sell => front lot)
       // when location_code is configured on the group.
       if (chat.location_code) await updateLocation(db, vin6, chat.location_code, eventIso);
@@ -165,15 +174,22 @@ async function processUpdate(update) {
   // listing / marketplace. Location & transport groups -> car-history, a
   // separate bucket kept for backend reference ONLY (never shown on marketplace).
   let pendingFileId = null;
+  let parkedSessionVin = null;
   if (photoFileId) {
-    // Album photos share media_group_id; the caption can arrive in any order.
-    // Resolve the VIN from a sibling that already carried it.
-    if (!vin6 && mediaGroupId) {
-      const { data: sib } = await db.from('wa_inbound_messages')
-        .select('vin6').eq('media_group_id', mediaGroupId).not('vin6', 'is', null).limit(1).maybeSingle();
-      if (sib?.vin6) vin6 = sib.vin6;
-    }
-    if (!vin6) vin6 = extractVin6(text) || (await getSessionVin(db, fromId));
+    // Evidence carried by the photo itself, best first: a VIN in its own
+    // caption, then a VIN on a sibling of the same album. Both are facts.
+    if (!vin6) vin6 = extractVin6(text);
+    if (!vin6 && mediaGroupId) vin6 = await albumVin(db, mediaGroupId);
+
+    // Nothing on the photo says which car it is. The sender's session is a
+    // GUESS — correct for "type the VIN, then send a burst", wrong the second a
+    // worker shoots the next car before naming it, and once stored under the
+    // wrong prefix nothing ever moves it back. So we only guess for a LONE
+    // photo. An album never guesses: its caption rides on one member and that
+    // member's webhook can land after this one, so guessing here would file a
+    // properly captioned album under the previous car for good. Park it and let
+    // the caption — or, seconds later, the settle below — decide.
+    if (!vin6 && !mediaGroupId) vin6 = await getSessionVin(db, fromId);
 
     const bucket = bucketForStation(chat.station);
     if (vin6) {
@@ -189,39 +205,105 @@ async function processUpdate(update) {
         mediaPath = null;
       }
       // VIN now known — claim any photos this sender parked earlier.
-      await resolvePendingForSender(db, fromId, vin6, chat.station);
+      await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
     } else {
-      // No VIN yet — park this photo's file_id. A later VIN from this sender
-      // (text or caption) will claim it, even if photos arrived first.
+      // Parked. Remember what the session would have said: it settles this
+      // photo if no caption ever shows up, and it marks the photo as already
+      // spoken for so the NEXT car's VIN can't sweep it up.
       pendingFileId = photoFileId;
+      parkedSessionVin = await getSessionVin(db, fromId);
     }
   }
 
   await db.from('wa_inbound_messages').update({
     vin6, media_path: mediaPath, parsed, media_group_id: mediaGroupId,
-    pending_file_id: pendingFileId, processed: true, error: null,
+    pending_file_id: pendingFileId, session_vin_at_receipt: parkedSessionVin,
+    processed: true, error: null,
   }).eq('message_id', msgKey);
 
   // Closes the simultaneous-burst race. Workers fire the VIN text and every
   // photo at once, so each lands as a concurrent webhook with no ordering
   // guarantee. A photo can park (no VIN visible yet) the instant AFTER the VIN
   // message already ran its sweep — leaving it orphaned. So once our own parked
-  // row is committed above, re-check for the sender's VIN by time+sender (album
-  // sibling, then session). Whichever of {this photo, the VIN message} commits
-  // last sees the other and claims the pile. No background job, no drops.
+  // row is committed above, re-check for its album's caption. Whichever of
+  // {this photo, the captioning message} commits last sees the other and claims
+  // the pile. No background job, no drops.
   if (pendingFileId) {
-    // If we already know this car's VIN (e.g. the store failed and we parked for
-    // retry), use it directly. Otherwise resolve by time+sender: album sibling,
-    // then the sender's session.
-    let lateVin = vin6 || null;
-    if (!lateVin && mediaGroupId) {
-      const { data: sib } = await db.from('wa_inbound_messages')
-        .select('vin6').eq('media_group_id', mediaGroupId).not('vin6', 'is', null).limit(1).maybeSingle();
-      lateVin = sib?.vin6 || null;
+    // If we already know this car's VIN (the store failed and we parked for
+    // retry), use it directly. Otherwise the album's caption may have committed
+    // while we were writing — that sibling is the only thing allowed to speak
+    // for an album here.
+    const lateVin = vin6 || (mediaGroupId ? await albumVin(db, mediaGroupId) : null);
+    if (lateVin) await resolvePendingForSender(db, fromId, lateVin, chat.station, mediaGroupId);
+    else {
+      // Still nothing. Give the album's caption a couple of seconds to land —
+      // Telegram delivers album members within about a second of each other, so
+      // if it isn't here by now it isn't coming — then settle this photo
+      // ourselves. Doing it in-request matters: a burst of photos is often the
+      // LAST thing said in the group, and waiting for the next update to sweep
+      // could leave it invisible in the app for hours.
+      await new Promise((r) => setTimeout(r, PARK_SETTLE_MS));
+      await settleParked(db, msgKey);
     }
-    if (!lateVin) lateVin = await getSessionVin(db, fromId);
-    if (lateVin) await resolvePendingForSender(db, fromId, lateVin, chat.station);
   }
+
+  // Backstop for anything that raced or whose upload was still failing. Runs
+  // inline on every update rather than on a cron, like the rest of this pipeline.
+  await sweepParkedPhotos(db);
+}
+
+// The VIN carried by any member of an album, once one of them has committed.
+async function albumVin(db, mediaGroupId) {
+  const { data } = await db.from('wa_inbound_messages')
+    .select('vin6').eq('media_group_id', mediaGroupId)
+    .not('vin6', 'is', null).limit(1).maybeSingle();
+  return data?.vin6 || null;
+}
+
+// Download and file a parked photo, in the same order of evidence used
+// everywhere else: the photo's own VIN (a store that failed and is being
+// retried), then its album's caption, then — last — what the sender's session
+// said at the moment it landed. That snapshot is the only guess we make, and we
+// make it against the car that was in flight THEN, never against whatever car
+// has been named since. Idempotent: re-reads the row and no-ops if something
+// already claimed it.
+async function settleParked(db, messageId) {
+  const { data: p } = await db.from('wa_inbound_messages')
+    .select('message_id, station, vin6, media_group_id, session_vin_at_receipt, pending_file_id, media_path')
+    .eq('message_id', messageId).maybeSingle();
+  if (!p || p.media_path || !p.pending_file_id) return;
+
+  const vin6 = p.vin6
+    || (p.media_group_id ? await albumVin(db, p.media_group_id) : null)
+    || p.session_vin_at_receipt;
+  if (!vin6) return;                 // nothing can identify it; leave it parked
+
+  try {
+    const path = await storePhoto(db, bucketForStation(p.station), vin6, p.pending_file_id);
+    await db.from('wa_inbound_messages')
+      .update({ vin6, media_path: path, pending_file_id: null })
+      .eq('message_id', p.message_id);
+  } catch (e) {
+    // Still failing — leave it parked for a later sweep to retry.
+    console.error('settle parked photo failed', p.message_id, e?.message || e);
+  }
+}
+
+// Bounded per call so one webhook never stalls behind a backlog, and floored at
+// 6h so a photo nothing can ever identify stops being rescanned forever.
+async function sweepParkedPhotos(db) {
+  const now = Date.now();
+  const settled = new Date(now - PARK_SWEEP_MS).toISOString();
+  const floor = new Date(now - 6 * 60 * 60 * 1000).toISOString();
+  const { data: parked } = await db.from('wa_inbound_messages')
+    .select('message_id')
+    .not('pending_file_id', 'is', null).is('media_path', null)
+    .lte('received_at', settled).gte('received_at', floor)
+    .or('vin6.not.is.null,session_vin_at_receipt.not.is.null,media_group_id.not.is.null')
+    .order('received_at', { ascending: true })
+    .limit(10);
+
+  for (const p of parked || []) await settleParked(db, p.message_id);
 }
 
 // Open (or find) this car's body shop job. The RPC is SECURITY DEFINER and
@@ -278,16 +360,27 @@ async function checkMileage(db, chatId, replyTo, vin6, postedMiles, senderName) 
 
 // Download + store any photos this sender PARKED (sent before the VIN was known
 // — individual photos or albums, any order). Scoped to the same station and a
-// 10-min window so it can't grab a different car's photos. Idempotent.
-async function resolvePendingForSender(db, fromId, vin6, station) {
+// 10-min window. Idempotent.
+//
+// A VIN does NOT get to claim every parked photo in that window: a worker who
+// shoots one car without ever naming it and then posts the next car's VIN would
+// hand the first car's photos to the second. So a photo is only claimed when
+// nothing else already speaks for it — with one exception that matters most,
+// the album this very message captions, whose siblings parked precisely because
+// they were waiting for it.
+async function resolvePendingForSender(db, fromId, vin6, station, mediaGroupId = null) {
   const bucket = bucketForStation(station);
   const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const { data: pend } = await db.from('wa_inbound_messages')
-    .select('message_id, pending_file_id')
+    .select('message_id, pending_file_id, media_group_id, vin6, session_vin_at_receipt')
     .eq('wa_from', fromId).eq('station', station)
     .is('media_path', null).not('pending_file_id', 'is', null)
     .gte('received_at', cutoff);
   for (const p of pend || []) {
+    const sameAlbum = mediaGroupId && p.media_group_id === mediaGroupId;
+    // Already belongs to a car (a store that failed and is being retried), or
+    // was shot while a different car was in flight — either way, not ours.
+    if (!sameAlbum && (p.vin6 || (p.session_vin_at_receipt && p.session_vin_at_receipt !== vin6))) continue;
     try {
       const path = await storePhoto(db, bucket, vin6, p.pending_file_id);
       await db.from('wa_inbound_messages')

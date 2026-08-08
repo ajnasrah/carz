@@ -1,0 +1,13 @@
+-- PLACEHOLDER — deliberately does nothing.
+--
+-- Version 20260807000001 is recorded as applied on the remote database but its
+-- file was never committed here: it was pushed from another session on
+-- 2026-08-07 and then renamed, which is why the same work now reads as
+-- 20260807000002_assign_unregistered_tech.sql (and its follow-up ...0003).
+-- `supabase db push` refuses to run at all while a remote version has no local
+-- file, and marking it reverted would claim a migration that really did run
+-- never happened.
+--
+-- So: keep the version number occupied, change nothing. If this schema is ever
+-- rebuilt from scratch, 000002 and 000003 carry the tech-assignment work.
+SELECT 1;
