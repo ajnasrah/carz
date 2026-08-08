@@ -199,10 +199,12 @@ export default function PhotoCapture() {
       {/* Extra photos */}
       <label className="block mt-3 card text-center cursor-pointer active:bg-slate-700 py-3">
         <span className="text-sm text-slate-400 font-semibold">+ Extra Photos</span>
+        {/* No `capture` — it forces the one-shot camera sheet, which overrides
+            `multiple` and shuts out the photo library entirely. Without it the
+            picker offers both, and several photos can go up at once. */}
         <input
           type="file"
           accept="image/*"
-          capture="environment"
           multiple
           onChange={async (e) => {
             const files = Array.from(e.target.files)

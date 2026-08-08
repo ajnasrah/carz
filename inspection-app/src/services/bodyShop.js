@@ -8,24 +8,39 @@
 // the body shop is just one caller alongside the car history screen.
 
 import { supabase, selectAll } from './supabase'
+import { isPrimaryAdmin } from './adminSetup'
 
 // ---------------------------------------------------------------- constants
 
+// The pipeline in the order the car actually moves through the shop. Parts come
+// BEFORE the work — a car waits on a bumper, the bumper lands, then a tech picks
+// it up — and final check (buffing, sanding a run back, colour under the lights)
+// is its own stage, because a car on the buffer is not a finished car and must
+// not be payable yet.
+//
+// Order matters beyond the labels: the board's filter chips, the status buttons,
+// and the swipe-through order all read this array.
 export const JOB_STATUSES = [
   { key: 'intake',        label: 'Intake',        emoji: '📥', color: 'slate',
     hint: 'Just arrived — needs a price' },
-  { key: 'in_progress',   label: 'In Progress',   emoji: '🔨', color: 'emerald',
-    hint: 'Tech is working it' },
   { key: 'waiting_parts', label: 'Waiting Parts', emoji: '📦', color: 'orange',
     hint: 'Blocked until parts land' },
+  { key: 'parts_in',      label: 'Parts In',      emoji: '📬', color: 'yellow',
+    hint: 'Parts delivered — waiting to start' },
+  { key: 'in_progress',   label: 'In Progress',   emoji: '🔨', color: 'emerald',
+    hint: 'Tech is working it' },
+  { key: 'final_check',   label: 'Final Check',   emoji: '✨', color: 'violet',
+    hint: 'Buffing, touch-up, last look' },
   { key: 'done',          label: 'Done',          emoji: '✅', color: 'sky',
-    hint: 'Finished' },
+    hint: 'Finished — goes on the payout' },
 ]
 
 export const JOB_STATUS_STYLES = {
   intake:        'bg-slate-700 text-slate-200',
-  in_progress:   'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
   waiting_parts: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
+  parts_in:      'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
+  in_progress:   'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
+  final_check:   'bg-violet-500/20 text-violet-300 border border-violet-500/40',
   done:          'bg-sky-500/20 text-sky-300 border border-sky-500/40',
 }
 
@@ -113,8 +128,35 @@ export async function setJobStatus(id, status) {
   return updateJob(id, { status })
 }
 
-export async function assignTech(id, techId) {
-  return updateJob(id, { assigned_tech: techId || null })
+// A car goes to EITHER a real account (assigned_tech) or a roster name that has
+// never signed in (assigned_tech_invite) — the DB enforces one or the other. One
+// dropdown covers both, so the value carries which table the id belongs to:
+// 'p:<uuid>' for a profile, 'i:<uuid>' for a roster entry, '' for unassigned.
+export const TECH_ACCOUNT = 'p'
+export const TECH_ROSTER = 'i'
+
+export function techValue(job) {
+  if (job?.assigned_tech) return `${TECH_ACCOUNT}:${job.assigned_tech}`
+  if (job?.assigned_tech_invite) return `${TECH_ROSTER}:${job.assigned_tech_invite}`
+  return ''
+}
+
+// Accounts first, then the roster, each by name — Jorge scans for a person, not
+// for whether that person owns a phone.
+export function techOptions(techs = [], invites = []) {
+  const byName = (a, b) => a.label.localeCompare(b.label)
+  return [
+    ...techs.map((t) => ({ value: `${TECH_ACCOUNT}:${t.id}`, label: t.name || 'Unnamed' })).sort(byName),
+    ...invites.map((i) => ({ value: `${TECH_ROSTER}:${i.id}`, label: i.name, pending: true })).sort(byName),
+  ]
+}
+
+export async function assignTech(id, value) {
+  const [kind, ref] = String(value || '').split(':')
+  return updateJob(id, {
+    assigned_tech:        kind === TECH_ACCOUNT ? ref : null,
+    assigned_tech_invite: kind === TECH_ROSTER ? ref : null,
+  })
 }
 
 // Add a car by hand (a walk-in, or a fresh buy the shop has before Frazer does).
@@ -184,6 +226,43 @@ export async function fetchTechs() {
   return data || []
 }
 
+// Techs Jorge has added who haven't signed in yet — a name, and a phone number
+// if he had one. They're assignable straight away; one with a number becomes a
+// real profile when it logs in (claim_body_shop_tech_invite, called from
+// AuthContext), and the cars already on his name move across with him.
+export async function fetchTechInvites() {
+  const { data, error } = await supabase
+    .from('body_shop_tech_invites').select('*')
+    .is('claimed_at', null)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data || []
+}
+
+// The phone number is optional. Outcomes:
+//   'linked'  the number already had an account — the role is granted now
+//   'invited' a number nobody has signed in with yet
+//   'added'   a name with no number — on the roster, assignable, that's all
+export async function addTech(name, phone) {
+  const { data, error } = await supabase.rpc('add_body_shop_tech',
+    { p_name: name?.trim(), p_phone: phone || null })
+  if (error) throw error
+  return data
+}
+
+export async function removeTechInvite(id) {
+  const { error } = await supabase.rpc('remove_body_shop_tech_invite', { p_id: id })
+  if (error) throw error
+}
+
+// Display only — the server matches on the last 10 digits, never on this.
+export function formatPhone(value) {
+  const d = String(value || '').replace(/\D/g, '').slice(-10)
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 10)}`
+}
+
 export function isBodyShopManager(profile) {
   if (!profile) return false
   if (profile.role === 'admin') return true
@@ -193,6 +272,24 @@ export function isBodyShopManager(profile) {
 
 export function isBodyShopTech(profile) {
   return (profile?.roles || []).includes('body_shop_tech')
+}
+
+// The body shop crew — techs and the shop manager — are hired for the shop and
+// nothing else, so the rest of the app (inventory, sold reports, buyer match,
+// inspections) is closed to them: they see the Body Shop section only. Enforced
+// in ProtectedRoute; BottomNav shows them body shop tabs instead of the usual four.
+//
+// "Only" is literal: someone who is a tech AND a lot manager is not shop-scoped —
+// the extra role is the whole reason he has the rest of the app. Same for admins.
+// A buyer never reaches this, ProtectedRoute sends them to /listings first.
+const BODY_SHOP_ROLES = ['body_shop_tech', 'body_shop_manager']
+
+export function isBodyShopOnly(profile) {
+  if (!profile) return false
+  if (profile.role === 'admin' || isPrimaryAdmin(profile.phone)) return false
+  const roles = profile.roles || []
+  if (!roles.length) return false
+  return roles.every((r) => BODY_SHOP_ROLES.includes(r))
 }
 
 // ---------------------------------------------------------------- parts

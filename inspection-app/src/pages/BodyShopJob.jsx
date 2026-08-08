@@ -4,16 +4,21 @@
 // folder the Telegram bot drops the shop's photos into, so what the guys sent
 // over Telegram and what's shot in the app are one gallery.
 
-import { useState, useEffect, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ChevronLeft, Trash2, Plus, X, Camera, Check } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { ChevronLeft, ChevronRight, Trash2, Plus, Camera, ImagePlus } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
+import useSwipe from '../hooks/useSwipe'
 import HistoryButton from '../components/HistoryButton'
+import PhotoLightbox from '../components/PhotoLightbox'
+import BurstCamera from '../components/BurstCamera'
 import {
-  fetchJob, updateJob, setJobStatus, assignTech, deleteJob,
+  fetchJob, updateJob, setJobStatus, assignTech, deleteJob, fetchBoard,
   fetchParts, addPart, updatePart, deletePart,
-  fetchTechs, JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES,
-  ageStyle, vehicleLabel, isBodyShopManager,
+  fetchTechs, fetchTechInvites, addTech, removeTechInvite, formatPhone,
+  techOptions, techValue,
+  JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES,
+  ageStyle, vehicleLabel, isBodyShopManager, isBodyShopTech,
   CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
   isChargeApprover, isShopManager,
   proposeCharge, approveCharge, counterCharge, acceptCounter,
@@ -23,20 +28,74 @@ import {
 } from '../services/vehiclePhotos'
 
 const money = (n) => (n == null ? '—' : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
+// " · Aug 5" — enough to place the move without a wall of timestamp.
+const when = (ts) => (ts ? ` · ${new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` : '')
 
 export default function BodyShopJob() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { state } = useLocation()
   const { profile } = useAuth()
   const manager = isBodyShopManager(profile)
+  const techOnly = isBodyShopTech(profile) && !manager
 
   const [job, setJob] = useState(null)
   const [parts, setParts] = useState([])
   const [photos, setPhotos] = useState([])
   const [techs, setTechs] = useState([])
+  const [invites, setInvites] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [photoError, setPhotoError] = useState('')
+
+  // ---- swiping between cars -------------------------------------------------
+  // The board hands over the ids it was showing, so the swipe order is exactly
+  // the order on screen — same filter, same search, oldest first.
+  const [siblings, setSiblings] = useState(() => state?.siblings || null)
+
+  // A deep link, a refresh, or a hard reload has no handover. Rebuild the order
+  // from the board so swiping works anyway.
+  useEffect(() => {
+    if (siblings) return
+    let cancelled = false
+    fetchBoard()
+      .then((rows) => {
+        if (cancelled) return
+        const mine = techOnly && profile?.id
+          ? rows.filter((j) => j.assigned_tech === profile.id) : rows
+        setSiblings(mine.map((j) => j.id))
+      })
+      .catch(() => setSiblings([]))
+    return () => { cancelled = true }
+  }, [siblings, techOnly, profile?.id])
+
+  const at = useMemo(() => (siblings ? siblings.indexOf(id) : -1), [siblings, id])
+
+  // `replace` so back always returns to the board rather than walking every car
+  // you swiped through. The ids ride along so the next screen keeps the order.
+  const go = useCallback((delta) => {
+    if (at < 0 || !siblings) return
+    const next = siblings[at + delta]
+    if (next) navigate(`/body-shop/${next}`, { state: { siblings }, replace: true })
+  }, [at, siblings, navigate])
+
+  const swipe = useSwipe({
+    onLeft: () => go(1),
+    onRight: () => go(-1),
+    enabled: (siblings?.length || 0) > 1,
+  })
+
+  // Same thing from a keyboard, for the office screen.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.target.closest?.('input, textarea, select')) return
+      if (e.key === 'ArrowRight') go(1)
+      else if (e.key === 'ArrowLeft') go(-1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [go])
 
   const load = useCallback(async () => {
     setError('')
@@ -46,6 +105,11 @@ export default function BodyShopJob() {
       setJob(j)
       const [p, t] = await Promise.all([fetchParts(id), fetchTechs()])
       setParts(p); setTechs(t)
+      // Invites are the manager's business only, and a failure to read them must
+      // not take the job screen down with it.
+      if (manager) {
+        try { setInvites(await fetchTechInvites()) } catch { /* not fatal */ }
+      }
       // Photos are a separate, non-fatal concern — a storage hiccup shouldn't
       // blank out the price and the parts list.
       try { setPhotos(await fetchVehiclePhotos({ vin6: j.vin6, stockNumber: j.stock_number })) }
@@ -55,7 +119,7 @@ export default function BodyShopJob() {
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, manager])
 
   useEffect(() => { load() }, [load])
 
@@ -83,9 +147,12 @@ export default function BodyShopJob() {
   }
 
   return (
-    <div className="page">
+    // Swipe left for the next car, right for the previous one — same order as
+    // the board. Inputs, the photo viewer and anything [data-no-swipe] opt out.
+    <div className="page" {...swipe}>
       <BackBar onBack={() => navigate('/body-shop')}
-        right={<HistoryButton showPhotos stockNumber={job.stock_number} vin={job.vin} />} />
+        right={<HistoryButton showPhotos stockNumber={job.stock_number} vin={job.vin} />}
+        at={at} total={siblings?.length || 0} onGo={go} />
 
       {/* Car header */}
       <div className="card mb-3">
@@ -115,7 +182,9 @@ export default function BodyShopJob() {
 
       {error && <div className="card border-red-500/40 bg-red-500/10 text-red-300 text-sm mb-3">{error}</div>}
 
-      {/* Status */}
+      {/* Status — the stages in the order the car moves through them:
+          intake → waiting parts → in progress → final check → done. Done is
+          full width because it's the end of the line, not another lane. */}
       <Section title="Status">
         <div className="grid grid-cols-2 gap-2">
           {JOB_STATUSES.map((s) => {
@@ -124,7 +193,7 @@ export default function BodyShopJob() {
               <button key={s.key}
                 onClick={() => !active && setJobStatus(id, s.key).then(() => fetchJob(id)).then(setJob)
                   .catch((e) => setError(e.message || 'Could not change status'))}
-                className={`rounded-lg p-3 text-left border ${
+                className={`rounded-lg p-3 text-left border ${s.key === 'done' ? 'col-span-2' : ''} ${
                   active
                     ? 'bg-emerald-500 text-slate-900 border-emerald-400 font-bold'
                     : 'bg-slate-800 border-slate-700 active:bg-slate-700'
@@ -157,19 +226,22 @@ export default function BodyShopJob() {
       {/* Tech */}
       <Section title="Assigned Tech">
         {manager ? (
-          <select value={job.assigned_tech || ''}
-            onChange={(e) => assignTech(id, e.target.value || null).then(() => fetchJob(id)).then(setJob)
-              .catch((err) => setError(err.message || 'Could not assign'))}>
-            <option value="">— Unassigned —</option>
-            {techs.map((t) => <option key={t.id} value={t.id}>{t.name || 'Unnamed'}</option>)}
-          </select>
+          <>
+            {/* The roster is the dropdown: a man added by name is assignable
+                immediately, whether or not he has ever opened the app. */}
+            <select value={techValue(job)}
+              onChange={(e) => assignTech(id, e.target.value).then(() => fetchJob(id)).then(setJob)
+                .catch((err) => setError(err.message || 'Could not assign'))}>
+              <option value="">— Unassigned —</option>
+              {techOptions(techs, invites).map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <TechRoster techs={techs} invites={invites} setInvites={setInvites}
+              onTechsChanged={() => fetchTechs().then(setTechs).catch(() => {})} />
+          </>
         ) : (
           <p className="text-sm">{job.tech_name || <span className="text-slate-500">Unassigned</span>}</p>
-        )}
-        {manager && techs.length === 0 && (
-          <p className="text-[11px] text-slate-500 mt-2">
-            Nobody is set up as a body shop tech yet — they pick that role when they sign up.
-          </p>
         )}
       </Section>
 
@@ -203,13 +275,34 @@ export default function BodyShopJob() {
   )
 }
 
-function BackBar({ onBack, right }) {
+// The car pager lives here rather than only on the swipe: the arrows say the
+// gesture exists, give it a target on a desktop mouse, and "3 / 12" tells you
+// where you are in the queue without going back to the board.
+function BackBar({ onBack, right, at = -1, total = 0, onGo }) {
+  const paging = at >= 0 && total > 1
   return (
-    <div className="flex items-center justify-between mb-3">
+    <div className="flex items-center justify-between gap-2 mb-3">
       <button onClick={onBack} className="flex items-center gap-1 text-slate-300 text-sm active:text-white -ml-1">
         <ChevronLeft size={18} /> Body Shop
       </button>
-      {right}
+      <div className="flex items-center gap-1.5">
+        {paging && (
+          <div className="flex items-center gap-0.5">
+            <button onClick={() => onGo(-1)} disabled={at === 0} aria-label="Previous car"
+              className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-30 active:bg-slate-700">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-[11px] text-slate-500 tabular-nums w-12 text-center">
+              {at + 1} / {total}
+            </span>
+            <button onClick={() => onGo(1)} disabled={at === total - 1} aria-label="Next car"
+              className="p-1.5 rounded-lg bg-slate-800 border border-slate-700 disabled:opacity-30 active:bg-slate-700">
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+        {right}
+      </div>
     </div>
   )
 }
@@ -219,6 +312,115 @@ function Section({ title, children }) {
     <div className="mb-3">
       <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5">{title}</p>
       <div className="card">{children}</div>
+    </div>
+  )
+}
+
+// Add a tech by name, before — or without — him ever opening the app.
+//
+// The name alone is enough to put a car on him: he lands in the dropdown above
+// the moment he's added. Most of the shop will never install anything, and
+// waiting on a sign-in to assign work was the whole problem.
+//
+// A phone number is optional and buys one thing: when that number signs in, the
+// profile it creates is claimed by the invite — named, given the body_shop_tech
+// role, approved, with the cars already on his name carried over — so he goes
+// straight to his own board instead of through signup and the pending queue. If
+// the number already has an account the role is granted on the spot, which is
+// why the button reports which of the three happened.
+function TechRoster({ techs, invites, setInvites, onTechsChanged }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [note, setNote] = useState('')
+  const [err, setErr] = useState('')
+
+  const digits = phone.replace(/\D/g, '')
+
+  async function submit(e) {
+    e.preventDefault()
+    setErr(''); setNote(''); setSaving(true)
+    try {
+      const outcome = await addTech(name, phone)
+      const who = name.trim()
+      setNote(
+        outcome === 'linked' ? `${who} already had an account — he's a tech now.`
+          : outcome === 'invited' ? `${who} is added — assign him a car now. He gets his own board the first time he signs in with that number.`
+            : `${who} is added — assign him a car now. Add his number later if you want him in the app.`)
+      setName(''); setPhone(''); setOpen(false)
+      setInvites(await fetchTechInvites())
+      onTechsChanged?.()
+    } catch (e2) {
+      setErr(e2.message || 'Could not add the tech')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function drop(invite) {
+    setErr('')
+    const before = invites
+    setInvites((list) => list.filter((i) => i.id !== invite.id))
+    try { await removeTechInvite(invite.id) }
+    catch (e2) { setInvites(before); setErr(e2.message || 'Could not remove') }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-700/60">
+      {invites.length > 0 && (
+        <div className="space-y-1.5 mb-2">
+          {invites.map((i) => (
+            <div key={i.id} className="flex items-center gap-2 text-[11px]">
+              <span className="shrink-0 px-2 py-0.5 rounded-full bg-slate-700 text-slate-300 font-semibold">
+                {i.phone10 ? 'waiting' : 'no login'}
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                {i.name} <span className="text-slate-500">{formatPhone(i.phone || i.phone10)}</span>
+              </span>
+              <button onClick={() => drop(i)} className="shrink-0 p-1 text-slate-600 active:text-red-400">
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+          <p className="text-[10px] text-slate-500">
+            On the roster, no account yet — assign them cars as normal. The ones with a number
+            join as techs the first time that number logs in, and keep their cars.
+          </p>
+        </div>
+      )}
+
+      {open ? (
+        <form onSubmit={submit} className="space-y-2">
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            placeholder="Tech's name" className="!py-2 text-sm" />
+          <div className="flex gap-2">
+            <input value={phone} onChange={(e) => setPhone(formatPhone(e.target.value))}
+              type="tel" inputMode="tel" maxLength={14} placeholder="Phone (optional)"
+              className="flex-1 !py-2 text-sm" />
+            {/* Blank is fine; half a number is a typo, and the server rejects it. */}
+            <button type="submit" disabled={saving || !name.trim() || (digits.length > 0 && digits.length !== 10)}
+              className="px-3 rounded-lg bg-emerald-500 text-slate-900 font-bold text-sm disabled:opacity-40">
+              {saving ? '…' : 'Add'}
+            </button>
+          </div>
+          <button type="button" onClick={() => { setOpen(false); setErr('') }}
+            className="text-[11px] text-slate-500 underline">cancel</button>
+        </form>
+      ) : (
+        <button onClick={() => { setOpen(true); setNote('') }}
+          className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
+          <Plus size={13} /> Add a tech
+        </button>
+      )}
+
+      {note && <p className="text-[11px] text-emerald-400/90 mt-2">{note}</p>}
+      {err && <p className="text-[11px] text-red-400 mt-2">{err}</p>}
+      {techs.length === 0 && invites.length === 0 && !open && (
+        <p className="text-[11px] text-slate-500 mt-2">
+          No techs yet. Add one by name — he doesn't need an account to be given a car.
+        </p>
+      )}
     </div>
   )
 }
@@ -260,7 +462,20 @@ function ChargeCard({ job, profile, onDone, onError }) {
           </div>
           {status === 'countered' && job.price != null && (
             <div className="text-[11px] text-slate-500">
-              countered down from {money(job.price)}
+              countered from {money(job.price)}
+            </div>
+          )}
+          {/* Who moved the number, always — a counter with no note used to land
+              on Jorge anonymously, and "someone cut my price" is not a thing you
+              can answer. Same for the approval. */}
+          {status === 'countered' && (
+            <div className="text-[11px] text-orange-300/90">
+              by {job.counter_by_name || 'an owner'}{when(job.counter_at)}
+            </div>
+          )}
+          {status === 'agreed' && (job.agreed_by_name || job.agreed_at) && (
+            <div className="text-[11px] text-slate-500">
+              agreed{job.agreed_by_name ? ` by ${job.agreed_by_name}` : ''}{when(job.agreed_at)}
             </div>
           )}
         </div>
@@ -272,6 +487,12 @@ function ChargeCard({ job, profile, onDone, onError }) {
       {status === 'countered' && job.counter_note && (
         <p className="text-[11px] text-orange-300/90 mt-2 bg-orange-500/10 border border-orange-500/30 rounded-lg p-2">
           “{job.counter_note}”{job.counter_by_name ? ` — ${job.counter_by_name}` : ''}
+        </p>
+      )}
+
+      {status === 'countered' && !job.counter_note && (
+        <p className="text-[11px] text-slate-500 mt-2">
+          No reason given{job.counter_by_name ? ` — ask ${job.counter_by_name}` : ''}.
         </p>
       )}
 
@@ -487,8 +708,17 @@ function PartsList({ jobId, parts, setParts, onError, onChanged }) {
 // body shop's own photos, because that's what the manager is looking for; one tap
 // shows everything, which is how you spot damage the car arrived with.
 function PhotoGrid({ job, photos, setPhotos, error, onError }) {
-  const [uploading, setUploading] = useState(false)
-  const [viewing, setViewing] = useState(null)
+  // {done, total} while a batch is going up, null otherwise — a dozen photos off
+  // a phone is slow enough that a spinner with no number reads as a hang.
+  const [progress, setProgress] = useState(null)
+  const [shooting, setShooting] = useState(false)
+  const uploading = progress != null
+  // Desktop browsers with no camera (and anything served insecurely) fall back
+  // to the phone's own one-shot sheet rather than a viewfinder that can't start.
+  const canShoot = !!navigator.mediaDevices?.getUserMedia
+  // An index into `visible`, not a photo object — the viewer pages through the
+  // set from here, so it needs to know where in the set it is.
+  const [viewIdx, setViewIdx] = useState(null)
   const [showAll, setShowAll] = useState(false)
 
   // A car that comes back gets a NEW job, but photos are car-level — so without
@@ -504,20 +734,33 @@ function PhotoGrid({ job, photos, setPhotos, error, onError }) {
   const visible = showAll ? photos : thisVisit
   const otherCount = photos.length - thisVisit.length
 
-  async function handleFiles(e) {
-    const files = Array.from(e.target.files || [])
-    e.target.value = ''
+  // One photo failing must not throw away the eleven that worked — each is its
+  // own upload, so the batch carries on and reports what didn't make it.
+  async function upload(files) {
     if (!files.length) return
-    setUploading(true); onError('')
+    onError('')
+    setProgress({ done: 0, total: files.length })
+    const car = { vin6: job.vin6, stockNumber: job.stock_number, vin: job.vin }
+    let failed = 0
     try {
-      const car = { vin6: job.vin6, stockNumber: job.stock_number, vin: job.vin }
-      for (const file of files) await uploadVehiclePhoto(car, file)
+      for (const [i, file] of files.entries()) {
+        try { await uploadVehiclePhoto(car, file) }
+        catch { failed += 1 }
+        setProgress({ done: i + 1, total: files.length })
+      }
       setPhotos(await fetchVehiclePhotos(car))
+      if (failed) onError(`${failed} of ${files.length} photos didn’t upload — try those again.`)
     } catch (err) {
       onError(err.message || 'Upload failed')
     } finally {
-      setUploading(false)
+      setProgress(null)
     }
+  }
+
+  function handleFiles(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    upload(files)
   }
 
   async function remove(photo) {
@@ -525,7 +768,7 @@ function PhotoGrid({ job, photos, setPhotos, error, onError }) {
     try {
       await deleteVehiclePhoto(photo)
       setPhotos((ps) => ps.filter((p) => p.path !== photo.path))
-      setViewing(null)
+      setViewIdx(null)
     } catch (err) { onError(err.message || 'Could not delete') }
   }
 
@@ -550,8 +793,8 @@ function PhotoGrid({ job, photos, setPhotos, error, onError }) {
 
       {visible.length > 0 ? (
         <div className="grid grid-cols-3 gap-1.5 mb-3">
-          {visible.map((photo) => (
-            <button key={`${photo.bucket}/${photo.path}`} onClick={() => setViewing(photo)}
+          {visible.map((photo, i) => (
+            <button key={`${photo.bucket}/${photo.path}`} onClick={() => setViewIdx(i)}
               className="relative aspect-square rounded-lg overflow-hidden bg-slate-900 border border-slate-700">
               <img src={photo.url} alt="" loading="lazy" className="w-full h-full object-cover" />
               {showAll && (
@@ -570,37 +813,50 @@ function PhotoGrid({ job, photos, setPhotos, error, onError }) {
         </p>
       )}
 
+      {/* Two ways in, because they're two different jobs: shoot a run of photos
+          of the car in front of you, or send up ones already on the phone. The
+          old single button did neither well — `capture` forces the camera sheet,
+          which overrides `multiple` and closes after every shot. */}
       {job.vin6 && (
-        <label className={`btn-secondary flex items-center justify-center gap-2 cursor-pointer !py-2 text-sm ${uploading ? 'opacity-50' : ''}`}>
-          <Camera size={16} />
-          {uploading ? 'Uploading…' : 'Add Photos'}
-          <input type="file" accept="image/*" capture="environment" multiple
-            onChange={handleFiles} disabled={uploading} className="hidden" />
-        </label>
-      )}
-
-      {viewing && (
-        <div className="fixed inset-0 z-40 bg-black/90 flex flex-col safe-inset"
-          onClick={() => setViewing(null)}>
-          <div className="flex justify-between items-center p-4" onClick={(e) => e.stopPropagation()}>
-            {/* Telegram photos are the crew's record — deleting them here would
-                quietly rewrite the car's history, so it isn't offered. */}
-            {viewing.source === 'app' ? (
-              <button onClick={() => remove(viewing)} className="text-red-400 flex items-center gap-1 text-sm">
-                <Trash2 size={16} /> Delete
+        uploading ? (
+          <div className="btn-secondary flex items-center justify-center gap-2 !py-2 text-sm opacity-70">
+            <Camera size={16} /> Uploading {progress.done}/{progress.total}…
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2">
+            {canShoot ? (
+              <button onClick={() => setShooting(true)}
+                className="btn-secondary flex items-center justify-center gap-2 !py-2 text-sm">
+                <Camera size={16} /> Take Photos
               </button>
             ) : (
-              <span className="text-[11px] text-slate-400">
-                {photoSourceLabel(viewing)}
-                {viewing.takenAt ? ` · ${new Date(viewing.takenAt).toLocaleDateString()}` : ''}
-              </span>
+              <label className="btn-secondary flex items-center justify-center gap-2 cursor-pointer !py-2 text-sm">
+                <Camera size={16} /> Take Photo
+                <input type="file" accept="image/*" capture="environment"
+                  onChange={handleFiles} className="hidden" />
+              </label>
             )}
-            <button onClick={() => setViewing(null)} className="text-white"><X size={22} /></button>
+            {/* No `capture` here — that's what lets the picker offer the library
+                and take several at once. */}
+            <label className="btn-secondary flex items-center justify-center gap-2 cursor-pointer !py-2 text-sm">
+              <ImagePlus size={16} /> Upload
+              <input type="file" accept="image/*" multiple
+                onChange={handleFiles} className="hidden" />
+            </label>
           </div>
-          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
-            <img src={viewing.url} alt="" className="max-w-full max-h-full object-contain" />
-          </div>
-        </div>
+        )
+      )}
+
+      {shooting && (
+        <BurstCamera
+          title={vehicleLabel(job) || `#${job.stock_number || job.vin6}`}
+          onCancel={() => setShooting(false)}
+          onDone={(files) => { setShooting(false); upload(files) }} />
+      )}
+
+      {viewIdx != null && (
+        <PhotoLightbox photos={visible} index={viewIdx} onIndex={setViewIdx}
+          onClose={() => setViewIdx(null)} onDelete={remove} />
       )}
     </div>
   )

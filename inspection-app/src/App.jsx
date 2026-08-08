@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext'
 import { initNativeShell } from './native/shell'
 import { useAuth } from './context/useAuth'
 import { isPrimaryAdmin } from './services/adminSetup'
+import { isBodyShopOnly } from './services/bodyShop'
 import Login from './pages/Login'
 import Setup from './pages/Setup'
 import PendingApproval from './pages/PendingApproval'
@@ -46,6 +47,7 @@ import BottomNav from './components/BottomNav'
 
 function ProtectedRoute({ children, requireSetup = true }) {
   const { user, profile, loading } = useAuth()
+  const { pathname } = useLocation()
 
   if (loading) {
     return (
@@ -95,6 +97,12 @@ function ProtectedRoute({ children, requireSetup = true }) {
       // Approved buyers are marketplace-only — no internal pages.
       if (profile.account_type === 'buyer') {
         return <Navigate to="/listings" replace />
+      }
+      // The body shop crew (techs + shop manager, no other role) sees the Body
+      // Shop section and nothing else. Their home is the board, so a deep link
+      // or the "*" catch-all lands there instead of the dashboard.
+      if (isBodyShopOnly(profile) && !pathname.startsWith('/body-shop')) {
+        return <Navigate to="/body-shop" replace />
       }
     }
   }

@@ -77,11 +77,19 @@ export default function BodyShop() {
 
   const stats = useMemo(() => {
     const open = scoped.filter((j) => j.status !== 'done')
-    const waiting = open.filter((j) => j.status === 'waiting_parts').length
     const unpriced = open.filter((j) => j.price == null).length
     const oldest = open.length ? Math.max(...open.map((j) => j.days_in_shop || 0)) : null
     const pending = open.filter((j) => j.awaiting_inventory).length
-    return { count: open.length, waiting, unpriced, oldest, pending }
+    return { count: open.length, unpriced, oldest, pending }
+  }, [scoped])
+
+  // How many cars are sitting in each stage right now. Every stage is counted,
+  // zeros included — an empty Final Check is itself worth seeing, and a tally
+  // that hides its zeros can't be read at a glance.
+  const byStage = useMemo(() => {
+    const counts = Object.fromEntries(JOB_STATUSES.map((s) => [s.key, 0]))
+    for (const j of scoped) if (j.status in counts) counts[j.status] += 1
+    return counts
   }, [scoped])
 
   return (
@@ -115,13 +123,28 @@ export default function BodyShop() {
         <div className="card border-red-500/40 bg-red-500/10 text-red-300 text-sm mb-3">{error}</div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-2 mb-4">
-        <Stat emoji="🚗" value={stats.count} label="In Shop" />
-        <Stat emoji="📦" value={stats.waiting} label="Waiting" tone={stats.waiting ? 'text-orange-400' : undefined} />
-        <Stat emoji="💵" value={stats.unpriced} label="No Price" tone={stats.unpriced ? 'text-yellow-400' : undefined} />
-        <Stat emoji="⏰" value={stats.oldest == null ? '—' : `${stats.oldest}d`} label="Oldest"
-          tone={ageStyle(stats.oldest)} />
+      {/* The pipeline, counted. Tapping a stage filters the list to it, so the
+          number you just read and the list you get are the same thing — and the
+          tally doubles as the filter instead of sitting above a second row of
+          chips saying the same numbers. Tap the active one again to go back to
+          all open cars. */}
+      <div className="grid grid-cols-5 gap-1.5 mb-2">
+        {JOB_STATUSES.filter((s) => s.key !== 'done').map((s) => (
+          <StageTile key={s.key} stage={s} count={byStage[s.key]}
+            active={statusFilter === s.key}
+            onClick={() => setStatusFilter(statusFilter === s.key ? 'open' : s.key)} />
+        ))}
+      </div>
+
+      {/* The three numbers that aren't a stage. */}
+      <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-400 mb-3">
+        <span className="font-semibold text-slate-300">🚗 {stats.count} in shop</span>
+        <span className={stats.unpriced ? 'text-yellow-400' : undefined}>
+          💵 {stats.unpriced} no price
+        </span>
+        <span className={ageStyle(stats.oldest)}>
+          ⏰ oldest {stats.oldest == null ? '—' : `${stats.oldest}d`}
+        </span>
       </div>
 
       {stats.pending > 0 && (
@@ -141,13 +164,12 @@ export default function BodyShop() {
         />
       </div>
 
-      <div className="flex gap-1.5 overflow-x-auto pb-1 mb-3 -mx-4 px-4">
+      {/* The stages live in the tally above; these two are the views that aren't
+          a stage. Done has no count on purpose — it's a capped slice of history,
+          not cars in the shop, so a number here would read as "50 finished". */}
+      <div className="flex gap-1.5 mb-3">
         <FilterChip active={statusFilter === 'open'} onClick={() => setStatusFilter('open')}
-          label="All Open" count={scoped.filter((j) => j.status !== 'done').length} />
-        {JOB_STATUSES.filter((s) => s.key !== 'done').map((s) => (
-          <FilterChip key={s.key} active={statusFilter === s.key} onClick={() => setStatusFilter(s.key)}
-            label={`${s.emoji} ${s.label}`} count={scoped.filter((j) => j.status === s.key).length} />
-        ))}
+          label="All Open" count={stats.count} />
         <FilterChip active={statusFilter === 'done'} onClick={() => setStatusFilter('done')} label="✅ Done" />
       </div>
 
@@ -171,8 +193,13 @@ export default function BodyShop() {
         </div>
       ) : (
         <div className="space-y-2">
+          {/* The ids ride along so the job screen can swipe between exactly the
+              cars on screen here, in this order — the same filter, the same
+              search, the same oldest-first sort. */}
           {visible.map((job) => (
-            <JobCard key={job.id} job={job} onClick={() => navigate(`/body-shop/${job.id}`)} />
+            <JobCard key={job.id} job={job}
+              onClick={() => navigate(`/body-shop/${job.id}`,
+                { state: { siblings: visible.map((j) => j.id) } })} />
           ))}
         </div>
       )}
@@ -187,13 +214,29 @@ export default function BodyShop() {
   )
 }
 
-function Stat({ emoji, value, label, tone }) {
+// One stage of the pipeline: its count, its name, and whether the board is
+// currently filtered to it. A stage holding nothing is greyed rather than
+// hidden — "no cars in Final Check" is information.
+const STAGE_TONES = {
+  intake:        { on: 'bg-slate-600 border-slate-400',        num: 'text-slate-100' },
+  waiting_parts: { on: 'bg-orange-500/30 border-orange-400',   num: 'text-orange-300' },
+  parts_in:      { on: 'bg-yellow-500/30 border-yellow-400',   num: 'text-yellow-300' },
+  in_progress:   { on: 'bg-emerald-500/30 border-emerald-400', num: 'text-emerald-300' },
+  final_check:   { on: 'bg-violet-500/30 border-violet-400',   num: 'text-violet-300' },
+}
+
+function StageTile({ stage, count, active, onClick }) {
+  const tone = STAGE_TONES[stage.key] || STAGE_TONES.intake
   return (
-    <div className="rounded-xl p-2.5 bg-slate-800 text-center">
-      <div className="text-base leading-none">{emoji}</div>
-      <div className={`text-xl font-bold mt-1 ${tone || 'text-white'}`}>{value}</div>
-      <div className="text-[9px] uppercase tracking-wide text-slate-400 mt-0.5">{label}</div>
-    </div>
+    <button onClick={onClick} title={stage.hint}
+      className={`rounded-xl p-2 text-center border transition-colors ${
+        active ? tone.on : 'bg-slate-800 border-slate-700 active:bg-slate-700'}`}>
+      <div className="text-base leading-none">{stage.emoji}</div>
+      <div className={`text-xl font-bold mt-1 ${count ? tone.num : 'text-slate-600'}`}>{count}</div>
+      <div className="text-[9px] uppercase tracking-wide text-slate-400 mt-0.5 leading-tight">
+        {stage.label}
+      </div>
+    </button>
   )
 }
 

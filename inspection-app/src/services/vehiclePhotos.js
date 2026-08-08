@@ -9,6 +9,7 @@
 import { supabase } from './supabase'
 
 const UPLOAD_BUCKET = 'car-history'
+const UPLOAD_TABLE = 'vehicle_photo_uploads'
 const SIGNED_URL_TTL = 60 * 60   // 1h — long enough for a shift, short enough to matter
 
 // Where a photo came from, for the badge on each thumbnail.
@@ -86,11 +87,19 @@ export async function uploadVehiclePhoto({ vin6, stockNumber, vin }, file) {
   if (upErr) throw new Error(upErr.message || 'Upload failed')
 
   const { data: { user } } = await supabase.auth.getUser()
-  const { error } = await supabase.from('vehicle_photos').insert({
+  // vehicle_photo_uploads is the TABLE; vehicle_photos is the read function that
+  // unions it with Telegram and inspection shots. Easy pair to mix up.
+  const { error } = await supabase.from(UPLOAD_TABLE).insert({
     vin6, stock_number: stockNumber || null, vin: vin || null,
     bucket: UPLOAD_BUCKET, path, source: 'app', created_by: user?.id || null,
   })
-  if (error) throw error
+  // The object is already in storage but nothing indexes it, so it would never
+  // show up anywhere — take it back out rather than leave a photo the app can't
+  // see and the user can't delete.
+  if (error) {
+    await supabase.storage.from(UPLOAD_BUCKET).remove([path])
+    throw error
+  }
   return path
 }
 
@@ -101,5 +110,6 @@ export async function deleteVehiclePhoto(photo) {
   if (photo.source !== 'app') throw new Error('Only photos added in the app can be deleted')
   const { error } = await supabase.storage.from(photo.bucket).remove([photo.path])
   if (error) throw error
-  await supabase.from('vehicle_photos').delete().eq('path', photo.path)
+  await supabase.from(UPLOAD_TABLE).delete()
+    .eq('bucket', photo.bucket).eq('path', photo.path)
 }
