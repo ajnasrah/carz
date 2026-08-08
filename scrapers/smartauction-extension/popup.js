@@ -1929,8 +1929,16 @@
       else if (s.startsWith('Condition Score:')) { info.conditionScore = afterColon(s); lastKey = null; }
       else if (s.includes('DAMAGES & ISSUES')) { section = 'damages'; lastKey = null; }
       else if (s.includes('IMAGES DOWNLOADED') || s.includes('TIRES AND WHEELS') || s.includes('ANNOUNCEMENTS')) { section = null; lastKey = null; }
-      else if (section === 'damages' && s && /^\d+\./.test(s)) {
-        const entry = s.replace(/^\d+\.\s*/, '');
+      // Every line in the damages section counts, numbered or not. Requiring a
+      // "1." prefix silently swallowed whole condition reports: paste the damage
+      // block off a CR page, or feed an export that lists them bare, and the
+      // parse came back empty with nothing to say it had skipped anything.
+      // Separator lines and the section's own "(20 found)" header are not damage.
+      else if (section === 'damages' && s
+               && !/^[-=_*]{3,}$/.test(s)
+               && !/^\(?\d+\s+found\)?$/i.test(s)
+               && !/^no damages/i.test(s)) {
+        const entry = s.replace(/^\d+[.)]\s*/, '').trim();
         if (entry) rawDamages.push(entry);
         lastKey = null;
       } else if (lastKey === 'vehicle' && s && !s.startsWith('---') && !s.startsWith('===')) {
@@ -1942,8 +1950,8 @@
     // Parse damages — summary entries come in several formats:
     // Canonical (current Manheim): "Panel: Condition (Severity) — Repair"
     // Legacy Format 1: "Panel (Type)" — parentheses
-    // Legacy Format 2: "Panel| Type" — pipe
-    // Legacy Format 3: "Panel- Type" — dash (no space before dash)
+    // Legacy Format 2: "Panel| Type" or "Panel | Type" — pipe
+    // Legacy Format 3: "Panel- Type" or "Panel - Type" — dash, any spacing
     // Plus standalone: "Light scratches", "Multi dents"
     const seen = new Set();
     const damages = [];
@@ -1974,12 +1982,25 @@
         const idx = d.indexOf('|');
         panel = d.substring(0, idx).trim();
         dtype = d.substring(idx + 1).trim();
-      } else if (/\S-\s+\S/.test(d)) {
-        // Format 3: "R Qtr Panel- Mult Dents" — dash right after text, space after
-        // Greedy match so "Cargo Door - Right Rear- Type" keeps full panel name
-        const m = d.match(/^(.+\S)-\s+(.+)$/);
+      } else if (/\S\s*[-–—]\s+\S/.test(d)) {
+        // Format 3: "R Qtr Panel- Mult Dents" AND "LF Seat - Hole".
+        //
+        // This used to require NO space before the dash (/\S-\s+\S/), which is
+        // not what any current export writes — the Manheim scraper joins with
+        // ' - '. Every spaced row fell through to the standalone branch below,
+        // got no type, and was dropped on the floor: on a real Palisade CR that
+        // was all three interior damages and the rear bumper, gone with no error.
+        //
+        // Greedy so "Cargo Door - Right Rear - Prev Repair" keeps the full panel
+        // name and splits on the LAST separator.
+        const m = d.match(/^(.+\S)\s*[-–—]\s+(.+)$/);
         if (m) { panel = m[1].trim(); dtype = m[2].trim(); }
         else { panel = d; }
+        // "Quarter Panel - Left" is a panel, not a Quarter Panel damaged "Left".
+        // A bare position after the dash means the line never carried a type.
+        if (/^(?:left|right|front|rear|driver|passenger|lf|rf|lr|rr)(?:\s+(?:front|rear))?$/i.test(dtype)) {
+          panel = d; dtype = '';
+        }
       } else {
         // Standalone: "Light scratches", "Multi dents"
         panel = d;
@@ -2118,9 +2139,38 @@
 
       lookupVIN();
 
+      // Persist the import — and with it push the damages to the marketplace.
+      // saveSession() is what schedules the debounced Supabase sync, and the
+      // import never called it: the damages sat in the popup and only reached
+      // the website if you happened to click through to another step
+      // afterwards, which fires saveSession() on the way. Import a CR and go
+      // straight to filling SA and the car showed on the marketplace with no
+      // damages at all.
+      saveSession();
+
       const dmgCount = damages.length;
       manheimResult.textContent = `Loaded: ${vehicleName || vin} — ${dmgCount} damages, ${imageFiles.length} photos → SA Photos`;
       manheimResult.className = 'scraper-result ok';
+
+      // Push the CR's pictures to the marketplace. Deliberately last and
+      // deliberately non-fatal: the import itself has already succeeded, and a
+      // missing upload key or a dropped connection must not read as "the CR
+      // failed to load". Damages went up with saveSession() above.
+      if (exteriorPhotos.length) {
+        try {
+          const n = await sendPhotosToWebsite({
+            onProgress: (done, total) => {
+              manheimResult.textContent = `${vehicleName || vin} — sending photos to website ${done}/${total}...`;
+            },
+          });
+          manheimResult.textContent =
+            `Loaded: ${vehicleName || vin} — ${dmgCount} damages, ${imageFiles.length} photos → SA Photos · ${n} on website`;
+        } catch (e) {
+          manheimResult.textContent =
+            `Loaded: ${vehicleName || vin} — ${dmgCount} damages, ${imageFiles.length} photos → SA Photos · website photos: ${e.message}`;
+          manheimResult.className = 'scraper-result';
+        }
+      }
       statusDiv.textContent = 'Manheim import complete';
       statusDiv.className = 'status success';
     } catch (err) {
@@ -2568,6 +2618,51 @@
     if (openSettingsBtn) openSettingsBtn.addEventListener('click', toggleSettings);
     if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', toggleSettings);
 
+    // Top-level settings (the ⚙ next to Queue/Wizard/Info). The wizard's own
+    // Settings button only exists inside step 1, which is invisible from the
+    // Queue view the popup opens on.
+    const settingsTop = document.getElementById('settingsPanelTop');
+    const openSettingsTopBtn = document.getElementById('openSettingsTopBtn');
+    const closeSettingsTopBtn = document.getElementById('closeSettingsTopBtn');
+    if (openSettingsTopBtn) openSettingsTopBtn.addEventListener('click', () => {
+      settingsTop.style.display = settingsTop.style.display === 'none' ? 'block' : 'none';
+    });
+    if (closeSettingsTopBtn) closeSettingsTopBtn.addEventListener('click', () => {
+      settingsTop.style.display = 'none';
+    });
+    // The wizard's Settings button opens the same panel, so there's one place
+    // to look wherever you press it from.
+    if (openSettingsBtn) openSettingsBtn.addEventListener('click', () => {
+      if (settingsTop) settingsTop.style.display = 'block';
+    });
+
+    // Website photo upload key. Stored locally and only ever sent to
+    // carzinc.ai — shown as dots once saved so a screen-share doesn't leak it.
+    const listingSecretInput = document.getElementById('listingSecretInput');
+    const saveListingSecretBtn = document.getElementById('saveListingSecretBtn');
+    const listingSecretStatus = document.getElementById('listingSecretStatus');
+    if (listingSecretInput) {
+      chrome.storage.local.get(['listingUploadSecret']).then(({ listingUploadSecret }) => {
+        if (listingUploadSecret) {
+          listingSecretInput.value = '••••••••';
+          if (listingSecretStatus) {
+            listingSecretStatus.textContent = 'Saved';
+            listingSecretStatus.className = 'field-status ok';
+          }
+        }
+      });
+    }
+    if (saveListingSecretBtn) saveListingSecretBtn.addEventListener('click', async () => {
+      const val = (listingSecretInput.value || '').trim();
+      if (!val || val === '••••••••') return;
+      await chrome.storage.local.set({ listingUploadSecret: val });
+      listingSecretInput.value = '••••••••';
+      if (listingSecretStatus) {
+        listingSecretStatus.textContent = 'Saved';
+        listingSecretStatus.className = 'field-status ok';
+      }
+    });
+
     // Scraper buttons
     scrapeBtn.addEventListener('click', () => runScrape());
     scrapeDateBtn.addEventListener('click', () => {
@@ -2945,27 +3040,61 @@
     } catch (e) { console.error('[updateSaCounts]', e); }
   }
 
+  // Read an entire RPC result, page by page.
+  //
+  // PostgREST caps an unbounded response at 1000 rows and says nothing about it.
+  // `list_all_sold` is 6,318 sales — a bare POST returned the first 1000 and the
+  // extension treated that as the whole book. Paging is via the `limit`/`offset`
+  // QUERY PARAMS: a `Range` header is ignored on these RPCs (verified against
+  // the live API — every Range value came back as rows 0-999).
+  //
+  // Errors are classified because "TypeError: Failed to fetch" tells you nothing
+  // about which of three very different problems you have.
+  async function sbRpcAll(name, { pageSize = 1000, maxPages = 50 } = {}) {
+    const rows = [];
+    for (let page = 0; page < maxPages; page++) {
+      const offset = page * pageSize;
+      const url = `${SUPABASE_URL}/rest/v1/rpc/${name}?limit=${pageSize}&offset=${offset}`;
+      let res;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(30000),
+        });
+      } catch (e) {
+        if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+          throw new Error('Timed out reaching Supabase — try again');
+        }
+        // fetch() rejects with a bare TypeError for anything below HTTP: no
+        // network, DNS, a VPN in the way, or the popup being torn down
+        // mid-request. The server is not involved and never saw the request.
+        throw new Error('No connection to Supabase — check your network');
+      }
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`${res.status} — ${body.slice(0, 120)}`);
+      }
+      const batch = await res.json();
+      if (!Array.isArray(batch) || !batch.length) break;
+      rows.push(...batch);
+      if (batch.length < pageSize) break;
+    }
+    return rows;
+  }
+
   async function syncSupabaseInventory(opts = {}) {
     const { silent = false } = opts;
     const badge = document.getElementById('supabaseInvBadge');
     const result = document.getElementById('supabaseInvResult');
     if (!silent && badge) badge.textContent = 'Syncing...';
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/list_all_inventory`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status} — ${body.slice(0, 120)}`);
-      }
-      const rows = await res.json();
+      const rows = await sbRpcAll('list_all_inventory');
       if (!Array.isArray(rows) || !rows.length) {
         if (badge) { badge.textContent = 'Empty'; badge.className = 'scraper-badge'; }
         if (result && !silent) { result.textContent = 'Supabase returned 0 rows'; result.className = 'scraper-result err'; }
@@ -3001,21 +3130,8 @@
   async function syncSupabaseSold(opts = {}) {
     const { silent = false } = opts;
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/list_all_sold`, {
-        method: 'POST',
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`${res.status} — ${body.slice(0, 120)}`);
-      }
-      const rows = await res.json();
+      // Paged: the sold book is well past PostgREST's 1000-row ceiling.
+      const rows = await sbRpcAll('list_all_sold');
       if (!Array.isArray(rows)) return;
       const mapped = rows.map(mapSupabaseSoldRow);
       soldData = mapped;
@@ -3401,6 +3517,78 @@
   function scheduleDamageSync() {
     clearTimeout(_damageSyncTimer);
     _damageSyncTimer = setTimeout(syncDamagesToSupabase, 900);
+  }
+
+  // ── Send the CR's photos to the marketplace ─────────────────────────────
+  // The pictures go through carzinc.ai rather than straight to storage: this
+  // extension only holds the anon key, and anon cannot write to the bucket (by
+  // design — that key is public, it ships in here and in the web bundle). The
+  // endpoint holds the service key and does the writing.
+  //
+  // Photos are shrunk first. A CR carries 30-40 shots at full auction
+  // resolution; the marketplace shows them a few hundred pixels wide, and the
+  // originals would be ~8MB of upload per car for no visible gain.
+  const LISTING_API = 'https://www.carzinc.ai/api/listing-photos';
+  const PHOTO_CHUNK = 6;          // stays well under the 4.5MB function body cap
+  const PHOTO_MAX_EDGE = 1600;
+
+  function shrinkDataUrl(dataUrl, maxEdge) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      // Undecodable (HEIC and friends) — send what we have rather than nothing.
+      img.onerror = () => resolve((dataUrl.split(',')[1]) || '');
+      img.onload = () => {
+        let { width: w, height: h } = img;
+        if (w > maxEdge || h > maxEdge) {
+          const r = Math.min(maxEdge / w, maxEdge / h);
+          w = Math.round(w * r); h = Math.round(h * r);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1]);
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  async function sendPhotosToWebsite({ onProgress } = {}) {
+    const vin = ((vin6Input && vin6Input.value) || '').replace(/[^A-Za-z0-9]/g, '');
+    if (vin.length < 6) throw new Error('Enter the VIN first');
+    if (!exteriorPhotos.length) throw new Error('No photos loaded');
+
+    const { listingUploadSecret } = await chrome.storage.local.get(['listingUploadSecret']);
+    if (!listingUploadSecret) {
+      throw new Error('Set the website upload key in Settings first');
+    }
+
+    let sent = 0;
+    for (let i = 0; i < exteriorPhotos.length; i += PHOTO_CHUNK) {
+      const slice = exteriorPhotos.slice(i, i + PHOTO_CHUNK);
+      const photos = [];
+      for (const p of slice) {
+        const b64 = p.dataUrl ? await shrinkDataUrl(p.dataUrl, PHOTO_MAX_EDGE) : p.resizedBase64;
+        if (b64) photos.push(b64);
+      }
+      if (!photos.length) continue;
+
+      const res = await fetch(LISTING_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-listing-secret': listingUploadSecret },
+        // reset on the first chunk only — a re-scrape replaces the old set
+        // instead of piling a second copy on top of it.
+        body: JSON.stringify({ vin, startIndex: i, reset: i === 0, photos }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        throw new Error(`Upload failed (${res.status}) ${t.slice(0, 120)}`);
+      }
+      const out = await res.json();
+      sent = out.total || (sent + photos.length);
+      if (onProgress) onProgress(Math.min(i + slice.length, exteriorPhotos.length), exteriorPhotos.length);
+    }
+    return sent;
   }
 
   function addDamage({ panel, type, description, verbatim }) {

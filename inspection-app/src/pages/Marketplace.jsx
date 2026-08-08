@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
-import { Search, ChevronDown, Copy, Check } from 'lucide-react'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Search, ChevronDown, Copy, Check, ArrowLeft } from 'lucide-react'
 import { supabase } from '../services/supabase'
+import { useAuth } from '../context/useAuth'
 import { toInt } from '../services/utils'
 import HistoryButton from '../components/HistoryButton'
 import { saveCsv } from '../native/files'
 import { copyText } from '../native/clipboard'
+import { isNative } from '../native/platform'
 
 async function exportCsv(cars) {
   const cols = [
@@ -70,6 +72,27 @@ function countDamages(checklist) {
 }
 
 export default function Marketplace() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { profile } = useAuth()
+
+  // Staff get a real destination. A buyer is marketplace-only — the dashboard
+  // would just bounce him back here — so he gets plain browser-back instead.
+  //
+  // isNative() is the third case, and skipping it trapped people. This page hides
+  // the bottom nav, and the native shell has no URL bar and no browser back — so
+  // when a staff member cold-started the app straight onto /marketplace (profile
+  // still loading, so backTo null; nothing in history, so canGoBack false) the
+  // header rendered no control at all and the only way out was force-quitting.
+  // In the app there is always somewhere to send them: ProtectedRoute routes '/'
+  // onward to /listings for a buyer and /login for a signed-out visitor, so this
+  // recovers every case rather than dead-ending.
+  const backTo = profile && profile.account_type !== 'buyer' ? '/' : null
+  // 'default' is react-router's key for the entry the tab opened on: a shared
+  // link with nothing behind it. Anything else means we navigated here.
+  const canGoBack = location.key !== 'default'
+  const homeTo = backTo || (isNative() && !canGoBack ? '/' : null)
+
   const [cars, setCars] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -148,7 +171,24 @@ export default function Marketplace() {
   return (
     <div className="min-h-screen bg-slate-950 text-white safe-top">
       <div className="max-w-5xl mx-auto px-4 py-6">
-        <div className="text-center mb-6">
+        {/* The marketplace is public, so it carries no bottom nav — which left
+            anyone who walked in from the app with no way out. The exit depends
+            on who's looking: staff go to the dashboard, a buyer or a visitor who
+            clicked through goes back where they came from, and someone who
+            opened a shared link cold gets nothing, because there's nowhere to
+            send them. */}
+        <div className="relative text-center mb-6">
+          {homeTo ? (
+            <Link to={homeTo} aria-label="Back to dashboard"
+              className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1 p-2 -ml-2 rounded-lg text-slate-300 active:bg-slate-800 text-sm">
+              <ArrowLeft size={18} /> <span className="hidden sm:inline">Dashboard</span>
+            </Link>
+          ) : canGoBack ? (
+            <button onClick={() => navigate(-1)} aria-label="Back"
+              className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1 p-2 -ml-2 rounded-lg text-slate-300 active:bg-slate-800 text-sm">
+              <ArrowLeft size={18} /> <span className="hidden sm:inline">Back</span>
+            </button>
+          ) : null}
           <h1 className="text-2xl font-bold text-emerald-400">CARZ INC</h1>
           <p className="text-slate-400 text-sm">Wholesale Inventory</p>
         </div>

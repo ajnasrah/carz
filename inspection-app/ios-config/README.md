@@ -41,6 +41,65 @@ diff ios-config/AndroidManifest.xml.reference android/app/src/main/AndroidManife
   even with Messages installed. Also covers `tel`, `https`, Custom Tabs (used by
   `openWeb`), and the speech `RecognitionService`.
 
+## `project.pbxproj` — CODE_SIGN_IDENTITY must not stay on the template default
+
+A third generated file carries a hand edit, and this one has no reference copy
+here because a whole `.pbxproj` is too noisy to diff usefully. After any
+regeneration, check it:
+
+```sh
+grep -n CODE_SIGN_IDENTITY ios/App/App.xcodeproj/project.pbxproj
+```
+
+The Capacitor template writes `CODE_SIGN_IDENTITY = "iPhone Developer"` into
+**both** project-level configurations. `"iPhone Developer"` is the legacy name for
+a *development* certificate, and setting it explicitly overrides automatic
+signing — so `xcodebuild archive` goes looking for a development provisioning
+profile and dies with:
+
+```
+error: No profiles for 'com.carzinc.ims' were found: Xcode couldn't find any
+iOS App Development provisioning profiles matching 'com.carzinc.ims'.
+```
+
+The message is doubly misleading. It names the bundle ID, so it reads like the
+identifier is unregistered; and when the team has no devices registered it is
+preceded by "your team has no devices from which to generate a provisioning
+profile", which reads like you must plug in a phone. Neither is the cause —
+App Store distribution needs no devices at all. The build was simply asking for
+the wrong *kind* of profile.
+
+**The fix is to delete the key from both configurations, not to correct its
+value.** Setting `Apple Distribution` on Release looks right and fails
+differently:
+
+```
+error: App has conflicting provisioning settings. App is automatically signed
+for development, but a conflicting code signing identity Apple Distribution has
+been manually specified.
+```
+
+Under `CODE_SIGN_STYLE = Automatic`, Xcode picks the identity per action —
+development to build and run, distribution to archive and export. *Any* explicit
+`CODE_SIGN_IDENTITY` overrides that and conflicts. The project now has no
+`CODE_SIGN_IDENTITY` at either project level, which is correct.
+
+Note this does **not** on its own make `xcodebuild archive` work from the command
+line: automatic signing still resolves a development profile first, which needs
+at least one device registered to the team. See below.
+
+## The team needs one registered device, even for a TestFlight-only build
+
+`xcodebuild ... archive -allowProvisioningUpdates` fails with "your team has no
+devices from which to generate a provisioning profile" until some device is
+registered on the account — and it does **not** register a connected iPhone by
+itself. Connecting the phone is not enough; it has to be trusted and prepared,
+or its UDID added to the portal by hand.
+
+This is counterintuitive, because App Store distribution genuinely needs no
+devices. It's automatic signing insisting on resolving the development profile
+along the way.
+
 ## Why this project is on CocoaPods, not SPM
 
 **Don't "modernise" this to Swift Package Manager.** Capacitor 8 defaults to

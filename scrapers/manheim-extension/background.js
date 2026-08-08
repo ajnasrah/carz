@@ -65,12 +65,76 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+// Collapse the same damage reported twice.
+//
+// Several extractors run over one page — the condition-detail table, then the
+// body-text scan — and each pushes what it found. The same damage therefore
+// lands twice in different clothes: "Front Bumper (Prev Repair)" from one and
+// "Front Bumper - Prev Repair" from the other. A real 16-damage report went out
+// as 20 rows, and neither pass was complete on its own, so you can't just keep
+// one of them.
+//
+// Compared on panel + condition, kept in the FIRST form seen — the Manheim
+// charges table writes "Desc: Condition (Severity) — Repair" and that detail is
+// worth more than uniformity, so this never rewrites an entry, it only drops a
+// later restatement of one already present.
+function dedupeDamages(list) {
+  const out = [];
+  const seen = new Set();
+
+  const split = (s) => {
+    // Same precedence the SmartAuction importer uses: colon, then pipe, then a
+    // dash with a space after it. Parentheses are checked last so a severity in
+    // brackets doesn't get read as the condition.
+    let m = s.match(/^([^:]+):\s*(.+)$/) || s.match(/^(.+?)\s*\|\s*(.+)$/)
+         || s.match(/^(.+\S)\s*[-–—]\s+(.+)$/) || s.match(/^(.+?)\s*\((.+)\)\s*$/);
+    return m ? [m[1], m[2]] : [s, ''];
+  };
+  // Only the words matter: "Prev Repair (SubStd Dirt) — Repair" and
+  // "Prev Repair" are the same finding seen at two levels of detail.
+  const norm = (s) => String(s || '').toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')       // drop parenthesised severity
+    .replace(/\s*[—–]\s*.*$/, ' ')    // drop "— Suggested Repair"
+    .replace(/\[[^\]]*\]/g, ' ')      // drop "[$120.00]"
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+
+  for (const d of list || []) {
+    const text = typeof d === 'string' ? d
+      : (d && d.part && d.type) ? `${d.part} - ${d.type}` : null;
+    if (!text && typeof d !== 'object') continue;
+
+    let key;
+    if (typeof d === 'string') {
+      const [panel, cond] = split(d);
+      key = norm(panel) + '|' + norm(cond);
+    } else if (d && (d.part || d.type)) {
+      key = norm(d.part) + '|' + norm(d.type);
+    } else {
+      out.push(d);   // shape we don't recognise — never silently drop it
+      continue;
+    }
+    if (!key.replace('|', '').trim()) { out.push(d); continue; }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(d);
+  }
+  return out;
+}
+
 async function downloadAllData(data) {
   startKeepAlive();
 
   try {
     const vin = data.vin || 'UNKNOWN_VIN';
     const folderPrefix = vin + '/';
+
+    // Before anything is written — the summary and the JSON must agree, and
+    // both are generated from data.damages further down.
+    const beforeCount = (data.damages || []).length;
+    data.damages = dedupeDamages(data.damages);
+    if (beforeCount !== data.damages.length) {
+      console.log(`Damages: ${beforeCount} rows -> ${data.damages.length} unique`);
+    }
 
     console.log(`Creating folder: ${folderPrefix}`);
     console.log(`Images to download: ${data.images?.length || 0}`);
@@ -87,6 +151,18 @@ async function downloadAllData(data) {
 
     // Fire all downloads in parallel — chrome.downloads handles queuing
     const downloadPromises = (data.images || []).map((image, i) => {
+      // Belt and braces on top of the collector's isJunk(): anything that isn't
+      // an image is skipped here rather than queued. getFileExtension() falls
+      // back to '.jpg' for an unknown URL, so a page (cr.html) used to be
+      // recorded in the manifest as _image_N.jpg while Chrome wrote it to disk
+      // as .html — a reference that pointed at nothing.
+      const urlPath = String(image.url || '').split('?')[0].toLowerCase();
+      const urlExt = urlPath.includes('.') ? urlPath.split('.').pop() : '';
+      if (urlExt && !['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(urlExt)) {
+        skippedImages.push(`${image.url.substring(0, 100)} — not an image (.${urlExt})`);
+        return Promise.resolve();
+      }
+
       const ext = getFileExtension(image.url, '');
       const idx = i + 1;
       const filename = folderPrefix + vin + '_image_' + idx + ext;

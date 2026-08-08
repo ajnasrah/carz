@@ -4,13 +4,13 @@
 // see what the car looked like over time, not to edit the record.
 
 import { useState, useEffect } from 'react'
-import { X } from 'lucide-react'
 import { fetchVehiclePhotos, photoSourceLabel } from '../services/vehiclePhotos'
+import PhotoLightbox from './PhotoLightbox'
 
 export default function VehiclePhotoStrip({ vin6, stockNumber }) {
   const [photos, setPhotos] = useState([])
   const [loading, setLoading] = useState(true)
-  const [viewing, setViewing] = useState(null)
+  const [viewIdx, setViewIdx] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -31,8 +31,8 @@ export default function VehiclePhotoStrip({ vin6, stockNumber }) {
         Photos · {photos.length}
       </p>
       <div className="flex gap-1.5 overflow-x-auto pb-1">
-        {photos.map((photo) => (
-          <button key={`${photo.bucket}/${photo.path}`} onClick={() => setViewing(photo)}
+        {photos.map((photo, i) => (
+          <button key={`${photo.bucket}/${photo.path}`} onClick={() => setViewIdx(i)}
             className="relative shrink-0 w-24 h-24 rounded-lg overflow-hidden bg-slate-900 border border-slate-700">
             <img src={photo.url} alt="" loading="lazy" className="w-full h-full object-cover" />
             <span className="absolute bottom-0 inset-x-0 bg-black/70 text-[8px] text-slate-200 py-0.5 px-1 truncate">
@@ -42,20 +42,10 @@ export default function VehiclePhotoStrip({ vin6, stockNumber }) {
         ))}
       </div>
 
-      {viewing && (
-        <div className="fixed inset-0 z-[60] bg-black/90 flex flex-col safe-inset"
-          onClick={() => setViewing(null)}>
-          <div className="flex justify-between items-center p-4" onClick={(e) => e.stopPropagation()}>
-            <span className="text-[11px] text-slate-400">
-              {photoSourceLabel(viewing)}
-              {viewing.takenAt ? ` · ${new Date(viewing.takenAt).toLocaleString()}` : ''}
-            </span>
-            <button onClick={() => setViewing(null)} className="text-white"><X size={22} /></button>
-          </div>
-          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
-            <img src={viewing.url} alt="" className="max-w-full max-h-full object-contain" />
-          </div>
-        </div>
+      {/* Read-only here — no onDelete, so the viewer offers no delete button. */}
+      {viewIdx != null && (
+        <PhotoLightbox photos={photos} index={viewIdx} onIndex={setViewIdx}
+          onClose={() => setViewIdx(null)} />
       )}
     </div>
   )

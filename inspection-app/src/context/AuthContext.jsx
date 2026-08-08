@@ -83,7 +83,7 @@ export function AuthProvider({ children }) {
       }
 
       if (data) {
-        setProfile(data)
+        setProfile(await claimPendingInvites(data))
         return
       }
 
@@ -106,10 +106,41 @@ export function AuthProvider({ children }) {
         console.error('Profile provision failed:', insertError.message)
         setProfile(null)
       } else {
-        setProfile(inserted)
+        setProfile(await claimPendingInvites(inserted))
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Someone an admin added by phone number is already approved — they just
+  // hadn't logged in yet. Their first sign-in claims that invite, so they land on
+  // the dashboard (or their cars) instead of the Setup screen and the pending
+  // queue. That queue is a dead end for a crew onboarding off a download link:
+  // nothing tells them when they're approved and nothing brings them back.
+  //
+  // Both claims are attempted, because they grant different things and a body
+  // shop tech may also be on the staff roster: claim_staff_invite reads
+  // allowed_users (the Admin panel's "Add User" form) and settles name, role and
+  // approval; claim_body_shop_tech_invite adds the body_shop_tech role.
+  //
+  // Only ever asked for an account that isn't finished: both RPCs match the phone
+  // on the caller's own auth record, so a settled user has nothing to claim and
+  // the round trip would be dead weight on every load.
+  async function claimPendingInvites(row) {
+    if (!row || (row.setup_complete && row.approval_status === 'approved')) return row
+    try {
+      // Sequential, not Promise.all — both UPDATE the same profiles row, and
+      // running them concurrently makes the second read a row the first has
+      // already changed, so whichever lands last wins on the shared columns.
+      const staff = await supabase.rpc('claim_staff_invite')
+      const tech = await supabase.rpc('claim_body_shop_tech_invite')
+      if (!staff.data && !tech.data) return row
+      const { data: fresh } = await supabase
+        .from('profiles').select('*').eq('id', row.id).maybeSingle()
+      return fresh || row
+    } catch {
+      return row   // never block a sign-in on this
     }
   }
 

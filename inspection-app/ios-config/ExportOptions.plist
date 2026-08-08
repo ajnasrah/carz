@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Export options for a TestFlight / App Store build.
+
+      xcodebuild -exportArchive \
+        -archivePath /tmp/carzbuild/CarzIMS.xcarchive \
+        -exportPath  /tmp/carzbuild/export \
+        -exportOptionsPlist ios-config/ExportOptions.plist \
+        -allowProvisioningUpdates
+
+  This step is not a formality — it is where the build becomes uploadable.
+  `xcodebuild archive` under automatic signing produces a DEVELOPMENT-signed app
+  (Apple Development identity, "iOS Team Provisioning Profile: *",
+  get-task-allow=true). App Store Connect rejects that. The export re-signs the
+  same binary with the Apple Distribution certificate and an App Store profile,
+  and drops get-task-allow.
+
+  Unlike ios/ and android/, this file is ours and Capacitor never rewrites it.
+-->
+<plist version="1.0">
+<dict>
+  <!-- Xcode 15+ name for what used to be `app-store`. Both TestFlight and a
+       public release use this same method; TestFlight is a distribution channel
+       on the uploaded build, not a different kind of build. -->
+  <key>method</key>
+  <string>app-store-connect</string>
+
+  <key>teamID</key>
+  <string>AA77W5X4H8</string>
+
+  <!-- Let Xcode create/renew the distribution certificate and App Store profile.
+       Requires -allowProvisioningUpdates on the command line as well. -->
+  <key>signingStyle</key>
+  <string>automatic</string>
+
+  <!-- Upload dSYMs so TestFlight crash reports come back symbolicated. Without
+       them a crash from the lot is an unreadable stack of hex addresses. -->
+  <key>uploadSymbols</key>
+  <true/>
+
+  <!-- Leave the .ipa on disk instead of uploading as a side effect of export.
+       Uploading is a separate, deliberate command. -->
+  <key>destination</key>
+  <string>export</string>
+</dict>
+</plist>

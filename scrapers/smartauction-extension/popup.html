@@ -16,11 +16,31 @@
     </div>
     <div id="status" class="status">Loading...</div>
 
-    <!-- Mode toggle -->
+    <!-- Mode toggle. Settings lives here rather than only inside Wizard step 1,
+         where it was invisible from the Queue view the popup opens on. -->
     <div class="mode-toggle">
       <button id="modeQueue" class="mode-btn active">Queue</button>
       <button id="modeWizard" class="mode-btn">Wizard</button>
       <button id="modeInfo" class="mode-btn">Info</button>
+      <button id="openSettingsTopBtn" class="mode-btn" title="Settings" style="margin-left:auto;">⚙</button>
+    </div>
+
+    <!-- Settings — top level so it's reachable from any mode. -->
+    <div id="settingsPanelTop" style="display:none;margin:6px 0;padding:10px;background:#f9f9f9;border:1px solid #ddd;border-radius:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <h2 style="margin:0;font-size:14px;">Settings</h2>
+        <button id="closeSettingsTopBtn" class="btn btn-small btn-secondary" style="margin:0;padding:2px 8px;">Close</button>
+      </div>
+      <label style="display:block;font-size:11px;color:#555;margin-bottom:3px;">Website photo upload key</label>
+      <div style="display:flex;gap:6px;">
+        <input type="password" id="listingSecretInput" placeholder="LISTING_UPLOAD_SECRET"
+          style="flex:1;padding:4px 6px;border:1px solid #ccc;border-radius:3px;font-size:11px;" />
+        <button id="saveListingSecretBtn" class="btn btn-small" style="margin:0;padding:3px 10px;font-size:11px;">Save</button>
+      </div>
+      <div id="listingSecretStatus" class="field-status" style="font-size:10px;margin-top:3px;"></div>
+      <div style="font-size:10px;color:#777;margin-top:4px;">
+        Lets a scraped CR's photos reach the marketplace. Must match LISTING_UPLOAD_SECRET on the website.
+      </div>
     </div>
 
     <!-- Dashboard -->
@@ -429,6 +449,9 @@
         <h2 style="margin:0;font-size:14px;">Settings</h2>
         <button id="closeSettingsBtn" class="btn btn-small btn-secondary" style="margin:0;padding:2px 8px;">Close</button>
       </div>
+
+      <!-- The website photo upload key lives in the top-level settings panel
+           (next to the mode buttons) so it's reachable from any mode. -->
     </div>
   </div><!-- /wizardSection -->
   </div><!-- /container -->

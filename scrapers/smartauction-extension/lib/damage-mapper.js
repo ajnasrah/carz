@@ -476,9 +476,31 @@ var DamageMapper = {
   _mapPanel(panel, panelMap) {
     if (!panel) return '';
     const key = panel.toLowerCase().trim();
-    
+
     // Exact match first
     if (panelMap[key]) return panelMap[key];
+
+    // Already an SA panel → hand it straight back.
+    //
+    // This map only knows synonym → canonical ("rr wheel" → "Wheel - Right
+    // Rear"). Given a value that is ALREADY canonical it found no key, fell
+    // through to the fuzzy scorer, and picked whatever shared the most words —
+    // which turned a curbed right rear wheel into "Quarter Panel - Right",
+    // because both say "right" and "rear". The importer resolves panels before
+    // calling here, so canonical input is the normal case, not the exception.
+    // Keyed by the map itself — PANEL_MAP (Vehicle Entry) and VIW_PANEL_MAP
+    // (inspection worksheet) have different canonical sets, and one shared
+    // cache would answer for whichever map called first.
+    if (!this._canonicalCache) this._canonicalCache = new WeakMap();
+    let canon = this._canonicalCache.get(panelMap);
+    if (!canon) {
+      canon = new Map();
+      for (const v of Object.values(panelMap)) {
+        if (typeof v === 'string') canon.set(v.toLowerCase(), v);
+      }
+      this._canonicalCache.set(panelMap, canon);
+    }
+    if (canon.has(key)) return canon.get(key);
     
     // Special handling for quarter panels to avoid left/right confusion
     if (key.includes('quarter') || key.includes('qtr')) {

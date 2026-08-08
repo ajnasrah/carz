@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CAPACITOR_DEBUG</key>
-	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
@@ -44,6 +42,14 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<!-- Export compliance. Without this key, App Store Connect blocks EVERY build
+	     behind a manual "does your app use encryption?" questionnaire before it can
+	     go to a tester — answered by hand, on every upload, or the build just sits
+	     there. The app's only cryptography is HTTPS/TLS to Supabase and Vercel via
+	     the OS, which is exactly the exempt case, so the answer never varies.
+	     Set this to true only if we ever ship our own crypto. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

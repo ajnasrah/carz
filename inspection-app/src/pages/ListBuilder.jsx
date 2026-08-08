@@ -107,7 +107,7 @@ export default function ListBuilder() {
 
   const counts = useMemo(() => {
     if (!result) return null
-    const c = { TARGET: 0, WATCH: 0, PASS: 0 }
+    const c = { TARGET: 0, WATCH: 0, PASS: 0, 'NO DATA': 0 }
     for (const r of result.scored) c[r.verdict]++
     return c
   }, [result])
@@ -157,7 +157,11 @@ export default function ListBuilder() {
   const visible = useMemo(() => {
     if (!result) return []
     if (filter === 'ALL') return result.scored
-    if (filter === 'ACTION') return result.scored.filter((c) => c.verdict !== 'PASS')
+    // TARGET and WATCH only. `verdict !== 'PASS'` also swept in NO DATA — cars
+    // with too few exact comps to judge — which then showed whatever their loose
+    // context cohort averaged, so the default view was full of $171 and $0 rows
+    // that no verdict rested on.
+    if (filter === 'ACTION') return result.scored.filter((c) => c.verdict === 'TARGET' || c.verdict === 'WATCH')
     return result.scored.filter((c) => c.verdict === filter)
   }, [result, filter])
 
@@ -298,6 +302,9 @@ export default function ListBuilder() {
                 ['ACTION', `Targets + Watch (${counts.TARGET + counts.WATCH})`],
                 ['TARGET', `Target (${counts.TARGET})`],
                 ['WATCH', `Watch (${counts.WATCH})`],
+                // Its own band rather than riding along in ACTION: too few exact
+                // comps to judge is not the same as worth a look.
+                ['NO DATA', `No data (${counts['NO DATA']})`],
                 ['ALL', `All (${result.scored.length})`],
               ].map(([key, label]) => (
                 <button key={key} onClick={() => setFilter(key)}
@@ -345,8 +352,23 @@ export default function ListBuilder() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-900 text-slate-400 text-xs uppercase tracking-wide">
                   <tr>
-                    {['Run', 'Lane', 'Vehicle', 'Trim', 'Miles', 'CR', 'Avg Profit', 'Median', 'Days', 'Hit', 'n', 'Tier', 'Conf', 'MMR', 'VIN', '']
-                      .map((h, i) => <th key={h || `open-${i}`} className="text-left font-medium px-2.5 py-2 whitespace-nowrap">{h}</th>)}
+                    {/* Profit / Median / Days / Hit / n are the EXACT cohort —
+                        same year, ±20k mi — because that is the only cohort the
+                        verdict is allowed to rest on. The loose tiers sit in one
+                        dimmed Context column so they can't be mistaken for it. */}
+                    {[
+                      ['Run'], ['Lane'], ['Vehicle'], ['Trim'], ['Miles'], ['CR'],
+                      ['Avg Profit', 'average net profit on exact comps'],
+                      ['Median', 'median net profit on exact comps'],
+                      ['Days', 'average days on lot for exact comps'],
+                      ['Hit', '% of exact comps that cleared $1k'],
+                      ['n', 'exact comps: same year, ±20k mi'],
+                      ['Context', 'looser cohort — background only, never sets the verdict'],
+                      ['Conf'], ['MMR'], ['VIN'], [''],
+                    ].map(([h, tip], i) => (
+                      <th key={h || `open-${i}`} title={tip}
+                        className="text-left font-medium px-2.5 py-2 whitespace-nowrap">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -363,14 +385,17 @@ export default function ListBuilder() {
                       <td className="px-2.5 py-1.5 text-slate-400 max-w-[160px] truncate">{c.style || '—'}</td>
                       <td className="px-2.5 py-1.5 tabular-nums">{num(c.odo)}</td>
                       <td className="px-2.5 py-1.5 text-slate-400">{c.grade || '—'}</td>
-                      <td className={`px-2.5 py-1.5 tabular-nums font-semibold ${c.meanProfit > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
-                        {money(c.meanProfit)}
+                      <td className={`px-2.5 py-1.5 tabular-nums font-semibold ${c.exactProfit > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {money(c.exactProfit)}
                       </td>
-                      <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{money(c.medProfit)}</td>
-                      <td className="px-2.5 py-1.5 tabular-nums">{c.meanDays == null ? '—' : Math.round(c.meanDays)}</td>
-                      <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{c.hitRate == null ? '—' : `${Math.round(c.hitRate)}%`}</td>
-                      <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{c.n || '—'}</td>
-                      <td className="px-2.5 py-1.5 text-slate-400 text-xs">{c.tier || '—'}</td>
+                      <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{money(c.exactMedProfit)}</td>
+                      <td className="px-2.5 py-1.5 tabular-nums">{c.exactDays == null ? '—' : Math.round(c.exactDays)}</td>
+                      <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{c.exactHit == null ? '—' : `${Math.round(c.exactHit)}%`}</td>
+                      <td className="px-2.5 py-1.5 tabular-nums text-slate-400">{c.exactN || '—'}</td>
+                      <td className="px-2.5 py-1.5 text-slate-500 text-xs whitespace-nowrap"
+                        title={c.tier ? `${c.n} cars in the ${c.tier} cohort — context only` : ''}>
+                        {c.meanProfit == null ? '—' : `${money(c.meanProfit)} · ${c.tier} (${c.n})`}
+                      </td>
                       <td className={`px-2.5 py-1.5 text-xs font-medium ${CONF[c.confidence]}`}>
                         {c.confidence === 'NONE' ? '—' : c.confidence}
                       </td>

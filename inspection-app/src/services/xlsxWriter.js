@@ -48,7 +48,10 @@ const XLSXWriter = (() => {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      // strip control chars Excel rejects
+      // Strip the control chars Excel rejects — a sheet containing one opens as
+      // "unreadable content" and Excel offers to repair it. Matching control
+      // characters is the whole point here, so the rule is off by intent.
+      // eslint-disable-next-line no-control-regex
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
   }
 

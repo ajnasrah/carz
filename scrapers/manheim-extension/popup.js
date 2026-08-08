@@ -885,6 +885,39 @@ async function scrapePage() {
       console.log('scrapePage: TIRES AND WHEELS section not found in body text');
     }
 
+    // Method 1b: CR Simplified layout. The heading is just "TIRES" and the
+    // corners are abbreviated — LF / RF / LR / RR / SPARE — each followed by
+    // brand, size, wheel type and tread ('7/32"'). Method 1 only knows Manheim's
+    // wording ("TIRES AND WHEELS" + "Left Front"), so on a CR page it matched
+    // nothing and every scrape came back with tires: [] even though the report
+    // had a full set of tread depths on it.
+    if (tireInfo.length === 0) {
+      const CORNERS = {
+        LF: 'Left Front', RF: 'Right Front', LR: 'Left Rear',
+        RR: 'Right Rear', SPARE: 'Spare',
+      };
+      const headingIdx = bodyText.search(/^[ \t]*TIRES[ \t]*$/m);
+      if (headingIdx !== -1) {
+        const lines = bodyText.substring(headingIdx, headingIdx + 1500)
+          .split('\n').map(l => l.trim()).filter(Boolean);
+        for (let i = 0; i < lines.length; i++) {
+          const corner = CORNERS[lines[i].toUpperCase()];
+          if (!corner) continue;
+          // Everything up to the next corner label belongs to this one.
+          const fields = [];
+          for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+            if (CORNERS[lines[j].toUpperCase()]) break;
+            fields.push(lines[j]);
+          }
+          // Placeholders on an unrecorded spare read '--size--' / '-'.
+          const tread = fields.find((f) => /^\d+\/\d+"?$/.test(f));
+          const size = fields.find((f) => /^[PLT]{0,2}\d{3}\/\d{2}[A-Z]*R?\d{2}/i.test(f));
+          tireInfo.push(`${corner}: ${tread || '--'}${size ? ` (${size})` : ''}`);
+        }
+        console.log('scrapePage: CR Simplified tire grid — found', tireInfo.length, 'tires');
+      }
+    }
+
     // Only run additional methods if we didn't find enough tires
     if (tireInfo.length < 4) {
       console.log('scrapePage: Only found', tireInfo.length, 'tires, trying additional methods...');
@@ -1428,6 +1461,19 @@ async function scrapePage() {
     function isJunk(url) {
       if (!url || url.startsWith('data:') || url.startsWith('blob:')) return true;
       const lower = url.toLowerCase();
+
+      // Not an image at all. The CR's own page (…/inspection/<id>/cr.html) was
+      // being queued as a photo: Chrome saved it as .html while the manifest
+      // recorded it as _image_N.jpg, leaving a broken reference in data.json and
+      // a web page sitting in the middle of the photo set.
+      const path = lower.split('?')[0].split('#')[0];
+      const ext = path.includes('.') ? path.split('.').pop() : '';
+      if (ext && !['jpg', 'jpeg', 'png', 'webp', 'bmp'].includes(ext)) return true;
+
+      // Site chrome lives under /static/ — that's where CRSimplified_large.png
+      // (the report's own letterhead) comes from, and it carries no junk keyword.
+      if (path.includes('/static/')) return true;
+
       const junk = [
         'icon', 'logo', 'sprite', 'avatar', 'badge', 'favicon',
         'tracking', 'pixel', 'analytics', 'beacon',

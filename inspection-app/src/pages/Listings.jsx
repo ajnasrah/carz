@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, ExternalLink, MapPin, Gauge } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Search, ExternalLink, MapPin, Gauge, ArrowLeft } from 'lucide-react'
 import { fetchActiveCars } from '../services/buyerMatchData'
+import { useAuth } from '../context/useAuth'
 import HistoryButton from '../components/HistoryButton'
 
 // Public, no-auth marketplace of current SmartAuction active inventory (sa_active_cars).
@@ -9,6 +11,8 @@ const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 const miles = (n) => (n == null ? '—' : `${Math.round(n).toLocaleString()} mi`)
 
 export default function Listings() {
+  const { profile } = useAuth()
+  const isStaff = !!profile && profile.account_type !== 'buyer'
   const [cars, setCars] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -35,6 +39,17 @@ export default function Listings() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-200 safe-top">
       <header className="bg-slate-950 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
+        {/* This page is public, so BottomNav hides here — and inside the native
+            shell there's no URL bar and no browser back either, which left staff
+            who tapped through with no way off the screen but force-quitting.
+            Only shown for staff: a buyer lives on this page, and '/' would just
+            bounce him straight back to it via ProtectedRoute. */}
+        {isStaff && (
+          <Link to="/" aria-label="Back to dashboard"
+            className="inline-flex items-center gap-1 mb-2 -ml-2 p-2 rounded-lg text-slate-300 active:bg-slate-800 text-sm">
+            <ArrowLeft size={18} /> Dashboard
+          </Link>
+        )}
         <h1 className="text-xl font-bold text-emerald-400">CARZ INC — Available Now</h1>
         <p className="text-xs text-slate-400">{cars.length} vehicles on SmartAuction</p>
       </header>

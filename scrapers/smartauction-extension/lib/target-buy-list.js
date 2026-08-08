@@ -1093,8 +1093,14 @@
 
     html += `<div style="max-height:260px;overflow-y:auto;font-size:10px;"><table style="width:100%;border-collapse:collapse;">
       <tr style="background:#f0f0f0;font-weight:700;position:sticky;top:0;">
-      <td>Run</td><td>VIN</td><td>Vehicle</td><td>Miles</td><td>Avg $</td><td>Days</td><td>n</td><td></td></tr>`;
-    for (const c of scored.filter((x) => x.verdict !== 'PASS')) {
+      <td>Run</td><td>VIN</td><td>Vehicle</td><td>Miles</td><td title="average net profit on exact comps">Avg $</td>
+      <td title="average days on lot for exact comps">Days</td>
+      <td title="exact comps: same year, ±20k mi">n</td><td></td></tr>`;
+    // TARGET and WATCH only, which is what the footer has always claimed.
+    // `verdict !== 'PASS'` also let NO DATA cars in, and those rendered their
+    // loose context cohort — or "$0 / 0 / 0" from Math.round(null) when they had
+    // no cohort at all — as if it were evidence.
+    for (const c of scored.filter((x) => x.verdict === 'TARGET' || x.verdict === 'WATCH')) {
       const bg = c.verdict === 'TARGET' ? '#e8f5e9' : '#fffde7';
       const vin = esc(c.vin || '');
       html += `<tr style="border-top:1px solid #e0e0e0;background:${bg};" title="${esc(c.why)}">
@@ -1103,9 +1109,9 @@
           style="font-family:monospace;cursor:pointer;border-bottom:1px dotted #999;">${vin.slice(-8)}</span>` : ''}</td>
         <td>${esc([c.year, c.make, c.model].filter(Boolean).join(' '))}</td>
         <td>${c.odo != null ? c.odo.toLocaleString() : ''}</td>
-        <td style="font-weight:700;">$${Math.round(c.meanProfit).toLocaleString()}</td>
-        <td>${Math.round(c.meanDays)}</td>
-        <td>${c.n}</td>
+        <td style="font-weight:700;">${c.exactProfit == null ? '—' : `$${Math.round(c.exactProfit).toLocaleString()}`}</td>
+        <td>${c.exactDays == null ? '—' : Math.round(c.exactDays)}</td>
+        <td>${c.exactN || '—'}</td>
         <td>${vin ? `<span class="tbl-open" data-vin="${vin}" title="open this listing from the page"
           style="cursor:pointer;color:#e65100;font-weight:700;">↗</span>` : ''}</td></tr>`;
     }

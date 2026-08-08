@@ -76,7 +76,11 @@ export function parseCSV(text) {
   }
   if (f.length || row.length) { pushF(); pushR() }
   // ADESA exports lead with a UTF-8 BOM, which would corrupt the first header.
-  const header = (rows.shift() || []).map((h) => h.replace(/^﻿/, '').trim())
+  // Written as the \uFEFF escape, not the literal character: a bare BOM in
+  // source is invisible, and any editor or tool that strips it silently turns
+  // this into `/^/` — a regex that matches everything and replaces nothing, so
+  // the first column header keeps its BOM and every lookup on it misses.
+  const header = (rows.shift() || []).map((h) => h.replace(/^\uFEFF/, '').trim())
   return rows.filter((r) => r.length > 1).map((r) => Object.fromEntries(header.map((h, j) => [h, r[j]])))
 }
 
