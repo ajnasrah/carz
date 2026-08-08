@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X } from 'lucide-react'
 import {
   BarChart, Bar, Line, ComposedChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend,
@@ -12,6 +12,33 @@ import {
   fetchSoldWithBuyers, groupByBuyer, groupByField, dailyProfitByBuyer,
   fmt, profitColor, PERIODS,
 } from '../services/soldReports'
+import XLSXWriter from '../services/xlsxWriter'
+
+// How many cars the By Profit list paints before you ask for more.
+const CARS_PAGE = 150
+
+// One row per car, in the order you'd read it: what it was, how long it sat,
+// who moved it, what it cost, what it made. Buyer/vendor/customer come off the
+// raw `sold` table (joined by stock number) because sold_clean doesn't carry
+// them — so a car with no matching row still exports, just without the names.
+//
+// [header, value(cleanRow, soldRow), column width, kind]
+const EXPORT_COLUMNS = [
+  ['Stock #',       (r) => r.stock_number,                  12, 'text'],
+  ['Sale Date',     (r) => r.sale_date,                     12, 'text'],
+  ['Year',          (r) => r.year ?? r.vehicle_year,         7, 'year'],
+  ['Make',          (r) => r.make ?? r.vehicle_make,        14, 'text'],
+  ['Model',         (r) => r.model ?? r.vehicle_model,      18, 'text'],
+  ['Mileage',       (r) => r.mileage,                       11, 'int'],
+  ['Days on Lot',   (r) => r.days_on_lot,                   11, 'int'],
+  ['Buyer',         (r, b) => b?.buyer,                     16, 'text'],
+  ['Vendor',        (r, b) => b?.vendor,                    16, 'text'],
+  ['Customer',      (r, b) => b?.customer,                  20, 'text'],
+  ['Original Cost', (r) => r.original_cost,                 13, 'money'],
+  ['Total Cost',    (r) => r.total_cost,                    13, 'money'],
+  ['Sales Price',   (r) => r.sales_price,                   13, 'money'],
+  ['Profit',        (r) => r.profit,                        12, 'money'],
+]
 
 export default function SoldReports({ embedded = false }) {
   const navigate = useNavigate()
@@ -24,6 +51,9 @@ export default function SoldReports({ embedded = false }) {
   const [makeSort, setMakeSort] = useState('avgProfit')
   const [modelSort, setModelSort] = useState('avgProfit')
   const [expandedModel, setExpandedModel] = useState(null)
+  // The car list renders capped — "All" is thousands of rows and painting them
+  // all locks the phone up. Lift it on demand.
+  const [carsShown, setCarsShown] = useState(CARS_PAGE)
   const [lastRefreshed, setLastRefreshed] = useState(null)
   
   // Filter states
@@ -120,6 +150,60 @@ export default function SoldReports({ embedded = false }) {
     
     return result
   }, [allRows, periodKey, filterMake, filterModel, filterBuyer, filterVendor, buyerRows])
+
+  // buyer / vendor / customer live on the raw `sold` table, keyed by stock
+  // number. Both the car list and the export join through this.
+  const byStock = useMemo(
+    () => new Map(buyerRows.map((b) => [b.stock_number, b])),
+    [buyerRows],
+  )
+
+  // Every car the filters are showing, worst deal first. A car with no profit
+  // recorded sorts to the BOTTOM rather than the top — unknown is not the same
+  // as lost money, and putting it first would bury the real losses.
+  const byProfit = useMemo(() => {
+    const rank = (r) => (Number.isFinite(r.profit) ? r.profit : Infinity)
+    return [...filtered].sort((a, b) => rank(a) - rank(b))
+  }, [filtered])
+
+  // Export exactly what the page is showing — the same period and the same
+  // make/model/buyer/vendor filters, one row per car. Deliberately NOT the
+  // whole sold book: if you've narrowed to Toyota MTD, that's what lands in
+  // the file, and the filename says so.
+  function exportSold() {
+    if (!filtered.length) return
+    const S = XLSXWriter.S
+
+    const rows = [EXPORT_COLUMNS.map(([h]) => ({ v: h, s: S.HEADER }))]
+    for (const r of filtered) {
+      const b = byStock.get(r.stock_number)
+      rows.push(EXPORT_COLUMNS.map(([, get, , kind]) => {
+        const v = get(r, b)
+        if (v == null || v === '') return ''
+        if (kind === 'text') return { v: String(v), s: S.TEXT }
+        const n = Number(v)
+        if (!Number.isFinite(n)) return ''
+        if (kind === 'year') return n                          // plain digits, no grouping
+        return { v: Math.round(n), s: kind === 'money' ? S.MONEY : S.NUMBER }
+      }))
+    }
+
+    const blob = XLSXWriter.build({
+      sheetName: 'Sold',
+      rows,
+      widths: EXPORT_COLUMNS.map(([, , w]) => w),
+    })
+    // Name it after what's actually in it, so two exports from different
+    // filters don't overwrite each other in Downloads.
+    const parts = ['sold', periodKey, filterMake, filterModel, filterBuyer, filterVendor]
+      .filter(Boolean)
+      .map((s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
+    // download() writes a file and opens the share sheet on native, so it can
+    // reject (no disk, share extension cancelled). Swallow rather than leave an
+    // unhandled rejection.
+    XLSXWriter.download(blob, `${parts.join('-')}-${new Date().toISOString().slice(0, 10)}.xlsx`)
+      .catch((err) => console.error('Sold export failed', err))
+  }
   const stats = useMemo(() => summarize(filtered), [filtered])
   const monthly = useMemo(() => groupByMonth(filtered), [filtered])
   const daysBands = useMemo(() => groupByDaysOnLot(filtered), [filtered])
@@ -225,19 +309,36 @@ export default function SoldReports({ embedded = false }) {
         <div className="flex items-center gap-2 mb-3">
           <Filter className="text-emerald-400" size={16} />
           <span className="text-xs font-semibold text-slate-300">Filters</span>
-          {(filterMake || filterModel || filterBuyer || filterVendor) && (
+          <div className="ml-auto flex items-center gap-2">
+            {(filterMake || filterModel || filterBuyer || filterVendor) && (
+              <button
+                onClick={() => {
+                  setFilterMake('')
+                  setFilterModel('')
+                  setFilterBuyer('')
+                  setFilterVendor('')
+                }}
+                className="px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+              >
+                Clear All
+              </button>
+            )}
+            {/* Sits with the filters because that's exactly what it obeys —
+                the count is the promise of what lands in the file. Disabled at
+                zero rather than handing over an empty spreadsheet. */}
             <button
-              onClick={() => {
-                setFilterMake('')
-                setFilterModel('')
-                setFilterBuyer('')
-                setFilterVendor('')
-              }}
-              className="ml-auto px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+              onClick={exportSold}
+              disabled={!filtered.length}
+              title={filtered.length ? `Export these ${filtered.length} cars to Excel` : 'Nothing to export'}
+              className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold transition-colors ${
+                filtered.length
+                  ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
+                  : 'bg-slate-700/50 text-slate-600'
+              }`}
             >
-              Clear All
+              <Download size={13} /> Export {filtered.length}
             </button>
-          )}
+          </div>
         </div>
         
         <div className="grid grid-cols-2 gap-2">
@@ -336,6 +437,7 @@ export default function SoldReports({ embedded = false }) {
       <div className="flex gap-1.5 mb-4 overflow-x-auto -mx-4 px-4">
         {[
           { key: 'summary',   label: '📊 Summary' },
+          { key: 'cars',      label: '📉 By Profit' },
           { key: 'buyers',    label: '👥 Buyers' },
           { key: 'vendors',   label: '🏷️ Vendors' },
           { key: 'customers', label: '🤝 Customers' },
@@ -364,6 +466,67 @@ export default function SoldReports({ embedded = false }) {
           <KPICard label="Avg Days on Lot" value={fmt.days(stats.avgDays)} span={2} />
         </div>
       )}
+
+      {/* === BY PROFIT TAB === */}
+      {/* Every car the filters are showing, worst deal first. The point is the
+          top of this list: the cars that lost money, by name, so they can be
+          looked at one by one. Same rows the Export button writes. */}
+      {tab === 'cars' && (
+      <Section
+        title="Every Car · Worst First"
+        subtitle={`${byProfit.length} ${byProfit.length === 1 ? 'car' : 'cars'} in this view · least profit at the top`}
+        icon={<TrendingDown size={14} className="text-red-400" />}
+      >
+        {byProfit.length === 0 ? (
+          <p className="text-xs text-slate-500 py-3 text-center">Nothing sold in this period.</p>
+        ) : (<>
+          <div className="space-y-1">
+            {byProfit.slice(0, carsShown).map((r, i) => {
+              const b = byStock.get(r.stock_number)
+              const profit = Number.isFinite(r.profit) ? r.profit : null
+              return (
+                <div key={`${r.stock_number}-${i}`}
+                  className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-slate-900/60 border border-slate-800">
+                  <span className="text-slate-600 font-bold text-[10px] w-6 shrink-0">#{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-bold text-xs truncate">
+                      {[r.year ?? r.vehicle_year, r.make ?? r.vehicle_make, r.model ?? r.vehicle_model]
+                        .filter(Boolean).join(' ') || r.stock_number}
+                    </p>
+                    <p className="text-[10px] text-slate-500 truncate">
+                      #{r.stock_number}
+                      {r.days_on_lot != null && ` · ${r.days_on_lot}d on lot`}
+                      {b?.buyer && ` · ${b.buyer}`}
+                      {r.sale_date && ` · ${r.sale_date}`}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {/* No profit recorded is its own state — not a zero, and not
+                        a loss. Saying so beats showing $0 and being believed. */}
+                    <p className={`text-xs font-bold ${profit == null ? 'text-slate-600' : profitColor(profit)}`}>
+                      {profit == null ? 'no profit data' : fmt.money(profit)}
+                    </p>
+                    {r.sales_price != null && (
+                      <p className="text-[10px] text-slate-500">sold {fmt.money(r.sales_price)}</p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          {byProfit.length > carsShown && (
+            <button
+              onClick={() => setCarsShown((n) => n + CARS_PAGE)}
+              className="w-full mt-2 py-2 rounded-lg bg-slate-800 text-slate-300 text-xs font-semibold active:bg-slate-700"
+            >
+              Show {Math.min(CARS_PAGE, byProfit.length - carsShown)} more
+              {' '}· {byProfit.length - carsShown} left
+            </button>
+          )}
+        </>)}
+      </Section>
+      )}
+      {/* === END BY PROFIT TAB === */}
 
       {/* === SUMMARY TAB === */}
       {tab === 'summary' && (<>
