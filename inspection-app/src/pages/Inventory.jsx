@@ -9,6 +9,8 @@ import {
   Pencil,
   X,
   Copy,
+  Check,
+  ClipboardList,
   History,
   Upload,
 } from "lucide-react";
@@ -57,27 +59,60 @@ function canonicalLoc(physLoc) {
   return physLoc === "jorge" ? "body_shop" : physLoc;
 }
 
+// How many cars each location contributes to the copied report. Past ~15 the
+// paste is unreadable on a phone and nobody chases car #16 anyway — the block
+// still says how many were left off.
+const REPORT_LIMIT = 15;
+
+// Friendly ?filter= values other pages link in with (Dashboard tiles, the
+// aging pages). Everything else in the URL is an internal filter value written
+// by the page itself.
+const FILTER_ALIASES = {
+  stuck21: "__stuck21__",
+  never: "__never__",
+  stale: "__stale__",
+  needs_dispatch: "__needs_dispatch__",
+  front_lot_aging: "__front_lot_aging__",
+};
+const FILTER_SLUGS = Object.fromEntries(
+  Object.entries(FILTER_ALIASES).map(([slug, internal]) => [internal, slug]),
+);
+
+const fmtShortDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString("en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        year: "2-digit",
+      });
+};
+
 export default function Inventory() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState([]);
   const [costMap, setCostMap] = useState(new Map());
   const [locMap, setLocMap] = useState(new Map());
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("q") || "");
   const [sectionFilter, setSectionFilter] = useState(() => {
     const f = searchParams.get("filter");
-    if (f === "stuck21") return "__stuck21__";
-    if (f === "never") return "__never__";
-    if (f === "stale") return "__stale__";
-    if (f === "needs_dispatch") return "__needs_dispatch__";
-    if (f === "front_lot_aging") return "__front_lot_aging__";
-    return "";
+    if (!f) return "";
+    // Friendly aliases other pages link in with; anything else is already an
+    // internal filter value (a place slug or a __…__ tab) we wrote ourselves.
+    return FILTER_ALIASES[f] || f;
   });
   const [sections, setSections] = useState([]);
-  const [buyerFilter, setBuyerFilter] = useState(""); // filter by buyer
+  const [buyerFilter, setBuyerFilter] = useState(
+    () => searchParams.get("buyer") || "",
+  ); // filter by buyer
   const [buyers, setBuyers] = useState([]); // unique buyers list
-  const [vendorFilter, setVendorFilter] = useState(""); // filter by vendor/auction
+  const [vendorFilter, setVendorFilter] = useState(
+    () => searchParams.get("vendor") || "",
+  ); // filter by vendor/auction
   const [vendors, setVendors] = useState([]); // unique vendors/auctions list
   const [editingRow, setEditingRow] = useState(null); // stock of row being edited
   const [editLocation, setEditLocation] = useState("");
@@ -87,6 +122,7 @@ export default function Inventory() {
   const [historyStock, setHistoryStock] = useState(null); // stock number for history modal
   const [historyVin, setHistoryVin] = useState(null); // VIN for history modal
   const [showBulkEdit, setShowBulkEdit] = useState(false); // bulk location edit modal
+  const [copied, setCopied] = useState(null); // which copy button just fired
 
   async function load() {
     setLoading(true);
@@ -237,7 +273,7 @@ export default function Inventory() {
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     load();
-    
+
     // Cleanup function to clear any pending timeouts
     return () => {
       if (reloadTimeout) {
@@ -246,6 +282,34 @@ export default function Inventory() {
     };
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
+
+  // Mirror the current view into the URL (debounced so typing in the search box
+  // doesn't write on every keystroke). This is what lets the app put you back
+  // on the SAME list after you switch away — the saved route carries the tab,
+  // search and filters with it — and deep links / back both work as a bonus.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const next = new URLSearchParams(searchParams);
+      const put = (key, value) => {
+        if (value) next.set(key, value);
+        else next.delete(key);
+      };
+      put("filter", FILTER_SLUGS[sectionFilter] || sectionFilter);
+      put("q", search.trim());
+      put("buyer", buyerFilter);
+      put("vendor", vendorFilter);
+      if (next.toString() !== searchParams.toString())
+        setSearchParams(next, { replace: true });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [
+    sectionFilter,
+    search,
+    buyerFilter,
+    vendorFilter,
+    searchParams,
+    setSearchParams,
+  ]);
 
   const LOCATION_FILTERS = [
     "__loc_M__",
@@ -712,6 +776,104 @@ export default function Inventory() {
     }
   }
 
+  // ---- Copy report -------------------------------------------------------
+  // A per-location roll-up of whatever is on screen, pasteable straight into a
+  // chat. Built for the two questions that get asked every week: what's been
+  // sitting at each shop for 21+ days (🔴 Stuck), and what we've never tracked
+  // at all (🟡 Missing). Any other tab/place chip works the same way.
+  const SECTION_TITLES = {
+    "": "All inventory",
+    __stuck21__: "Stuck 21d+ (location unchanged)",
+    __stale__: "Stale",
+    __never__: "Never tracked",
+    __needs_dispatch__: "Needs dispatch",
+    __front_lot_aging__: "Front lot 10d+",
+    __dispatched__: "Dispatched / in transit",
+    __other_small__: "Other locations",
+    __loc_Z_no_disp__: "Transport (Z), not dispatched",
+    __loc_transit__: "In Transit",
+  };
+
+  function reportTitle() {
+    if (SECTION_TITLES[sectionFilter] != null)
+      return SECTION_TITLES[sectionFilter];
+    if (sectionFilter.startsWith("__loc_") && sectionFilter.endsWith("__")) {
+      const code = sectionFilter.slice(6, -2);
+      return LOCATION_CODE_MAP[code] || code;
+    }
+    return formatLocationLabel(sectionFilter);
+  }
+
+  // Which block a car lands in. Physical location wins; a car we've never
+  // located still groups by its Frazer code so the Missing report reads as
+  // "5 unlocated cars Frazer thinks are in Memphis" rather than one blob.
+  function reportGroup(r) {
+    const phys = locMap.get(r.stock_number)?.physical_location;
+    if (phys && phys !== "unknown")
+      return formatLocationLabel(canonicalLoc(phys));
+    const code = (costMap.get(r.stock_number) || {}).location_code;
+    if (code) return `${LOCATION_CODE_MAP[code] || code} (per Frazer)`;
+    return "Unknown";
+  }
+
+  function reportLine(r, n) {
+    const loc = locMap.get(r.stock_number) || {};
+    const model =
+      [r.vehicle_year, r.vehicle_make, r.vehicle_model]
+        .filter(Boolean)
+        .join(" ") || "Unknown vehicle";
+    const dol = parseInt(r.days_on_lot, 10);
+    const age = Number.isFinite(dol) && dol >= 0 ? `${dol}d owned` : "age ?";
+    const held = r.effective_days_since;
+    const since = fmtShortDate(loc.location_updated_at);
+    let where;
+    if (held == null) where = "NEVER TRACKED";
+    else if (since) where = `here ${held}d, since ${since}`;
+    else where = `here ${held}d`;
+    return `${n}. ${r.vehicle_vin || r.stock_number} · ${model} · ${age} · ${where}`;
+  }
+
+  function buildLocationReport() {
+    const groups = new Map();
+    for (const r of filtered) {
+      const key = reportGroup(r);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    // Oldest first = longest sitting untouched, never-tracked above everything,
+    // days owned as the tiebreaker. Same order the list itself uses.
+    const sat = (r) =>
+      r.effective_days_since == null
+        ? Number.MAX_SAFE_INTEGER
+        : r.effective_days_since;
+    const blocks = [...groups.entries()]
+      .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
+      .map(([label, list]) => {
+        const sorted = [...list].sort(
+          (a, b) =>
+            sat(b) - sat(a) ||
+            (parseInt(b.days_on_lot, 10) || 0) -
+              (parseInt(a.days_on_lot, 10) || 0),
+        );
+        const lines = sorted
+          .slice(0, REPORT_LIMIT)
+          .map((r, i) => reportLine(r, i + 1));
+        if (sorted.length > REPORT_LIMIT)
+          lines.push(`+${sorted.length - REPORT_LIMIT} more`);
+        return `${label.toUpperCase()} (${sorted.length})\n${lines.join("\n")}`;
+      });
+    const header = `CARZ INC · ${reportTitle()} · ${fmtShortDate(new Date().toISOString())} · ${filtered.length} cars`;
+    return [header, ...blocks].join("\n\n");
+  }
+
+  async function copyLocationReport() {
+    if (!filtered.length) return;
+    const ok = await copyText(buildLocationReport());
+    setCopied(ok ? "report" : null);
+    if (ok) setTimeout(() => setCopied(null), 1800);
+    else alert("Could not copy the report.");
+  }
+
   async function exportCsv() {
     const fmtDate = (iso) =>
       iso ? new Date(iso).toISOString().slice(0, 10) : "";
@@ -821,6 +983,18 @@ export default function Inventory() {
           title="Track Inventory"
         >
           <MapPin size={18} />
+        </button>
+        <button
+          onClick={copyLocationReport}
+          disabled={filtered.length === 0}
+          className="p-2 rounded-lg bg-slate-800 text-slate-400 disabled:opacity-40"
+          title={`Copy the oldest ${REPORT_LIMIT} at each location`}
+        >
+          {copied === "report" ? (
+            <Check size={18} className="text-emerald-400" />
+          ) : (
+            <ClipboardList size={18} />
+          )}
         </button>
         <button
           onClick={exportCsv}
