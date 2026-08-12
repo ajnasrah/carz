@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { initNativeShell } from './native/shell'
+import { rememberRoute, recallRoute, onAppPause } from './native/routeMemory'
 import { useAuth } from './context/useAuth'
 import { isPrimaryAdmin } from './services/adminSetup'
 import { isBodyShopOnly } from './services/bodyShop'
@@ -246,11 +247,83 @@ function NativeBridge() {
   return null
 }
 
+// Keeps "where I was" across an app switch. Native-only in effect — every call
+// into routeMemory no-ops on web, so the browser app keeps its normal
+// open-on-the-dashboard behaviour.
+function RouteMemory() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { user, loading } = useAuth()
+  const path = location.pathname + location.search
+  const restored = useRef(false)
+
+  // Cold-launch replay. Runs at most once, and only for a launch that has no
+  // intent of its own — a deep link or a reload mid-flow already knows where it
+  // wants to be. Waits for auth so it doesn't replay into a login redirect.
+  useEffect(() => {
+    if (loading || restored.current || !user) return
+    if (window.location.pathname !== '/') return
+    restored.current = true
+
+    let cancelled = false
+    // The moment they touch the screen the restore is no longer helpful, it's
+    // a fight over the scroll position. Let them win.
+    const stop = () => {
+      cancelled = true
+    }
+    window.addEventListener('touchstart', stop, { passive: true })
+    window.addEventListener('wheel', stop, { passive: true })
+
+    recallRoute().then((saved) => {
+      if (cancelled || !saved || window.location.pathname !== '/') return
+      navigate(saved.path, { replace: true })
+      if (!saved.scrollY) return
+      // The restored page fetches its own data, so it has no height yet and a
+      // single scrollTo lands on nothing. Nudge until it sticks or we give up.
+      let tries = 0
+      const tick = () => {
+        if (cancelled || tries++ > 12) return
+        window.scrollTo(0, saved.scrollY)
+        if (Math.abs(window.scrollY - saved.scrollY) > 2) setTimeout(tick, 150)
+      }
+      setTimeout(tick, 80)
+    })
+
+    return () => {
+      window.removeEventListener('touchstart', stop)
+      window.removeEventListener('wheel', stop)
+    }
+  }, [loading, user, navigate])
+
+  // Record the current page as we go, and flush the scroll depth when the app
+  // is backgrounded — that's the last tick we're promised before iOS may kill
+  // the webview.
+  useEffect(() => {
+    rememberRoute(path, 0)
+    let timer
+    const flush = () => rememberRoute(path, window.scrollY)
+    const onScroll = () => {
+      clearTimeout(timer)
+      timer = setTimeout(flush, 400)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    const offPause = onAppPause(flush)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('scroll', onScroll)
+      offPause()
+    }
+  }, [path])
+
+  return null
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <NativeBridge />
+        <RouteMemory />
         <div className="max-w-lg mx-auto app-shell">
           <AppRoutes />
         </div>
