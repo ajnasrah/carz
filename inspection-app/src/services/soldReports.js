@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, selectAll } from './supabase'
 
 // Pull all clean sold rows. ~4500 rows / ~1MB — fine to load once and
 // aggregate client-side for instant period switching.
@@ -178,6 +178,48 @@ export async function fetchSoldClean() {
   }))
 }
 
+// Just the last N days of sales, small enough for the dashboard to load on
+// every open. fetchSoldClean() pulls all ~6k rows (~1MB) — right for the
+// Reports page, far too heavy for the home screen.
+//
+// Two queries because the data is split: sold_clean has a real YYYY-MM-DD
+// sale_date (the raw `sold` table stores it as MM/DD/YY text, which no
+// server-side range filter can touch), while added_costs only exists on the raw
+// table. So filter on the view, then join the recon money back by stock number.
+export async function fetchSoldRecent(days) {
+  const cutoff = ymdMinusDays(days)
+  const rows = await selectAll(() =>
+    supabase
+      .from('sold_clean')
+      .select('stock_number, sale_date, days_on_lot, total_cost, sales_price, profit')
+      .gte('sale_date', cutoff),
+  )
+
+  const stocks = [...new Set(rows.map((r) => r.stock_number).filter(Boolean))]
+  const added = new Map()
+  // Chunked: a few hundred stock numbers in one ?in=(…) makes a URL long enough
+  // to get rejected before it reaches Postgres.
+  const CHUNK = 150
+  const chunks = []
+  for (let i = 0; i < stocks.length; i += CHUNK) chunks.push(stocks.slice(i, i + CHUNK))
+  const results = await Promise.all(
+    chunks.map((c) => supabase.from('sold').select('stock_number, added_costs').in('stock_number', c)),
+  )
+  for (const { data, error } of results) {
+    if (error) continue // recon money is a nice-to-have; never fail the whole box over it
+    for (const r of data || []) added.set(r.stock_number, toNumOrNull(r.added_costs))
+  }
+
+  return rows.map((r) => ({
+    ...r,
+    total_cost: toNumOrNull(r.total_cost),
+    sales_price: toNumOrNull(r.sales_price),
+    profit: toNumOrNull(r.profit),
+    days_on_lot: toNumOrNull(r.days_on_lot),
+    added_costs: added.get(r.stock_number) ?? null,
+  }))
+}
+
 // ── Period helpers ──
 // Calendar-based periods. MTD/last-month/YTD are self-explanatory; "Last Year
 // Next Quarter" maps to the 3 months ahead in the prior year (e.g. in Apr we
@@ -232,7 +274,7 @@ function dateOnlyKey(s) {
   return s.slice(0, 10)
 }
 
-function ymdMinusDays(days) {
+export function ymdMinusDays(days) {
   const d = new Date()
   d.setDate(d.getDate() - days)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`

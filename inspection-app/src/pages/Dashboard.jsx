@@ -1,10 +1,46 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { LogOut } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
+import { fetchSoldRecent, ymdMinusDays } from '../services/soldReports'
+import { store } from '../native/storage'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 import VinSearchBar from '../components/VinSearchBar'
+
+// Rolling windows for the sold side of the comparison. The longest one is what
+// gets fetched — switching windows then re-slices in memory, no round trip.
+const SOLD_WINDOWS = [
+  { days: 7, label: '7d' },
+  { days: 30, label: '30d' },
+  { days: 60, label: '60d' },
+  { days: 90, label: '90d' },
+]
+const MAX_SOLD_DAYS = Math.max(...SOLD_WINDOWS.map((w) => w.days))
+const SOLD_WINDOW_KEY = 'dashSoldWindow'
+
+const num = (v) => Number(String(v ?? 0).replace(/[^0-9.-]/g, '')) || 0
+
+// Averages the three numbers the two sides get compared on. `added_costs` is
+// averaged over the cars that actually had recon done — same rule the Inventory
+// page's Avg Add tile uses, so the figures agree across the app.
+function averages(rows, get) {
+  let addSum = 0, addN = 0, daySum = 0, dayN = 0, costSum = 0, costN = 0
+  for (const r of rows) {
+    const { added, days, cost } = get(r)
+    const a = num(added)
+    if (a > 0) { addSum += a; addN += 1 }
+    if (days != null && days !== '') { daySum += num(days); dayN += 1 }
+    const c = num(cost)
+    if (c > 0) { costSum += c; costN += 1 }
+  }
+  return {
+    count: rows.length,
+    avgAdded: addN ? Math.round(addSum / addN) : null,
+    avgDays: dayN ? Math.round(daySum / dayN) : null,
+    avgCost: costN ? Math.round(costSum / costN) : null,
+  }
+}
 
 // A Frazer-Z car needs dispatch only until we know where it physically is. Once
 // it's tracked at ANY real location (in transit, a shop, an auction, …) it's
@@ -20,12 +56,15 @@ export default function Dashboard() {
     carCount: null,
     avgDaysOnLot: null,
     avgAddedCosts: null,
+    avgCost: null,
     stuckCount: null,
     missingCount: null,
     needsDispatchCount: null,
     inspectingCount: null,
   })
   const [showMore, setShowMore] = useState(false)
+  const [soldRows, setSoldRows] = useState(null) // null = still loading
+  const [soldDays, setSoldDays] = useState(30)
 
   useEffect(() => {
     let cancelled = false
@@ -67,22 +106,17 @@ export default function Dashboard() {
         if (cost.location_code === 'Z' && !hasBeenLocated(loc.physical_location)) needsDispatch += 1
       }
 
-      const num = (v) => Number(String(v || 0).replace(/[^0-9.-]/g, '')) || 0
-      let addedSum = 0, addedN = 0
-      for (const c of costs) {
-        const v = num(c.added_costs)
-        if (v > 0) { addedSum += v; addedN += 1 }
-      }
-      let dolSum = 0, dolN = 0
-      for (const c of costs) {
-        const v = num(c.days_on_lot)
-        if (v >= 0 && c.days_on_lot != null && c.days_on_lot !== '') { dolSum += v; dolN += 1 }
-      }
+      const inv = averages(costs, (c) => ({
+        added: c.added_costs,
+        days: c.days_on_lot,
+        cost: c.total_cost,
+      }))
 
       setStats({
         carCount: lotRows.length,
-        avgDaysOnLot: dolN ? Math.round(dolSum / dolN) : null,
-        avgAddedCosts: addedN ? Math.round(addedSum / addedN) : null,
+        avgDaysOnLot: inv.avgDays,
+        avgAddedCosts: inv.avgAdded,
+        avgCost: inv.avgCost,
         stuckCount: stuck,
         missingCount: missing,
         needsDispatchCount: needsDispatch,
@@ -92,6 +126,38 @@ export default function Dashboard() {
     load()
     return () => { cancelled = true }
   }, [])
+
+  // Sold side of the comparison. Pulled once at the widest window; the picker
+  // just re-slices what's already here.
+  useEffect(() => {
+    let cancelled = false
+    store.get(SOLD_WINDOW_KEY).then((saved) => {
+      const days = parseInt(saved, 10)
+      if (!cancelled && SOLD_WINDOWS.some((w) => w.days === days)) setSoldDays(days)
+    })
+    fetchSoldRecent(MAX_SOLD_DAYS)
+      .then((rows) => { if (!cancelled) setSoldRows(rows) })
+      .catch(() => { if (!cancelled) setSoldRows([]) })
+    return () => { cancelled = true }
+  }, [])
+
+  function pickSoldDays(days) {
+    setSoldDays(days)
+    store.set(SOLD_WINDOW_KEY, String(days))
+  }
+
+  const sold = useMemo(() => {
+    if (!soldRows) return null
+    // Same local-date cutoff the fetch used — toISOString() would shift the
+    // boundary by a day west of UTC.
+    const key = ymdMinusDays(soldDays)
+    const inWindow = soldRows.filter((r) => (r.sale_date || '').slice(0, 10) >= key)
+    return averages(inWindow, (r) => ({
+      added: r.added_costs,
+      days: r.days_on_lot,
+      cost: r.total_cost,
+    }))
+  }, [soldRows, soldDays])
 
   const fmtMoney = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 
@@ -112,22 +178,53 @@ export default function Dashboard() {
       {/* Global VIN / stock search — opens a quick-info popup */}
       <VinSearchBar />
 
-      {/* Stat strip */}
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="rounded-xl p-3 bg-slate-800 text-center">
-          <div className="text-xl">🚗</div>
-          <div className="text-2xl font-bold text-white mt-1">{stats.carCount ?? '—'}</div>
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 mt-0.5">Cars</div>
+      {/* Inventory vs Sold — what we're holding against what's actually been
+          moving. Recon spend and age above the sold line means the lot is
+          getting heavier than what it's selling: going backward. */}
+      <div className="rounded-xl bg-slate-800 border border-slate-700 p-3 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <Link to="/sold-reports" className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+            Inventory vs Sold ›
+          </Link>
+          <div className="flex items-center gap-1">
+            {SOLD_WINDOWS.map((w) => (
+              <button
+                key={w.days}
+                onClick={() => pickSoldDays(w.days)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  soldDays === w.days ? 'bg-emerald-500 text-slate-900' : 'bg-slate-700 text-slate-300'
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="rounded-xl p-3 bg-slate-800 text-center">
-          <div className="text-xl">📅</div>
-          <div className="text-2xl font-bold text-white mt-1">{stats.avgDaysOnLot ?? '—'}{stats.avgDaysOnLot != null && 'd'}</div>
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 mt-0.5">Avg Age</div>
-        </div>
-        <div className="rounded-xl p-3 bg-slate-800 text-center">
-          <div className="text-xl">🔧</div>
-          <div className="text-2xl font-bold text-emerald-400 mt-1">{stats.avgAddedCosts != null ? fmtMoney(stats.avgAddedCosts) : '—'}</div>
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 mt-0.5">Avg Add</div>
+
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 items-baseline">
+          <span />
+          <Head>Avg Add</Head>
+          <Head>Avg Age</Head>
+          <Head>Avg Cost</Head>
+
+          <RowLabel>
+            In stock <b className="text-white">{stats.carCount ?? '—'}</b>
+          </RowLabel>
+          <Cell>{fmtMoney(stats.avgAddedCosts)}</Cell>
+          <Cell>{stats.avgDaysOnLot != null ? `${stats.avgDaysOnLot}d` : '—'}</Cell>
+          <Cell>{fmtMoney(stats.avgCost)}</Cell>
+
+          <RowLabel>
+            Sold {soldDays}d <b className="text-white">{sold ? sold.count : '—'}</b>
+          </RowLabel>
+          <Cell>{fmtMoney(sold?.avgAdded)}</Cell>
+          <Cell>{sold?.avgDays != null ? `${sold.avgDays}d` : '—'}</Cell>
+          <Cell>{fmtMoney(sold?.avgCost)}</Cell>
+
+          <RowLabel>Difference</RowLabel>
+          <Delta now={stats.avgAddedCosts} was={sold?.avgAdded} money />
+          <Delta now={stats.avgDaysOnLot} was={sold?.avgDays} suffix="d" />
+          <Delta now={stats.avgCost} was={sold?.avgCost} money neutral />
         </div>
       </div>
 
@@ -200,6 +297,45 @@ export default function Dashboard() {
         </Link>
       )}
     </div>
+  )
+}
+
+function Head({ children }) {
+  return (
+    <span className="text-[9px] uppercase tracking-wide text-slate-500 text-right">{children}</span>
+  )
+}
+
+function RowLabel({ children }) {
+  return <span className="text-[11px] text-slate-400 truncate">{children}</span>
+}
+
+function Cell({ children }) {
+  return <span className="text-xs font-semibold text-slate-200 text-right tabular-nums">{children}</span>
+}
+
+// What we're holding minus what we've been selling. On recon spend and age,
+// carrying MORE than we sell is the warning — that's the lot getting heavier.
+// Cost per car has no good or bad direction, so `neutral` leaves it uncoloured.
+function Delta({ now, was, money, suffix = '', neutral }) {
+  if (now == null || was == null) {
+    return <span className="text-xs text-slate-600 text-right">—</span>
+  }
+  const d = Math.round(now - was)
+  const sign = d > 0 ? '+' : d < 0 ? '−' : ''
+  const body = money
+    ? `$${Math.abs(d).toLocaleString()}`
+    : `${Math.abs(d)}${suffix}`
+  const color = neutral || d === 0
+    ? 'text-slate-400'
+    : d > 0
+    ? 'text-red-400'
+    : 'text-emerald-400'
+  const arrow = neutral || d === 0 ? '' : d > 0 ? ' ▲' : ' ▼'
+  return (
+    <span className={`text-xs font-bold text-right tabular-nums ${color}`}>
+      {sign}{body}{arrow}
+    </span>
   )
 }
 
