@@ -2166,9 +2166,13 @@
           manheimResult.textContent =
             `Loaded: ${vehicleName || vin} — ${dmgCount} damages, ${imageFiles.length} photos → SA Photos · ${n} on website`;
         } catch (e) {
+          // Loud on purpose. This used to render in the neutral style, which
+          // read as part of a successful import — the photos silently never
+          // reached the marketplace and nobody noticed for weeks.
           manheimResult.textContent =
-            `Loaded: ${vehicleName || vin} — ${dmgCount} damages, ${imageFiles.length} photos → SA Photos · website photos: ${e.message}`;
-          manheimResult.className = 'scraper-result';
+            `Loaded: ${vehicleName || vin} — ${dmgCount} damages, ${imageFiles.length} photos → SA Photos · PHOTOS NOT SENT TO WEBSITE: ${e.message}`;
+          manheimResult.className = 'scraper-result err';
+          console.error('[listing-photos] upload failed', e);
         }
       }
       statusDiv.textContent = 'Manheim import complete';

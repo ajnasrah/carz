@@ -13,6 +13,14 @@
 //   x-listing-secret: <LISTING_UPLOAD_SECRET>
 //   { vin, startIndex, reset, photos: ["<base64 jpeg>", ...] }
 //
+// The caller is a Chrome extension popup, so its origin is chrome-extension://…
+// — cross-origin to this host. A POST carrying x-listing-secret is never a
+// "simple" request, so the browser preflights it, and a preflight that comes
+// back without CORS headers kills the upload before a single byte is sent.
+// Hence the OPTIONS branch and the headers on every response below.
+// Allow-Origin is '*' safely: the secret header is the actual gate, and no
+// credentials ride along, so a random page echoing this origin gains nothing.
+//
 // `reset: true` on the first chunk clears the car's previous set, so a re-scrape
 // replaces rather than accumulates. After writing its own chunk, every request
 // re-lists the whole prefix and rewrites checklist.photos from that — which
@@ -36,8 +44,18 @@ function admin() {
   });
 }
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, x-listing-secret',
+  'Access-Control-Max-Age': '86400',
+};
+
 const json = (body, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS },
+  });
 
 async function sha256Hex(buf) {
   const h = await crypto.subtle.digest('SHA-256', buf);
@@ -67,6 +85,7 @@ function sniff(bytes) {
 }
 
 export default async function handler(request) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
 
   // Fail closed: with no secret configured this is an open write endpoint into
