@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check, Image as ImageIcon } from 'lucide-react'
 import { supabase } from '../services/supabase'
+import { useAuth } from '../context/useAuth'
+import { isAdminProfile } from '../services/adminSetup'
+import MarketplacePrice from '../components/MarketplacePrice'
+import PhotoEditor from '../components/PhotoEditor'
+import { fetchPhotoEdit, applyPhotoEdits } from '../services/listingPhotos'
 import { toInt } from '../services/utils'
 import { STARTUP_ITEMS, TEST_DRIVE_ITEMS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
 import HistoryButton from '../components/HistoryButton'
@@ -104,9 +109,13 @@ function StatusBadge({ status }) {
 export default function MarketplaceListing() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { profile } = useAuth()
+  const isAdmin = isAdminProfile(profile)
   const [car, setCar] = useState(null)
   const [allIds, setAllIds] = useState([])
   const [loading, setLoading] = useState(true)
+  const [photoEdit, setPhotoEdit] = useState(null)
+  const [editingPhotos, setEditingPhotos] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -114,8 +123,11 @@ export default function MarketplaceListing() {
         supabase.rpc('marketplace_listing_detail', { listing_id: id }),
         supabase.rpc('marketplace_listings'),
       ])
-      setCar(detailRes.data?.[0] || null)
+      const detail = detailRes.data?.[0] || null
+      setCar(detail)
       setAllIds((listRes.data || []).map((r) => r.id))
+      const vin = detail?.full_vin || detail?.vin
+      if (vin) setPhotoEdit(await fetchPhotoEdit(vin))
       setLoading(false)
     }
     load()
@@ -161,9 +173,11 @@ export default function MarketplaceListing() {
   for (const [zoneId, zone] of Object.entries(cl.interior || {})) {
     collectDamagePhotos(zone.damages, zoneId)
   }
-  // Drop byte-identical duplicates (same URL = same content hash)
+  // Drop byte-identical duplicates (same URL = same content hash), then apply
+  // the admin's edits — removed photos out, chosen order first.
   const seenUrls = new Set()
-  const dedupedPhotos = allPhotos.filter((p) => (seenUrls.has(p.url) ? false : seenUrls.add(p.url)))
+  const uniquePhotos = allPhotos.filter((p) => (seenUrls.has(p.url) ? false : seenUrls.add(p.url)))
+  const dedupedPhotos = applyPhotoEdits(uniquePhotos, photoEdit)
 
   // Startup findings
   const startupItems = STARTUP_ITEMS.map((item) => ({
@@ -232,16 +246,43 @@ export default function MarketplaceListing() {
         {/* Photo gallery */}
         <PhotoGallery photos={dedupedPhotos} />
 
-        {/* Buy Now price + SmartAuction link */}
-        {(car.buy_now || car.sa_url) && (
-          <div className="flex items-center justify-between mt-3 bg-slate-900 rounded-lg p-3 border border-slate-800">
-            {car.buy_now ? (
-              <div>
-                <p className="text-[10px] text-slate-500 uppercase">Buy It Now</p>
-                <p className="text-emerald-400 font-bold text-2xl">${Number(car.buy_now).toLocaleString()}</p>
-              </div>
-            ) : <span />}
-            {car.sa_url && (
+        {isAdmin && uniquePhotos.length > 0 && (
+          <button
+            onClick={() => setEditingPhotos(true)}
+            className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold active:bg-slate-700"
+          >
+            <ImageIcon size={14} /> Edit photos
+            {uniquePhotos.length !== dedupedPhotos.length &&
+              ` · ${uniquePhotos.length - dedupedPhotos.length} removed`}
+          </button>
+        )}
+
+        {editingPhotos && (
+          <PhotoEditor
+            vin={fullVin}
+            photos={uniquePhotos}
+            edit={photoEdit}
+            onClose={() => setEditingPhotos(false)}
+            onSaved={setPhotoEdit}
+          />
+        )}
+
+        {/* Price + SmartAuction link. The price section always renders now —
+            an unpriced car is a thing staff need to see, not hide. */}
+        <div className="flex items-center justify-between gap-3 mt-3 bg-slate-900 rounded-lg p-3 border border-slate-800">
+          <div className="min-w-0 flex-1">
+            <MarketplacePrice
+              size="lg"
+              vin={fullVin}
+              price={car.buy_now}
+              source={car.price_source}
+              canEdit={isAdmin}
+              onChange={(price, source) =>
+                setCar((c) => ({ ...c, buy_now: price == null ? null : String(price), price_source: source }))
+              }
+            />
+          </div>
+          {car.sa_url && (
               <a
                 href={car.sa_url}
                 target="_blank"
@@ -250,9 +291,8 @@ export default function MarketplaceListing() {
               >
                 View on SmartAuction →
               </a>
-            )}
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Vehicle details */}
         <Section title="Vehicle Details">

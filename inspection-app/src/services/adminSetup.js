@@ -56,6 +56,14 @@ export async function ensurePrimaryAdmin() {
   }
 }
 
+// One answer to "can this person do admin things?", used by every page that
+// gates a control. Role is the real check; the primary admin also passes on
+// phone so the owner can never be locked out of his own app by a bad role row.
+export function isAdminProfile(profile) {
+  if (!profile) return false
+  return profile.role === 'admin' || isPrimaryAdmin(profile.phone)
+}
+
 export function isPrimaryAdmin(phone) {
   let digits = phone?.replace(/\D/g, '') || ''
   // Accept +1 country code, bare 10-digit, or a leading 1 (e.g. 19018319661)
