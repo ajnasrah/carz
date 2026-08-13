@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from
 import { AuthProvider } from './context/AuthContext'
 import { initNativeShell } from './native/shell'
 import { rememberRoute, recallRoute, onAppPause } from './native/routeMemory'
+import { onAppStateChange } from './native/appState'
+import { supabase } from './services/supabase'
 import { useAuth } from './context/useAuth'
 import { isPrimaryAdmin } from './services/adminSetup'
 import { isBodyShopOnly } from './services/bodyShop'
@@ -247,6 +249,32 @@ function NativeBridge() {
   return null
 }
 
+// Keeps the login alive across app switches.
+//
+// Supabase refreshes the access token on a timer, and that timer does not run
+// while the page is backgrounded or frozen — a phone parked on another app all
+// afternoon comes back with an expired token and the first request fails, which
+// reads to the crew as "it logged me out again". Stopping the ticker on the way
+// out and restarting it on the way back in is the supported fix; getSession()
+// on resume forces the refresh immediately rather than on the next tick.
+//
+// How long a session may sit idle before it's genuinely dead is a Supabase Auth
+// project setting, not something the client decides.
+function SessionKeeper() {
+  useEffect(() => {
+    supabase.auth.startAutoRefresh().catch(() => {})
+    return onAppStateChange((isActive) => {
+      if (isActive) {
+        supabase.auth.startAutoRefresh().catch(() => {})
+        supabase.auth.getSession().catch(() => {})
+      } else {
+        supabase.auth.stopAutoRefresh().catch(() => {})
+      }
+    })
+  }, [])
+  return null
+}
+
 // Keeps "where I was" across an app switch. Native-only in effect — every call
 // into routeMemory no-ops on web, so the browser app keeps its normal
 // open-on-the-dashboard behaviour.
@@ -257,12 +285,20 @@ function RouteMemory() {
   const path = location.pathname + location.search
   const restored = useRef(false)
 
-  // Cold-launch replay. Runs at most once, and only for a launch that has no
-  // intent of its own — a deep link or a reload mid-flow already knows where it
-  // wants to be. Waits for auth so it doesn't replay into a login redirect.
+  // Replay, once, after auth resolves — otherwise it restores into a login
+  // redirect. Two shapes of the same problem:
+  //
+  //   • The native app cold starts at '/', having lost the route entirely, so
+  //     the saved path has to be navigated back to.
+  //   • A discarded home-screen PWA reloads the SAME url, so the route is
+  //     already right and only the scroll (and the data behind it) is gone.
+  //     This case looked like "nothing to do" to the old check and got no
+  //     restore at all, which is exactly the "starts over" complaint.
+  //
+  // A launch that already has its own intent — a deep link, a typed url, a
+  // reload mid-inspection — is left alone in both.
   useEffect(() => {
     if (loading || restored.current || !user) return
-    if (window.location.pathname !== '/') return
     restored.current = true
 
     let cancelled = false
@@ -274,19 +310,28 @@ function RouteMemory() {
     window.addEventListener('touchstart', stop, { passive: true })
     window.addEventListener('wheel', stop, { passive: true })
 
-    recallRoute().then((saved) => {
-      if (cancelled || !saved || window.location.pathname !== '/') return
-      navigate(saved.path, { replace: true })
-      if (!saved.scrollY) return
-      // The restored page fetches its own data, so it has no height yet and a
-      // single scrollTo lands on nothing. Nudge until it sticks or we give up.
+    // The restored page fetches its own data, so it has no height yet and a
+    // single scrollTo lands on nothing. Nudge until it sticks or we give up.
+    const restoreScroll = (y) => {
+      if (!y) return
       let tries = 0
       const tick = () => {
         if (cancelled || tries++ > 12) return
-        window.scrollTo(0, saved.scrollY)
-        if (Math.abs(window.scrollY - saved.scrollY) > 2) setTimeout(tick, 150)
+        window.scrollTo(0, y)
+        if (Math.abs(window.scrollY - y) > 2) setTimeout(tick, 150)
       }
       setTimeout(tick, 80)
+    }
+
+    recallRoute().then((saved) => {
+      if (cancelled || !saved) return
+      const here = window.location.pathname + window.location.search
+      if (here === saved.path) {
+        restoreScroll(saved.scrollY) // reloaded in place — just put them back down the page
+      } else if (window.location.pathname === '/') {
+        navigate(saved.path, { replace: true })
+        restoreScroll(saved.scrollY)
+      }
     })
 
     return () => {
@@ -323,6 +368,7 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <NativeBridge />
+        <SessionKeeper />
         <RouteMemory />
         <div className="max-w-lg mx-auto app-shell">
           <AppRoutes />

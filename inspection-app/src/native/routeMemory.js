@@ -1,6 +1,6 @@
-import { App } from '@capacitor/app'
 import { store } from './storage'
 import { isNative } from './platform'
+import { onAppStateChange } from './appState'
 
 // Switching to Telegram to read a VIN and coming back should land you where you
 // were — same page, same filters, same spot in the list. iOS routinely kills a
@@ -11,6 +11,22 @@ import { isNative } from './platform'
 // their filter state) plus scroll depth, and replay it on the next cold launch.
 
 const KEY = 'lastRoute'
+
+// A phone discards a backgrounded page and reloads it on return — that's true of
+// the native shell (iOS kills the WKWebView under memory pressure) AND of the
+// home-screen PWA, which is how most of the crew actually opens this. Gating
+// this on isNative() alone meant the people hitting the problem hardest got
+// none of the fix.
+//
+// Still not a plain desktop tab: a desktop browser doesn't discard the page, so
+// there's nothing to restore, and jumping someone who typed carzinc.ai onto
+// yesterday's filtered list would be a surprise, not a service.
+const isStandalonePWA = () =>
+  typeof window !== 'undefined' &&
+  (window.matchMedia?.('(display-mode: standalone)')?.matches === true ||
+    window.navigator?.standalone === true)
+
+export const canRemember = () => isNative() || isStandalonePWA()
 
 // Older than this and "where I was" is stale — a new shift, a new problem.
 // Restoring yesterday's filtered list would be noise, not help.
@@ -27,7 +43,7 @@ export function isRestorable(path) {
 }
 
 export async function rememberRoute(path, scrollY = 0) {
-  if (!isNative() || !isRestorable(path)) return
+  if (!canRemember() || !isRestorable(path)) return
   try {
     await store.set(KEY, JSON.stringify({ path, scrollY, at: Date.now() }))
   } catch {
@@ -36,13 +52,13 @@ export async function rememberRoute(path, scrollY = 0) {
 }
 
 export async function forgetRoute() {
-  if (!isNative()) return
+  if (!canRemember()) return
   await store.remove(KEY).catch(() => {})
 }
 
 // Returns { path, scrollY } or null.
 export async function recallRoute() {
-  if (!isNative()) return null
+  if (!canRemember()) return null
   try {
     const raw = await store.get(KEY)
     if (!raw) return null
@@ -56,30 +72,9 @@ export async function recallRoute() {
 }
 
 // Fires whenever the app leaves the foreground — the last moment we're
-// guaranteed to run before the OS may kill us. visibilitychange covers the
-// web/PWA case and the odd Android path where appStateChange doesn't fire.
+// guaranteed to run before the OS may discard the page.
 export function onAppPause(cb) {
-  const onVisibility = () => {
-    if (document.hidden) cb()
-  }
-  document.addEventListener('visibilitychange', onVisibility)
-
-  let handle
-  let cancelled = false
-  if (isNative()) {
-    App.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive) cb()
-    })
-      .then((h) => {
-        if (cancelled) h.remove?.()
-        else handle = h
-      })
-      .catch(() => {})
-  }
-
-  return () => {
-    cancelled = true
-    document.removeEventListener('visibilitychange', onVisibility)
-    handle?.remove?.()
-  }
+  return onAppStateChange((isActive) => {
+    if (!isActive) cb()
+  })
 }
