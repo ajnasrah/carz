@@ -15,18 +15,29 @@ const money = (v) => {
   return Number.isFinite(n) && n > 0 ? `$${Math.round(n).toLocaleString()}` : null
 }
 
-// One car, as a buyer would want to read it: what it is, how far it's gone,
-// what we want for it, and where to look.
+// One car, as a buyer would want to read it. Three parts, in the order someone
+// skims them: what it is, then the numbers, then a blank line so the link sits
+// on its own and every messaging app renders it as a link rather than swallowing
+// it into the end of a sentence.
+//
+//   2016 INFINITI QX60
+//   92,013 mi · $8,500 · VIN 5N1AL0MMXGC504245
+//
+//   https://www.carzinc.ai/marketplace/<id>
 export function carLines(car) {
   const name = [car.year, car.make, car.model].filter(Boolean).join(' ') || 'Vehicle'
   const miles = Number(String(car.mileage ?? '').replace(/[^0-9]/g, ''))
-  const bits = [name]
-  if (Number.isFinite(miles) && miles > 0) bits.push(`${miles.toLocaleString()} mi`)
+  const facts = []
+  if (Number.isFinite(miles) && miles > 0) facts.push(`${miles.toLocaleString()} mi`)
   const price = money(car.buy_now)
-  if (price) bits.push(price)
+  if (price) facts.push(price)
   const vin = car.full_vin || car.vin
-  if (vin) bits.push(`VIN ${vin}`)
-  return `${bits.join(' · ')}\n${listingUrl(car.id)}`
+  if (vin) facts.push(`VIN ${vin}`)
+
+  const lines = [name]
+  if (facts.length) lines.push(facts.join(' · '))
+  lines.push('', listingUrl(car.id))
+  return lines.join('\n')
 }
 
 export function buildShareMessage(cars, { buyer } = {}) {
@@ -35,6 +46,6 @@ export function buildShareMessage(cars, { buyer } = {}) {
   return [
     `${hello}${cars.length} cars from Carz Inc:`,
     '',
-    ...cars.map((c) => carLines(c)),
+    cars.map(carLines).join('\n\n'),
   ].join('\n')
 }

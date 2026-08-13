@@ -10,9 +10,14 @@ import { copyText } from './clipboard'
 export async function shareText({ title, text, url }) {
   const payload = [text, url].filter(Boolean).join('\n')
 
+  // `title` is CONTENT on most targets, not a heading — Messages and WhatsApp
+  // paste it above the body. Passing the car's name as the title is what put
+  // "2016 INFINITI QX60" on its own line above a body that already opened with
+  // "2016 INFINITI QX60". It now goes only to dialogTitle, which is the Android
+  // chooser's own header and never travels with the message.
   if (isNative()) {
     try {
-      await Share.share({ title, text, url, dialogTitle: title })
+      await Share.share({ text: payload, dialogTitle: title })
       return 'shared'
     } catch (err) {
       // The sheet resolves by throwing when dismissed on iOS.
@@ -20,7 +25,7 @@ export async function shareText({ title, text, url }) {
     }
   } else if (navigator.share) {
     try {
-      await navigator.share({ title, text, url })
+      await navigator.share({ text: payload })
       return 'shared'
     } catch (err) {
       if (err?.name === 'AbortError') return 'cancelled'
