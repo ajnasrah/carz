@@ -41,6 +41,16 @@ Then, in Xcode (open `ios/App/App.xcworkspace`, **never** the `.xcodeproj`):
 2. **Product → Archive**
 3. Organizer opens → **Distribute App → TestFlight & App Store Connect**
 
+Take the **first** option and not "TestFlight Internal Only", which sits right
+under it and sounds safer. It isn't a privacy setting — it permanently marks the
+*build* as internal-only, so that upload can never be promoted to external
+testers or submitted to the App Store. Undoing it means a new build number and a
+fresh upload.
+
+"TestFlight & App Store Connect" does **not** publish anything publicly. It puts
+the build in App Store Connect, where TestFlight hands it to testers; releasing
+to the App Store is a separate submission made later against the same build.
+
 Or from the command line:
 
 ```sh
@@ -61,6 +71,27 @@ Then the build processes in App Store Connect (usually 5–15 min, and it is not
 in TestFlight until that finishes) — testers get the update after that. **If
 nobody is being offered an update, it is almost always because no new build was
 uploaded, or the one that was is still processing.**
+
+Export compliance never prompts on upload: `ITSAppUsesNonExemptEncryption` is
+already `false` in `Info.plist`. Leave it there — remove it and every single
+upload starts asking the encryption question again.
+
+### Internal vs external testers
+
+Nothing in the upload picks this; it's set afterwards in App Store Connect by
+adding the build to a tester group.
+
+- **Internal** — up to 100 people who have App Store Connect access. No review.
+  They can install as soon as processing finishes.
+- **External** — up to 10,000, by email or public link. Needs **Beta App Review**
+  first (typically ~a day). Later builds of the same version usually clear
+  automatically unless much has changed.
+
+**The thing that gets external builds rejected here: Carz IMS is behind login,
+and new accounts need admin approval** (see the approval-gate work). A reviewer
+signing up gets parked waiting for an approval that never comes, and reports the
+app as broken. Put a **working demo account** in Test Information — already
+approved, with real data visible — before submitting for external review.
 
 ### When the build breaks with `Unable to resolve module dependency: 'Capacitor'`
 
