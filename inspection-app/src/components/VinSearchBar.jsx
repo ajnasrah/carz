@@ -106,10 +106,14 @@ export default function VinSearchBar() {
                   {choices.length} cars contain "{term}" — pick one:
                 </p>
                 <div className="space-y-2">
+                  {/* Chat-sourced cars have no VIN and a stock number
+                      ("unknown:334120") that isn't VIN-shaped — re-querying with
+                      it strips to nonsense. Their last 6 is the only handle that
+                      resolves back to the car. */}
                   {choices.map((c) => (
                     <button
                       key={c.stock_number || c.vehicle_vin}
-                      onClick={() => lookup(c.vehicle_vin || c.stock_number)}
+                      onClick={() => lookup(c.vehicle_vin || c.last_6_vin || c.stock_number)}
                       className="w-full flex items-center justify-between gap-2 p-3 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700 text-left"
                     >
                       <div className="min-w-0">
