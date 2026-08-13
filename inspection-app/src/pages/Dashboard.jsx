@@ -4,9 +4,11 @@ import { LogOut } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
 import { fetchSoldRecent, ymdMinusDays } from '../services/soldReports'
 import { store } from '../native/storage'
+import { averages } from '../services/compare'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 import VinSearchBar from '../components/VinSearchBar'
+import BuySellPace from '../components/BuySellPace'
 
 // Rolling windows for the sold side of the comparison. The longest one is what
 // gets fetched — switching windows then re-slices in memory, no round trip.
@@ -18,29 +20,6 @@ const SOLD_WINDOWS = [
 ]
 const MAX_SOLD_DAYS = Math.max(...SOLD_WINDOWS.map((w) => w.days))
 const SOLD_WINDOW_KEY = 'dashSoldWindow'
-
-const num = (v) => Number(String(v ?? 0).replace(/[^0-9.-]/g, '')) || 0
-
-// Averages the three numbers the two sides get compared on. `added_costs` is
-// averaged over the cars that actually had recon done — same rule the Inventory
-// page's Avg Add tile uses, so the figures agree across the app.
-function averages(rows, get) {
-  let addSum = 0, addN = 0, daySum = 0, dayN = 0, costSum = 0, costN = 0
-  for (const r of rows) {
-    const { added, days, cost } = get(r)
-    const a = num(added)
-    if (a > 0) { addSum += a; addN += 1 }
-    if (days != null && days !== '') { daySum += num(days); dayN += 1 }
-    const c = num(cost)
-    if (c > 0) { costSum += c; costN += 1 }
-  }
-  return {
-    count: rows.length,
-    avgAdded: addN ? Math.round(addSum / addN) : null,
-    avgDays: dayN ? Math.round(daySum / dayN) : null,
-    avgCost: costN ? Math.round(costSum / costN) : null,
-  }
-}
 
 // A Frazer-Z car needs dispatch only until we know where it physically is. Once
 // it's tracked at ANY real location (in transit, a shop, an auction, …) it's
@@ -178,54 +157,61 @@ export default function Dashboard() {
       {/* Global VIN / stock search — opens a quick-info popup */}
       <VinSearchBar />
 
-      {/* Inventory vs Sold — what we're holding against what's actually been
-          moving. Recon spend and age above the sold line means the lot is
-          getting heavier than what it's selling: going backward. */}
-      <div className="rounded-xl bg-slate-800 border border-slate-700 p-3 mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <Link to="/sold-reports" className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-            Inventory vs Sold ›
-          </Link>
-          <div className="flex items-center gap-1">
-            {SOLD_WINDOWS.map((w) => (
-              <button
-                key={w.days}
-                onClick={() => pickSoldDays(w.days)}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                  soldDays === w.days ? 'bg-emerald-500 text-slate-900' : 'bg-slate-700 text-slate-300'
-                }`}
-              >
-                {w.label}
-              </button>
-            ))}
+      {/* The two halves of "how is the lot doing": what a car costs us against
+          what a sold one cost, and how fast cars come in against how fast they
+          go out. Side by side on a desktop, stacked on a phone. */}
+      <div className="grid gap-4 mb-4 lg:grid-cols-2 lg:items-start">
+        {/* Inventory vs Sold — what we're holding against what's actually been
+            moving. Recon spend and age above the sold line means the lot is
+            getting heavier than what it's selling: going backward. */}
+        <div className="rounded-xl bg-slate-800 border border-slate-700 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <Link to="/sold-reports" className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+              Inventory vs Sold ›
+            </Link>
+            <div className="flex items-center gap-1">
+              {SOLD_WINDOWS.map((w) => (
+                <button
+                  key={w.days}
+                  onClick={() => pickSoldDays(w.days)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    soldDays === w.days ? 'bg-emerald-500 text-slate-900' : 'bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {w.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 items-baseline">
+            <span />
+            <Head>Avg Add</Head>
+            <Head>Avg Age</Head>
+            <Head>Avg Cost</Head>
+
+            <RowLabel>
+              In stock <b className="text-white">{stats.carCount ?? '—'}</b>
+            </RowLabel>
+            <Cell>{fmtMoney(stats.avgAddedCosts)}</Cell>
+            <Cell>{stats.avgDaysOnLot != null ? `${stats.avgDaysOnLot}d` : '—'}</Cell>
+            <Cell>{fmtMoney(stats.avgCost)}</Cell>
+
+            <RowLabel>
+              Sold {soldDays}d <b className="text-white">{sold ? sold.count : '—'}</b>
+            </RowLabel>
+            <Cell>{fmtMoney(sold?.avgAdded)}</Cell>
+            <Cell>{sold?.avgDays != null ? `${sold.avgDays}d` : '—'}</Cell>
+            <Cell>{fmtMoney(sold?.avgCost)}</Cell>
+
+            <RowLabel>Difference</RowLabel>
+            <Delta now={stats.avgAddedCosts} was={sold?.avgAdded} money />
+            <Delta now={stats.avgDaysOnLot} was={sold?.avgDays} suffix="d" />
+            <Delta now={stats.avgCost} was={sold?.avgCost} money neutral />
           </div>
         </div>
 
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 items-baseline">
-          <span />
-          <Head>Avg Add</Head>
-          <Head>Avg Age</Head>
-          <Head>Avg Cost</Head>
-
-          <RowLabel>
-            In stock <b className="text-white">{stats.carCount ?? '—'}</b>
-          </RowLabel>
-          <Cell>{fmtMoney(stats.avgAddedCosts)}</Cell>
-          <Cell>{stats.avgDaysOnLot != null ? `${stats.avgDaysOnLot}d` : '—'}</Cell>
-          <Cell>{fmtMoney(stats.avgCost)}</Cell>
-
-          <RowLabel>
-            Sold {soldDays}d <b className="text-white">{sold ? sold.count : '—'}</b>
-          </RowLabel>
-          <Cell>{fmtMoney(sold?.avgAdded)}</Cell>
-          <Cell>{sold?.avgDays != null ? `${sold.avgDays}d` : '—'}</Cell>
-          <Cell>{fmtMoney(sold?.avgCost)}</Cell>
-
-          <RowLabel>Difference</RowLabel>
-          <Delta now={stats.avgAddedCosts} was={sold?.avgAdded} money />
-          <Delta now={stats.avgDaysOnLot} was={sold?.avgDays} suffix="d" />
-          <Delta now={stats.avgCost} was={sold?.avgCost} money neutral />
-        </div>
+        <BuySellPace />
       </div>
 
       {/* Alerts */}
@@ -267,11 +253,11 @@ export default function Dashboard() {
       <div className="grid grid-cols-3 gap-2">
         <ActionTile to="/lot" emoji="🚶" label="Walk Lot" />
         <ActionTile to="/inventory" emoji="🚗" label="Cars" />
-        <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
+        <ActionTile to="/body-shop" emoji="🎨" label="Body Shop" />
         <ActionTile to="/list-builder" emoji="🔨" label="List Builder" />
         <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
         <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
-        <ActionTile to="/body-shop" emoji="🎨" label="Body Shop" />
+        <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
         <ActionTile to="/reports" emoji="📈" label="Reports" />
         <ActionTile onClick={() => setShowMore((s) => !s)} emoji={showMore ? '✕' : '⋯'} label={showMore ? 'Less' : 'More'} />
         {showMore && (

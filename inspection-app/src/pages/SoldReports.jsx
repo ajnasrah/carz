@@ -13,6 +13,8 @@ import {
   fmt, profitColor, PERIODS,
 } from '../services/soldReports'
 import XLSXWriter from '../services/xlsxWriter'
+import CompareBox from '../components/CompareBox'
+import { compareGroups, COMPARE_COLUMNS } from '../services/compare'
 
 // How many cars the By Profit list paints before you ask for more.
 const CARS_PAGE = 150
@@ -223,6 +225,24 @@ export default function SoldReports({ embedded = false }) {
   const vendors   = useMemo(() => groupByField(filteredBuyerRows, 'vendor'),   [filteredBuyerRows])
   const customers = useMemo(() => groupByField(filteredBuyerRows, 'customer'), [filteredBuyerRows])
   const buyerSeries = useMemo(() => dailyProfitByBuyer(filteredBuyerRows), [filteredBuyerRows])
+
+  // The dashboard's Inventory-vs-Sold comparison, pointed at people instead of
+  // periods: every buyer (and every vendor) read against the same baseline, on
+  // the same numbers, by the same shared code.
+  const soldMetrics = (r) => ({
+    added: r.added_costs,
+    days: r.days_on_lot,
+    cost: r.total_cost,
+    profit: r.profit_on_sale,
+  })
+  const buyerCompare = useMemo(
+    () => compareGroups(filteredBuyerRows, { keyOf: (r) => r.buyer, get: soldMetrics, minCount: 2 }),
+    [filteredBuyerRows],
+  )
+  const vendorCompare = useMemo(
+    () => compareGroups(filteredBuyerRows, { keyOf: (r) => r.vendor, get: soldMetrics, minCount: 2 }),
+    [filteredBuyerRows],
+  )
 
   const sortedMakes = useMemo(() => {
     const copy = [...makes]
@@ -853,6 +873,23 @@ export default function SoldReports({ embedded = false }) {
 
       {/* Buyer breakdown (Buyers tab) */}
       {tab === 'buyers' && (
+      <Section
+        title="Compare Buyers"
+        subtitle={`${buyerCompare.groups.length} buyers with 2+ cars · read against everyone`}
+        icon={<Target size={14} className="text-emerald-400" />}
+      >
+        <CompareBox
+          rowLabel="Buyer"
+          columns={COMPARE_COLUMNS}
+          rows={buyerCompare.groups}
+          baseline={buyerCompare.baseline}
+          baselineLabel="All buyers"
+          footnote={buyerCompare.hiddenCars ? `${buyerCompare.hiddenCars} one-off cars not shown` : ''}
+        />
+      </Section>
+      )}
+
+      {tab === 'buyers' && (
       <Section title="Buyer Performance" subtitle={`${buyers.length} buyers · who's making you money`} icon={<Award size={14} className="text-amber-400" />}>
         {buyers.length === 0 ? (
           <p className="text-xs text-slate-500 py-3 text-center">No buyer data for this period</p>
@@ -905,6 +942,23 @@ export default function SoldReports({ embedded = false }) {
       )}
 
       {/* Vendors tab */}
+      {tab === 'vendors' && (
+        <Section
+          title="Compare Vendors"
+          subtitle={`${vendorCompare.groups.length} vendors with 2+ cars · read against everyone`}
+          icon={<Target size={14} className="text-emerald-400" />}
+        >
+          <CompareBox
+            rowLabel="Vendor"
+            columns={COMPARE_COLUMNS}
+            rows={vendorCompare.groups}
+            baseline={vendorCompare.baseline}
+            baselineLabel="All vendors"
+            footnote={vendorCompare.hiddenCars ? `${vendorCompare.hiddenCars} one-off cars not shown` : ''}
+          />
+        </Section>
+      )}
+
       {tab === 'vendors' && (
         <PeopleTable title="Vendor Performance" subtitle={`${vendors.length} vendors · where the cars came from`} rows={vendors} colLabel="Vendor" />
       )}
