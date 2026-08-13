@@ -249,6 +249,11 @@ export default function Marketplace() {
     return result
   }, [visible, search, makeFilter, activeModels, yearFilter, mileFilter, sort])
 
+  // Every car currently on screen is ticked — what flips the Select all button
+  // to Deselect all. Scoped to `filtered` on purpose: with a filter on, "all"
+  // means the cars you can see, not the whole book behind them.
+  const allPicked = filtered.length > 0 && filtered.every((c) => picked.has(c.id))
+
   return (
     <div className="min-h-screen bg-slate-950 text-white safe-top">
       <div className="max-w-5xl mx-auto px-4 py-6">
@@ -351,12 +356,16 @@ export default function Marketplace() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* One control, both directions. "Select all" with no counterpart
+                meant the only way back was the Clear button on a bar that only
+                exists while something is picked — so the button flips once
+                everything on screen is ticked. */}
             <button
-              onClick={() => setPicked(new Set(filtered.map((c) => c.id)))}
+              onClick={() => setPicked(allPicked ? new Set() : new Set(filtered.map((c) => c.id)))}
               disabled={!filtered.length}
               className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 disabled:opacity-40 whitespace-nowrap"
             >
-              Select all
+              {allPicked ? 'Deselect all' : 'Select all'}
             </button>
             <button
               onClick={() => exportCsv(filtered)}
@@ -432,17 +441,26 @@ export default function Marketplace() {
                       {photoCount} photos
                     </span>
                     {/* Tick cars as you browse; the bar at the top sends the
-                        whole set to one buyer in a single message. */}
+                        whole set to one buyer in a single message.
+                        The circle is 28px because that's the size it should
+                        LOOK, but the button around it is 44px of padding, so a
+                        thumb aimed at the circle actually lands. At 28px flat
+                        the misses outnumbered the hits and it read as broken. */}
                     <button
                       onClick={() => togglePick(car.id)}
                       aria-label={picked.has(car.id) ? 'Deselect' : 'Select for a buyer'}
-                      className={`absolute top-2 left-2 w-7 h-7 rounded-full border-2 flex items-center justify-center ${
-                        picked.has(car.id)
-                          ? 'bg-emerald-500 border-emerald-500 text-slate-900'
-                          : 'bg-black/50 border-white/70 text-transparent'
-                      }`}
+                      aria-pressed={picked.has(car.id)}
+                      className="absolute top-0 left-0 w-11 h-11 flex items-center justify-center"
                     >
-                      <Check size={15} />
+                      <span
+                        className={`w-7 h-7 rounded-full border-2 flex items-center justify-center shadow-md ${
+                          picked.has(car.id)
+                            ? 'bg-emerald-500 border-emerald-500 text-slate-900'
+                            : 'bg-black/60 border-white text-transparent'
+                        }`}
+                      >
+                        <Check size={15} />
+                      </span>
                     </button>
                   </div>
                   <div className="p-4">
