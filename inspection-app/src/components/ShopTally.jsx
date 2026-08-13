@@ -76,12 +76,25 @@ export default function ShopTally() {
               <Stat label="Add" value={r?.avg_added != null ? `$${Number(r.avg_added).toLocaleString()}` : '—'} />
             </div>
 
-            <button
-              onClick={() => toggle(shop.key)}
-              className="mt-2 text-[10px] font-bold text-slate-400 active:text-white"
-            >
-              {open === shop.key ? 'Hide where' : 'Where ›'}
-            </button>
+            {/* Two different questions, so two controls. "Where" splits the
+                count across locations without leaving the page; "See cars"
+                opens the actual list. The number above is also a link, but a
+                white number looks like a number — nothing about it said you
+                could press it, so there was no visible way to the cars at all. */}
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                onClick={() => toggle(shop.key)}
+                className="text-[10px] font-bold text-slate-400 active:text-white"
+              >
+                {open === shop.key ? 'Hide where' : 'Where ›'}
+              </button>
+              <Link
+                to={shop.to}
+                className="ml-auto text-[10px] font-bold text-emerald-400 active:text-emerald-300"
+              >
+                See cars ›
+              </Link>
+            </div>
 
             {open === shop.key && (
               <div className="mt-1 space-y-0.5">
