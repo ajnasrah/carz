@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink } from 'lucide-react'
 import { recommendAll } from '../services/buyerMatch'
 import {
   parseCSV, mapActiveRow, mapSoldRow, fetchActiveCars, fetchSoldSales,
@@ -18,6 +19,7 @@ const CONF = {
 }
 
 export default function BuyerMatch() {
+  const navigate = useNavigate()
   const [active, setActive] = useState([])
   const [sold, setSold] = useState([])
   const [loading, setLoading] = useState(true)
@@ -132,7 +134,17 @@ export default function BuyerMatch() {
   return (
     <Shell>
       <div className="flex items-center justify-between mb-3">
-        <div>
+        {/* This page had no way out — no back control and no bottom nav, which
+            in the native shell (no url bar, no browser back) meant force-quitting
+            the app to leave it. */}
+        <button
+          onClick={() => navigate('/')}
+          aria-label="Back to dashboard"
+          className="p-2 -ml-2 mr-1 rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-emerald-400 flex items-center gap-2">
             <Sparkles size={20} /> Buyer Match
           </h1>

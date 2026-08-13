@@ -6,12 +6,12 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, Plus, Search, RefreshCw, X } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import {
   fetchBoard, fetchRecentlyDone, createJobFromVin6,
   JOB_STATUSES, JOB_STATUS_STYLES, ageStyle, vehicleLabel,
-  isBodyShopManager, isBodyShopTech,
+  isBodyShopManager, isBodyShopTech, isBodyShopOnly,
 } from '../services/bodyShop'
 
 const money = (n) => (n == null ? null : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
@@ -31,6 +31,9 @@ export default function BodyShop() {
   const tech = isBodyShopTech(profile)
   // A tech who isn't also a manager only ever sees his own cars.
   const techOnly = tech && !manager
+  // Body-shop-only staff have no dashboard to go back to — ProtectedRoute sends
+  // them straight here from '/'.
+  const shopOnly = isBodyShopOnly(profile)
 
   const [doneJobs, setDoneJobs] = useState([])
 
@@ -95,7 +98,19 @@ export default function BodyShop() {
   return (
     <div className="page">
       <div className="flex items-center justify-between mb-4">
-        <div>
+        {/* No way back off this page before — and the shop-only crew are routed
+            here as their home, so for them '/' would just bounce straight back.
+            They keep the plain header; everyone else gets the arrow. */}
+        {!shopOnly && (
+          <button
+            onClick={() => navigate('/')}
+            aria-label="Back to dashboard"
+            className="p-2 -ml-2 mr-1 rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
+          >
+            <ArrowLeft size={18} />
+          </button>
+        )}
+        <div className="flex-1 min-w-0">
           <h1 className="page-title mb-0">🎨 Body Shop</h1>
           <p className="text-[11px] text-slate-500 mt-0.5">
             {techOnly ? 'Your cars — oldest first' : 'Oldest first'}

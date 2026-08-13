@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase, selectAll } from "../services/supabase";
-import { Calendar, TrendingUp, Users, DollarSign, Clock, Filter, ChevronDown, BarChart3, Package, Truck, MapPin, Search } from "lucide-react";
+import { ArrowLeft, Calendar, TrendingUp, Users, DollarSign, Clock, Filter, ChevronDown, BarChart3, Package, Truck, MapPin, Search } from "lucide-react";
 
 export default function VehicleAnalytics({ embedded = false }) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [soldData, setSoldData] = useState([]);
   const [inventoryData, setInventoryData] = useState([]);
@@ -268,6 +270,13 @@ export default function VehicleAnalytics({ embedded = false }) {
         {/* Header */}
         {!embedded && (
           <div className="mb-6">
+            <button
+              onClick={() => navigate('/reports')}
+              aria-label="Back to reports"
+              className="flex items-center gap-1 mb-2 -ml-2 p-2 rounded-lg text-slate-300 active:bg-slate-800 text-sm"
+            >
+              <ArrowLeft size={18} /> Reports
+            </button>
             <h1 className="text-3xl font-bold mb-2">Vehicle Analytics</h1>
             <p className="text-slate-400">Comprehensive analysis of vehicle performance, sales, and operations</p>
           </div>

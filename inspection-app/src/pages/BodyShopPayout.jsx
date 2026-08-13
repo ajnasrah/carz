@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, Check, RefreshCw, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, Check, RefreshCw, AlertTriangle } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import {
   fetchPayoutSummary, fetchPayoutLines, fetchPayoutHistory,
@@ -93,7 +93,16 @@ export default function BodyShopPayout() {
         </button>
       </div>
 
-      <h1 className="page-title mb-0">💵 Saturday Payout</h1>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => navigate('/body-shop')}
+          aria-label="Back to the board"
+          className="p-2 -ml-2 rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <h1 className="page-title mb-0">💵 Saturday Payout</h1>
+      </div>
       <p className="text-[11px] text-slate-500 mb-4">
         Week ending {summary?.week_ending ? day(summary.week_ending) : '—'} · agreed charge minus parts
       </p>

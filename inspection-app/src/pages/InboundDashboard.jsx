@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Filter, TrendingUp, AlertTriangle, Clock, CheckCircle, DollarSign, Package, FileText, BarChart3 } from 'lucide-react'
+import { ArrowLeft, Plus, Search, Filter, TrendingUp, AlertTriangle, Clock, CheckCircle, DollarSign, Package, FileText, BarChart3 } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { getInboundStats, INSPECTION_PRIORITIES, CONDITION_GRADES, calculateConditionGrade } from '../services/inboundInspection'
 import HistoryButton from '../components/HistoryButton'
@@ -114,7 +114,14 @@ export default function InboundDashboard() {
   return (
     <div className="page">
       <div className="flex items-center justify-between mb-6">
-        <div>
+        <button
+          onClick={() => navigate('/')}
+          aria-label="Back to dashboard"
+          className="p-2 -ml-2 mr-1 rounded-lg bg-slate-800 text-slate-300 active:bg-slate-700"
+        >
+          <ArrowLeft size={18} />
+        </button>
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold">Inbound Inspections</h1>
           <p className="text-sm text-slate-400">Monitor and manage incoming vehicles</p>
         </div>
