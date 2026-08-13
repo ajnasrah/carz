@@ -7,7 +7,15 @@ import { ChevronDown, Check, X } from 'lucide-react'
 //
 // Options are plain strings. The button shows what's picked, so the panel
 // doesn't have to stay open to know where you are.
-export default function MultiSelect({ label, options, selected, onChange, searchAfter = 8 }) {
+export default function MultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+  searchAfter = 8,
+  plural,
+}) {
+  const many = plural || `${label}s`
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const boxRef = useRef(null)
@@ -40,10 +48,10 @@ export default function MultiSelect({ label, options, selected, onChange, search
 
   const summary =
     selected.length === 0
-      ? `All ${label}s`
+      ? `All ${many}`
       : selected.length === 1
       ? String(selected[0])
-      : `${selected.length} ${label}s`
+      : `${selected.length} ${many}`
 
   return (
     <div className="relative" ref={boxRef}>
@@ -85,7 +93,7 @@ export default function MultiSelect({ label, options, selected, onChange, search
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={`Search ${label.toLowerCase()}s`}
+              placeholder={`Search ${many.toLowerCase()}`}
               className="w-full bg-slate-800 border-b border-slate-700 px-2 py-1.5 text-sm text-white"
             />
           )}

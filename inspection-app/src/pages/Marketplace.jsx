@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal } from 'lucide-react'
+import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal, Send } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isAdminProfile } from '../services/adminSetup'
@@ -9,6 +9,7 @@ import HistoryButton from '../components/HistoryButton'
 import MarketplacePrice from '../components/MarketplacePrice'
 import MultiSelect from '../components/MultiSelect'
 import { fetchPhotoEdits } from '../services/listingPhotos'
+import ShareToBuyer, { ShareCarButton } from '../components/ShareToBuyer'
 import { saveCsv } from '../native/files'
 import { copyText } from '../native/clipboard'
 import { isNative } from '../native/platform'
@@ -81,6 +82,18 @@ function firstPhoto(checklist, edit) {
   return null
 }
 
+// Mileage as bands rather than one "under X" cutoff — "under 150k" swept in
+// every low-mile car too, so there was no way to ask for the 100–150k stuff on
+// its own. Multi-select like the rest, so 50–100k plus 150k+ is one question.
+// Upper bound is exclusive, so the bands don't overlap at the round numbers.
+const MILE_BANDS = [
+  { label: 'Under 50k', min: 0, max: 50000 },
+  { label: '50k – 100k', min: 50000, max: 100000 },
+  { label: '100k – 150k', min: 100000, max: 150000 },
+  { label: '150k – 200k', min: 150000, max: 200000 },
+  { label: '200k+', min: 200000, max: Infinity },
+]
+
 function countDamages(checklist) {
   let n = 0
   for (const p of Object.values(checklist?.exterior || {})) n += (p.damages?.length || 0)
@@ -117,10 +130,12 @@ export default function Marketplace() {
   const [makeFilter, setMakeFilter] = useState([]) // several at once
   const [modelFilter, setModelFilter] = useState([])
   const [yearFilter, setYearFilter] = useState([])
-  const [mileRange, setMileRange] = useState('')
+  const [mileFilter, setMileFilter] = useState([])
   const [sort, setSort] = useState('')
   const [hidden, setHidden] = useState(() => new Set())
   const [photoEdits, setPhotoEdits] = useState(() => new Map())
+  const [picked, setPicked] = useState(() => new Set()) // cars staged for one buyer
+  const [sharing, setSharing] = useState(false)
 
   async function load() {
     const [listRes, hiddenRes] = await Promise.all([
@@ -147,6 +162,15 @@ export default function Marketplace() {
     setCars((list) =>
       list.map((c) => (c.id === id ? { ...c, buy_now: price == null ? null : String(price), price_source: source } : c)),
     )
+  }
+
+  function togglePick(id) {
+    setPicked((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   async function removeCar(stock) {
@@ -182,13 +206,13 @@ export default function Marketplace() {
   )
 
   const activeFilters =
-    makeFilter.length + activeModels.length + yearFilter.length + (mileRange ? 1 : 0)
+    makeFilter.length + activeModels.length + yearFilter.length + mileFilter.length
 
   function clearFilters() {
     setMakeFilter([])
     setModelFilter([])
     setYearFilter([])
-    setMileRange('')
+    setMileFilter([])
   }
 
   const filtered = useMemo(() => {
@@ -196,9 +220,12 @@ export default function Marketplace() {
     if (makeFilter.length) result = result.filter((c) => makeFilter.includes(c.make))
     if (activeModels.length) result = result.filter((c) => activeModels.includes(c.model))
     if (yearFilter.length) result = result.filter((c) => yearFilter.includes(c.year))
-    if (mileRange) {
-      const max = toInt(mileRange)
-      if (max > 0) result = result.filter((c) => toInt(c.mileage) <= max)
+    if (mileFilter.length) {
+      const bands = MILE_BANDS.filter((b) => mileFilter.includes(b.label))
+      result = result.filter((c) => {
+        const m = toInt(c.mileage)
+        return bands.some((b) => m >= b.min && m < b.max)
+      })
     }
     if (search.trim()) {
       const q = search.toUpperCase()
@@ -220,7 +247,7 @@ export default function Marketplace() {
       })
     }
     return result
-  }, [visible, search, makeFilter, activeModels, yearFilter, mileRange, sort])
+  }, [visible, search, makeFilter, activeModels, yearFilter, mileFilter, sort])
 
   return (
     <div className="min-h-screen bg-slate-950 text-white safe-top">
@@ -285,23 +312,13 @@ export default function Marketplace() {
               <MultiSelect label="Make" options={makes} selected={makeFilter} onChange={setMakeFilter} />
               <MultiSelect label="Model" options={models} selected={activeModels} onChange={setModelFilter} />
               <MultiSelect label="Year" options={years} selected={yearFilter} onChange={setYearFilter} />
-              <div className="relative">
-                <select
-                  value={mileRange}
-                  onChange={(e) => setMileRange(e.target.value)}
-                  className={`w-full text-sm rounded-lg px-3 py-2 appearance-none border ${
-                    mileRange
-                      ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300'
-                      : 'bg-slate-800 border-slate-700 text-white'
-                  }`}
-                >
-                  <option value="">Any Miles</option>
-                  <option value="50000">Under 50k</option>
-                  <option value="100000">Under 100k</option>
-                  <option value="150000">Under 150k</option>
-                </select>
-                <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-              </div>
+              <MultiSelect
+                label="Miles"
+                plural="Miles"
+                options={MILE_BANDS.map((b) => b.label)}
+                selected={mileFilter}
+                onChange={setMileFilter}
+              />
             </div>
             {activeFilters > 0 && (
               <button
@@ -333,14 +350,52 @@ export default function Marketplace() {
               <ChevronDown size={12} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
             </div>
           </div>
-          <button
-            onClick={() => exportCsv(filtered)}
-            disabled={!filtered.length}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40 whitespace-nowrap"
-          >
-            Export CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPicked(new Set(filtered.map((c) => c.id)))}
+              disabled={!filtered.length}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 disabled:opacity-40 whitespace-nowrap"
+            >
+              Select all
+            </button>
+            <button
+              onClick={() => exportCsv(filtered)}
+              disabled={!filtered.length}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white disabled:opacity-40 whitespace-nowrap"
+            >
+              Export CSV
+            </button>
+          </div>
         </div>
+
+        {/* Staging bar — appears the moment a car is ticked, so a list for one
+            buyer is built by tapping cars, not by copying links one at a time. */}
+        {picked.size > 0 && (
+          <div className="sticky top-2 z-20 flex items-center gap-2 mb-3 px-3 py-2 rounded-xl bg-emerald-500 text-slate-900 shadow-lg">
+            <span className="text-sm font-bold flex-1">
+              {picked.size} car{picked.size !== 1 ? 's' : ''} selected
+            </span>
+            <button
+              onClick={() => setPicked(new Set())}
+              className="text-xs font-bold px-2 py-1 rounded-lg bg-slate-900/15"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => setSharing(true)}
+              className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-900 text-emerald-400"
+            >
+              <Send size={13} /> Send to buyer
+            </button>
+          </div>
+        )}
+
+        {sharing && (
+          <ShareToBuyer
+            cars={filtered.filter((c) => picked.has(c.id))}
+            onClose={() => setSharing(false)}
+          />
+        )}
 
         {loading ? (
           <p className="text-center text-slate-400 py-12">Loading...</p>
@@ -358,7 +413,9 @@ export default function Marketplace() {
               return (
                 <div
                   key={car.id}
-                  className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden"
+                  className={`bg-slate-900 rounded-xl border overflow-hidden ${
+                    picked.has(car.id) ? 'border-emerald-500' : 'border-slate-800'
+                  }`}
                 >
                   <div className="aspect-[16/9] bg-slate-800 relative">
                     {photo ? (
@@ -371,9 +428,22 @@ export default function Marketplace() {
                         {damages} damage{damages !== 1 ? 's' : ''}
                       </span>
                     )}
-                    <span className="absolute top-2 left-2 text-[10px] px-2 py-0.5 rounded-full bg-black/60 text-white font-semibold">
+                    <span className="absolute bottom-2 left-2 text-[10px] px-2 py-0.5 rounded-full bg-black/60 text-white font-semibold">
                       {photoCount} photos
                     </span>
+                    {/* Tick cars as you browse; the bar at the top sends the
+                        whole set to one buyer in a single message. */}
+                    <button
+                      onClick={() => togglePick(car.id)}
+                      aria-label={picked.has(car.id) ? 'Deselect' : 'Select for a buyer'}
+                      className={`absolute top-2 left-2 w-7 h-7 rounded-full border-2 flex items-center justify-center ${
+                        picked.has(car.id)
+                          ? 'bg-emerald-500 border-emerald-500 text-slate-900'
+                          : 'bg-black/50 border-white/70 text-transparent'
+                      }`}
+                    >
+                      <Check size={15} />
+                    </button>
                   </div>
                   <div className="p-4">
                     <h2 className="font-bold text-white text-lg">{vehicle}</h2>
@@ -404,6 +474,10 @@ export default function Marketplace() {
                         View Details
                       </Link>
                       <HistoryButton stockNumber={car.stock_number} vin={vin} />
+                      <ShareCarButton
+                        car={car}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold active:bg-slate-700"
+                      />
                       {isAdmin && (
                         <button
                           onClick={() => removeCar(car.stock_number)}

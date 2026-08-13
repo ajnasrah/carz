@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check, Image as ImageIcon } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check, Image as ImageIcon, Wrench } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isAdminProfile } from '../services/adminSetup'
 import MarketplacePrice from '../components/MarketplacePrice'
 import PhotoEditor from '../components/PhotoEditor'
+import DamageEditor from '../components/DamageEditor'
 import { fetchPhotoEdit, applyPhotoEdits } from '../services/listingPhotos'
+import { ShareCarButton } from '../components/ShareToBuyer'
+import { listingUrl } from '../services/marketplaceShare'
 import { toInt } from '../services/utils'
 import { STARTUP_ITEMS, TEST_DRIVE_ITEMS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
 import HistoryButton from '../components/HistoryButton'
@@ -116,6 +119,7 @@ export default function MarketplaceListing() {
   const [loading, setLoading] = useState(true)
   const [photoEdit, setPhotoEdit] = useState(null)
   const [editingPhotos, setEditingPhotos] = useState(false)
+  const [editingDamages, setEditingDamages] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -243,6 +247,19 @@ export default function MarketplaceListing() {
           </div>
         </div>
 
+        {/* Share sits at the top: sending a car to a buyer is what this page is
+            for, and it was buried under the whole inspection report. Links are
+            built against the public site, not window.location — inside the app
+            that's capacitor://localhost, which resolves for nobody. */}
+        <div className="flex gap-2 mb-3">
+          <ShareCarButton
+            car={car}
+            label="Send to buyer"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-500 text-slate-900 text-sm font-bold active:bg-emerald-600"
+          />
+          <CopyButton text={listingUrl(car.id)} label="Copy Link" />
+        </div>
+
         {/* Photo gallery */}
         <PhotoGallery photos={dedupedPhotos} />
 
@@ -255,6 +272,18 @@ export default function MarketplaceListing() {
             {uniquePhotos.length !== dedupedPhotos.length &&
               ` · ${uniquePhotos.length - dedupedPhotos.length} removed`}
           </button>
+        )}
+
+        {editingDamages && (
+          <DamageEditor
+            vin={fullVin}
+            checklist={cl}
+            onClose={() => setEditingDamages(false)}
+            onSaved={async () => {
+              const { data } = await supabase.rpc('marketplace_listing_detail', { listing_id: id })
+              if (data?.[0]) setCar(data[0])
+            }}
+          />
         )}
 
         {editingPhotos && (
@@ -328,6 +357,15 @@ export default function MarketplaceListing() {
 
         {/* Condition summary */}
         <Section title={`Condition Report · ${totalDamages} damage${totalDamages !== 1 ? 's' : ''}`}>
+          {isAdmin && (
+            <button
+              onClick={() => setEditingDamages(true)}
+              className="w-full flex items-center justify-center gap-1.5 mb-3 py-2 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold active:bg-slate-700"
+            >
+              <Wrench size={14} /> Add / edit damages
+            </button>
+          )}
+
           {/* Startup */}
           <div className="mb-4">
             <p className="text-xs font-bold text-slate-400 mb-1.5">Quick Check</p>
@@ -429,17 +467,6 @@ export default function MarketplaceListing() {
             <p className="text-[10px] text-slate-500 text-center mt-1">Opens a text to Carz Inc with vehicle details</p>
           </Section>
         )}
-
-        {/* Copy all info */}
-        <Section title="Share">
-          <div className="flex gap-2 flex-wrap">
-            <CopyButton
-              text={`${vehicle} · ${miles.toLocaleString()} mi · VIN: ${fullVin} · ${totalDamages} damages · ${window.location.href}`}
-              label="Copy Summary + Link"
-            />
-            <CopyButton text={window.location.href} label="Copy Link" />
-          </div>
-        </Section>
 
         <p className="text-center text-[10px] text-slate-600 mt-8 mb-4">
           Carz Inc · Memphis, TN · Inspected {car.completed_at ? new Date(car.completed_at).toLocaleDateString() : ''}
