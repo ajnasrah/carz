@@ -287,6 +287,15 @@
     const byVin = new Map();
     for (const r of rows) if (r.vin) byVin.set(r.vin, r);
     const list = [...byVin.values()];
+    // Never clear on an empty set. The DELETE below is unconditional, so a
+    // report with no active rows — a run list, a sold-only export, a file whose
+    // columns didn't map — used to wipe sa_active_cars and take every
+    // marketplace Buy-Now price and SmartAuction link with it. Leaving the last
+    // good snapshot in place is always the safer failure.
+    if (!list.length) {
+      config.log('sa_active_cars: no active rows in this report — snapshot left as-is', 'warn');
+      return 0;
+    }
     const hdr = (extra) => Object.assign({
       apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
       'Content-Type': 'application/json',
