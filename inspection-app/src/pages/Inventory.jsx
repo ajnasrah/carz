@@ -830,40 +830,24 @@ export default function Inventory() {
     if (held == null) where = "NEVER TRACKED";
     else if (since) where = `here ${held}d, since ${since}`;
     else where = `here ${held}d`;
-    return `${n}. ${r.vehicle_vin || r.stock_number} · ${model} · ${age} · ${where}`;
+    return `${n}. ${r.vehicle_vin || r.stock_number} · ${model} · ${age} · ${reportGroup(r)} · ${where}`;
   }
 
+  // The 15 cars at the top of the list you're looking at — same rows, same
+  // order, numbered 1-15.
+  //
+  // It used to take the oldest 15 at EVERY location and concatenate the lot,
+  // which on the unfiltered view is twenty blocks and three hundred lines. That
+  // isn't a report anybody reads, and it isn't what the button looks like it
+  // does. The filters above the list are the selection: narrow to what you
+  // want, then copy what you see.
+  //
+  // Each line now carries its own location, which the block headings used to
+  // provide and a flat list otherwise loses.
   function buildLocationReport() {
-    const groups = new Map();
-    for (const r of filtered) {
-      const key = reportGroup(r);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(r);
-    }
-    // Oldest first = longest sitting untouched, never-tracked above everything,
-    // days owned as the tiebreaker. Same order the list itself uses.
-    const sat = (r) =>
-      r.effective_days_since == null
-        ? Number.MAX_SAFE_INTEGER
-        : r.effective_days_since;
-    const blocks = [...groups.entries()]
-      .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
-      .map(([label, list]) => {
-        const sorted = [...list].sort(
-          (a, b) =>
-            sat(b) - sat(a) ||
-            (parseInt(b.days_on_lot, 10) || 0) -
-              (parseInt(a.days_on_lot, 10) || 0),
-        );
-        const lines = sorted
-          .slice(0, REPORT_LIMIT)
-          .map((r, i) => reportLine(r, i + 1));
-        if (sorted.length > REPORT_LIMIT)
-          lines.push(`+${sorted.length - REPORT_LIMIT} more`);
-        return `${label.toUpperCase()} (${sorted.length})\n${lines.join("\n")}`;
-      });
-    const header = `CARZ INC · ${reportTitle()} · ${fmtShortDate(new Date().toISOString())} · ${filtered.length} cars`;
-    return [header, ...blocks].join("\n\n");
+    const top = filtered.slice(0, REPORT_LIMIT);
+    const header = `CARZ INC · ${reportTitle()} · ${fmtShortDate(new Date().toISOString())} · top ${top.length} of ${filtered.length}`;
+    return [header, ...top.map((r, i) => reportLine(r, i + 1))].join("\n");
   }
 
   async function copyLocationReport() {
@@ -988,7 +972,7 @@ export default function Inventory() {
           onClick={copyLocationReport}
           disabled={filtered.length === 0}
           className="p-2 rounded-lg bg-slate-800 text-slate-400 disabled:opacity-40"
-          title={`Copy the oldest ${REPORT_LIMIT} at each location`}
+          title={`Copy the top ${REPORT_LIMIT} cars shown`}
         >
           {copied === "report" ? (
             <Check size={18} className="text-emerald-400" />
