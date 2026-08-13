@@ -1,5 +1,89 @@
 # Hand-edited native config — reference copies
 
+## Shipping a change (the runbook)
+
+There are **two** places the app lives, and they update by different routes.
+
+`capacitor.config.json` sets no `server.url`, so the native app does **not**
+load carzinc.ai — `cap sync` copies `dist/` into `ios/App/App/public` and the
+app runs that copy. The consequence is the thing people get wrong: **a Vercel
+deploy does not reach the installed iPhone app.** Even a one-line web change
+needs a new TestFlight build to get there.
+
+### 1. Web — carzinc.ai, and the home-screen PWA
+
+```sh
+cd inspection-app
+npx vercel --prod --archive=tgz          # --archive=tgz or the upload dies on EPIPE
+```
+
+Live immediately; browsers and the home-screen PWA pick it up on next load.
+Anything server-side (`api/`, `vercel.json`) only exists after this.
+
+### 2. iPhone app — TestFlight
+
+**Bump the build number first.** App Store Connect rejects an upload whose build
+number it has already seen, and it doesn't tell you kindly. `MARKETING_VERSION`
+is the version humans read (1.0); `CURRENT_PROJECT_VERSION` is the build counter
+and is the one that has to go up **every single upload**.
+
+```sh
+grep -n CURRENT_PROJECT_VERSION ios/App/App.xcodeproj/project.pbxproj   # appears twice, bump both
+npm run build:native                     # vite build + cap sync + pod install
+```
+
+`cap sync` must report **11** Capacitor plugins for ios. Ten means SPM ate the
+speech-recognition plugin — see the CocoaPods section below.
+
+Then, in Xcode (open `ios/App/App.xcworkspace`, **never** the `.xcodeproj`):
+
+1. Destination: **Any iOS Device (arm64)**. Archive is greyed out on a simulator.
+2. **Product → Archive**
+3. Organizer opens → **Distribute App → TestFlight & App Store Connect**
+
+Or from the command line:
+
+```sh
+cd ios/App
+xcodebuild -workspace App.xcworkspace -scheme App -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath /tmp/carzbuild/CarzIMS.xcarchive archive -allowProvisioningUpdates
+
+xcodebuild -exportArchive -archivePath /tmp/carzbuild/CarzIMS.xcarchive \
+  -exportPath /tmp/carzbuild/export \
+  -exportOptionsPlist ../../ios-config/ExportOptions.plist -allowProvisioningUpdates
+```
+
+The export step is not a formality — it re-signs for distribution. See the
+comment in `ExportOptions.plist`.
+
+Then the build processes in App Store Connect (usually 5–15 min, and it is not
+in TestFlight until that finishes) — testers get the update after that. **If
+nobody is being offered an update, it is almost always because no new build was
+uploaded, or the one that was is still processing.**
+
+### When the build breaks with `Unable to resolve module dependency: 'Capacitor'`
+
+Check the pods are actually in sync before believing anything else:
+
+```sh
+cd ios/App && diff Pods/Manifest.lock Podfile.lock && echo in-sync
+```
+
+If they match and `node_modules/@capacitor/ios` exists, nothing is missing — it
+is a stale module cache, and this clears it:
+
+```sh
+rm -rf ~/Library/Developer/Xcode/DerivedData/App-*
+cd inspection-app && npm run build:native
+```
+
+Xcode will not notice on its own; close and reopen the workspace afterwards.
+
+---
+
+## Hand-edited files
+
 `ios/` and `android/` are **generated** by Capacitor. Running `npx cap add ios`
 or `npx cap add android` again (to switch package manager, recover a broken
 project, or onboard a new machine) recreates them from a template and **silently
