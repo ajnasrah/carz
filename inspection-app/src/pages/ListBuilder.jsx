@@ -8,9 +8,12 @@ import {
   TARGET_PROFIT, TARGET_DAYS, DIRECT_URL,
 } from '../services/targetBuyList'
 
-// Matches the extension. Enough to work a band in one go without asking the
-// browser to spawn hundreds of tabs at once.
-const OPEN_BATCH = 50
+// Matches the extension. Five, not fifty — fifty is how many windows a browser
+// will accept before it refuses, not how many a person can work, and on a
+// 50-car list it took a laptop down. Five is a screenful you can review, proxy
+// and close before pressing again. `opened` below is what makes the next press
+// pick up where this one stopped.
+const OPEN_BATCH = 5
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 const num = (n) => (n == null ? '—' : Math.round(n).toLocaleString())
@@ -319,16 +322,16 @@ export default function ListBuilder() {
               {linkFor ? (
                 <>
                   <button onClick={() => openBand('TARGET')} disabled={!bandTotal('TARGET')}
-                    title={`Open TARGET cars only, ${OPEN_BATCH} at a time`}
+                    title={`Open TARGET cars only, ${OPEN_BATCH} at a time — press again for the next ${OPEN_BATCH}`}
                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold
                       bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white transition-colors">
-                    <ExternalLink size={13} /> Open Target ({bandQueue('TARGET').length}/{bandTotal('TARGET')})
+                    <ExternalLink size={13} /> Open Target ({Math.min(OPEN_BATCH, bandQueue('TARGET').length)} of {bandQueue('TARGET').length} left)
                   </button>
                   <button onClick={() => openBand('WATCH')} disabled={!bandTotal('WATCH')}
-                    title={`Open WATCH cars only, ${OPEN_BATCH} at a time`}
+                    title={`Open WATCH cars only, ${OPEN_BATCH} at a time — press again for the next ${OPEN_BATCH}`}
                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold
                       bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:hover:bg-amber-600 text-white transition-colors">
-                    <ExternalLink size={13} /> Open Watch ({bandQueue('WATCH').length}/{bandTotal('WATCH')})
+                    <ExternalLink size={13} /> Open Watch ({Math.min(OPEN_BATCH, bandQueue('WATCH').length)} of {bandQueue('WATCH').length} left)
                   </button>
                   {opened.size > 0 && (
                     <button onClick={() => { setOpened(new Set()); setOpenNote('') }}

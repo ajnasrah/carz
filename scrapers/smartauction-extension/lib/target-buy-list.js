@@ -707,9 +707,15 @@
   // work a page, move to the next, press again. Nothing is ever written off for
   // being absent; it just wasn't on that page.
   //
-  // Still capped, because "all" on a 100-car OVE page means 100 windows. The
-  // overflow stays queued and the next press takes it.
-  const MAX_OPEN_AT_ONCE = 50;
+  // Still capped, because "all" on a 100-car OVE page means 100 windows.
+  //
+  // Five, not fifty. Fifty is how many windows a browser will *accept* before
+  // it refuses; it is not how many a person can work, and on a 50-car list it
+  // took a laptop down. Five is a screenful you can actually review, proxy and
+  // close before pressing again. The overflow stays queued — `opened` below is
+  // what makes the next press pick up where this one stopped, and a car is
+  // only added to it once its window really opened.
+  const MAX_OPEN_AT_ONCE = 5;
   const opened = new Set();
 
   // Both of these sites will take a VIN where they normally want their own
@@ -1076,10 +1082,10 @@
     // "bid on this", the other is "keep an eye on it" — and a single button
     // that opened both buried a handful of targets in a pile of watches.
     html += `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
-      <button id="tblOpenTarget" class="btn btn-small" title="open TARGET cars only, ${MAX_OPEN_AT_ONCE} at a time"
-        style="background:#1b5e20;font-size:10px;padding:3px 8px;">↗ TARGET (${targets.filter((c) => c.vin).length})</button>
-      <button id="tblOpenWatch" class="btn btn-small" title="open WATCH cars only, ${MAX_OPEN_AT_ONCE} at a time"
-        style="background:#e65100;font-size:10px;padding:3px 8px;">↗ WATCH (${watch.filter((c) => c.vin).length})</button>
+      <button id="tblOpenTarget" class="btn btn-small" title="open TARGET cars only, ${MAX_OPEN_AT_ONCE} at a time — press again for the next ${MAX_OPEN_AT_ONCE}"
+        style="background:#1b5e20;font-size:10px;padding:3px 8px;">↗ TARGET (<span id="tblLeftTarget">${targets.filter((c) => c.vin).length}</span> left)</button>
+      <button id="tblOpenWatch" class="btn btn-small" title="open WATCH cars only, ${MAX_OPEN_AT_ONCE} at a time — press again for the next ${MAX_OPEN_AT_ONCE}"
+        style="background:#e65100;font-size:10px;padding:3px 8px;">↗ WATCH (<span id="tblLeftWatch">${watch.filter((c) => c.vin).length}</span> left)</button>
       <button id="tblOpenCheck" class="btn btn-small" style="background:#455a64;font-size:10px;padding:3px 8px;">🔍 Check</button>
       <button id="tblOpenReset" class="btn btn-small" title="offer every car again from the top"
         style="background:#9e9e9e;font-size:10px;padding:3px 8px;">Reset opens</button>
@@ -1129,10 +1135,21 @@
     const setNote = (text, color) => { if (noteEl) { noteEl.textContent = text; noteEl.style.color = color || '#666'; } };
     // Per band, so TARGET progress can't be hidden behind WATCH progress.
     const remainingIn = (v) => bandOf(v).filter((c) => !opened.has(c.vin));
+    // The number ON each button is how many are still unopened, so after a
+    // batch the button itself tells you what the next press will do. Separate
+    // from the note, because openOnPage writes its own result into that and
+    // would wipe a count written there.
+    const setLeftCounts = () => {
+      const t = document.getElementById('tblLeftTarget');
+      const w = document.getElementById('tblLeftWatch');
+      if (t) t.textContent = remainingIn('TARGET').length;
+      if (w) w.textContent = remainingIn('WATCH').length;
+    };
     const setProgress = () => {
       const t = bandOf('TARGET').length - remainingIn('TARGET').length;
       const w = bandOf('WATCH').length - remainingIn('WATCH').length;
       setNote(`${t}/${bandOf('TARGET').length} target · ${w}/${bandOf('WATCH').length} watch opened`);
+      setLeftCounts();
     };
     opened.clear();
     setProgress();
@@ -1160,11 +1177,11 @@
 
     document.getElementById('tblOpenTarget')?.addEventListener('click', async () => {
       const batch = nextBatch('TARGET');
-      if (batch) await openOnPage(batch, setNote, logLine);
+      if (batch) { await openOnPage(batch, setNote, logLine); setLeftCounts(); }
     });
     document.getElementById('tblOpenWatch')?.addEventListener('click', async () => {
       const batch = nextBatch('WATCH');
-      if (batch) await openOnPage(batch, setNote, logLine);
+      if (batch) { await openOnPage(batch, setNote, logLine); setLeftCounts(); }
     });
     // Check reports without opening or consuming anything. It follows TARGET
     // while any are left, since that's the band you'd act on first.
