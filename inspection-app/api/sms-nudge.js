@@ -56,13 +56,21 @@ async function sendSms(to, body) {
   const from = process.env.TWILIO_FROM
   if (!sid || !token || !from) return { sent: false, reason: 'twilio_not_configured' }
 
+  // TWILIO_FROM takes either a plain number or a Messaging Service SID. An
+  // A2P-10DLC-registered account (the BN… bundle) usually sends through a
+  // Messaging Service, and that goes in a different field — passing an MG SID
+  // as From is rejected outright, with an error that doesn't say why.
+  const route = from.startsWith('MG')
+    ? { MessagingServiceSid: from }
+    : { From: from }
+
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({ To: to, From: from, Body: body }),
+    body: new URLSearchParams({ To: to, ...route, Body: body }),
   })
   if (!res.ok) return { sent: false, reason: (await res.text()).slice(0, 300) }
   return { sent: true }
@@ -79,6 +87,20 @@ export default async function handler(req, res) {
   if (!ok) return res.status(401).json({ error: 'unauthorized' })
 
   const dryRun = req.query?.dry === '1' || !process.env.TWILIO_ACCOUNT_SID
+
+  // Nobody gets chased on a Sunday. The weekday is read in Memphis time, not
+  // UTC — the cron fires at 14:00 UTC, which is still Sunday morning locally,
+  // so a UTC weekday would be right by luck now and wrong the moment the
+  // schedule or daylight saving moves.
+  //
+  // A send that comes due on a Sunday isn't lost: last_sent_at doesn't move, so
+  // Monday's run picks it up. ?force=1 overrides, for testing.
+  const memphisDay = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', weekday: 'short',
+  }).format(new Date())
+  if (memphisDay === 'Sun' && req.query?.force !== '1') {
+    return res.status(200).json({ skipped: 'sunday', memphisDay })
+  }
 
   try {
     const due = await sb(
