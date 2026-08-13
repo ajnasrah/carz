@@ -23,6 +23,7 @@ const BUCKETS = {
   dispatch_memphis: 'waiting on pickup — Memphis',
   dispatch_alabama: 'waiting on pickup — AL/MS',
   dispatch_west: 'waiting on pickup — CO/OK/KS',
+  dispatch_private: 'bought private, not collected',
 }
 
 function sb(path, init = {}) {
@@ -127,14 +128,22 @@ export default async function handler(req, res) {
       const gapDays = person.last_sent_at
         ? (now - new Date(person.last_sent_at).getTime()) / 86400000
         : Infinity
-      if (gapDays < person.every_days) {
+      // ?all=1 previews everyone regardless of when they were last texted —
+      // otherwise a dry run right after a real send shows nothing but "sent 0d
+      // ago", which is exactly when you want to check what changed.
+      const ignoreGap = req.query?.all === '1' && dryRun
+      if (!ignoreGap && gapDays < person.every_days) {
         results.push({ name: person.name, skipped: `sent ${gapDays.toFixed(1)}d ago` })
         continue
       }
 
       const cars = await sb('rpc/nudge_cars', {
         method: 'POST',
-        body: JSON.stringify({ p_bucket: person.bucket, p_limit: person.cars }),
+        body: JSON.stringify({
+          p_bucket: person.bucket,
+          p_limit: person.cars,
+          p_min_days: person.min_days ?? 0,
+        }),
       }).then((r) => r.json())
 
       const body = buildMessage(person.name, person.bucket, Array.isArray(cars) ? cars : [])
