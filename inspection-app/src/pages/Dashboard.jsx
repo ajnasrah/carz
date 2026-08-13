@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { LogOut } from 'lucide-react'
+import { LogOut, Menu } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
 import { fetchSoldRecent, ymdMinusDays } from '../services/soldReports'
 import { store } from '../native/storage'
@@ -8,6 +8,7 @@ import { averages } from '../services/compare'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 import VinSearchBar from '../components/VinSearchBar'
+import ActionDrawer from '../components/ActionDrawer'
 import BuySellPace from '../components/BuySellPace'
 
 // Rolling windows for the sold side of the comparison. The longest one is what
@@ -41,7 +42,7 @@ export default function Dashboard() {
     needsDispatchCount: null,
     inspectingCount: null,
   })
-  const [showMore, setShowMore] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [soldRows, setSoldRows] = useState(null) // null = still loading
   const [soldDays, setSoldDays] = useState(30)
 
@@ -144,7 +145,14 @@ export default function Dashboard() {
     <div className="page pb-24">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <div>
+        <button
+          onClick={() => setMenuOpen(true)}
+          className="p-2 -ml-2 mr-1 rounded-lg bg-slate-800 text-slate-300"
+          aria-label="Open menu"
+        >
+          <Menu size={20} />
+        </button>
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-emerald-400">CARZ INC</h1>
           <p className="text-[11px] uppercase tracking-wide text-slate-500">Inventory Management System</p>
           <p className="text-xs text-slate-400 mt-0.5">{profile?.name || user?.phone || 'Hi'}</p>
@@ -153,6 +161,8 @@ export default function Dashboard() {
           <LogOut size={20} />
         </button>
       </div>
+
+      <ActionDrawer open={menuOpen} onClose={() => setMenuOpen(false)} />
 
       {/* Global VIN / stock search — opens a quick-info popup */}
       <VinSearchBar />
@@ -214,62 +224,34 @@ export default function Dashboard() {
         <BuySellPace />
       </div>
 
-      {/* Alerts */}
-      <div className="space-y-2 mb-4">
-        {stats.stuckCount > 0 && (
-          <Link
-            to="/inventory?filter=stuck21"
-            className="flex items-center justify-between p-3 rounded-xl bg-red-500/15 border border-red-500/40"
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">🔴</span>
-              <div>
-                <div className="text-sm font-bold text-red-400">{stats.stuckCount} cars</div>
-                <div className="text-[11px] text-red-300/80">Over 21 days — location not updated</div>
-              </div>
-            </div>
-            <span className="text-red-400 text-xl">›</span>
-          </Link>
-        )}
-        {stats.needsDispatchCount > 0 && (
-          <Link
-            to="/inventory?filter=needs_dispatch"
-            className="flex items-center justify-between p-3 rounded-xl bg-orange-500/15 border border-orange-500/40"
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">🚛</span>
-              <div>
-                <div className="text-sm font-bold text-orange-400">{stats.needsDispatchCount} cars need dispatch</div>
-                <div className="text-[11px] text-orange-300/80">Frazer code Z — not on an active Super Dispatch</div>
-              </div>
-            </div>
-            <span className="text-orange-400 text-xl">›</span>
-          </Link>
-        )}
-      </div>
-
-      {/* Action grid — big buttons */}
-      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">What do you want to do?</p>
-      <div className="grid grid-cols-3 gap-2">
-        <ActionTile to="/lot" emoji="🚶" label="Walk Lot" />
-        <ActionTile to="/inventory" emoji="🚗" label="Cars" />
-        <ActionTile to="/body-shop" emoji="🎨" label="Body Shop" />
-        <ActionTile to="/list-builder" emoji="🔨" label="List Builder" />
-        <ActionTile to="/marketplace" emoji="🏪" label="Marketplace" />
-        <ActionTile to="/front-lot-aging" emoji="⏰" label="Lot Aging" />
-        <ActionTile to="/buyer-match" emoji="🎯" label="Buyers" />
-        <ActionTile to="/reports" emoji="📈" label="Reports" />
-        <ActionTile onClick={() => setShowMore((s) => !s)} emoji={showMore ? '✕' : '⋯'} label={showMore ? 'Less' : 'More'} />
-        {showMore && (
-          <>
-            <ActionTile to="/pull-list" emoji="📋" label="Pull List" />
-            <ActionTile to="/inspections" emoji="📝" label="Inspect" />
-            <ActionTile to="/inbound" emoji="📥" label="Inbound" />
-            <ActionTile to="/lookup" emoji="📊" label="MMR/BB" />
-            <ActionTile href="/training/" emoji="🎓" label="Training" />
-          </>
-        )}
-      </div>
+      {/* Alerts — two counts, side by side and cut to the bone. They're a
+          glance on the way to somewhere else, not something to read; the page
+          they open explains itself. A lone alert takes the full width rather
+          than sitting next to a gap. */}
+      {(stats.stuckCount > 0 || stats.needsDispatchCount > 0) && (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {stats.stuckCount > 0 && (
+            <AlertTile
+              to="/inventory?filter=stuck21"
+              emoji="🔴"
+              count={stats.stuckCount}
+              label="Stuck 21d+"
+              className="bg-red-500/15 border-red-500/40 text-red-400"
+              alone={!(stats.needsDispatchCount > 0)}
+            />
+          )}
+          {stats.needsDispatchCount > 0 && (
+            <AlertTile
+              to="/inventory?filter=needs_dispatch"
+              emoji="🚛"
+              count={stats.needsDispatchCount}
+              label="Need dispatch"
+              className="bg-orange-500/15 border-orange-500/40 text-orange-400"
+              alone={!(stats.stuckCount > 0)}
+            />
+          )}
+        </div>
+      )}
 
       {(profile?.role === 'admin' || isPrimaryAdmin(profile?.phone)) && (
         <Link 
@@ -283,6 +265,20 @@ export default function Dashboard() {
         </Link>
       )}
     </div>
+  )
+}
+
+function AlertTile({ to, emoji, count, label, className, alone }) {
+  return (
+    <Link
+      to={to}
+      className={`flex items-center gap-2 p-3 rounded-xl border ${className} ${alone ? 'col-span-2' : ''}`}
+    >
+      <span className="text-xl leading-none">{emoji}</span>
+      <span className="text-lg font-bold leading-none">{count}</span>
+      <span className="text-[11px] font-semibold opacity-80 leading-tight">{label}</span>
+      <span className="ml-auto text-lg leading-none opacity-70">›</span>
+    </Link>
   )
 }
 
