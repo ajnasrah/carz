@@ -12,6 +12,7 @@ export default function CompareBox({
   rowLabel = 'Name',
   initialShown = 8,
   footnote,
+  highlight,
 }) {
   const [sortKey, setSortKey] = useState('count')
   const [showAll, setShowAll] = useState(false)
@@ -19,6 +20,12 @@ export default function CompareBox({
   const sorted = useMemo(() => {
     const copy = [...rows]
     copy.sort((a, b) => {
+      // Whoever is picked in the filter bar sits at the top, whatever the sort —
+      // you asked about them, you shouldn't have to hunt for them.
+      if (highlight) {
+        if (a.label === highlight) return -1
+        if (b.label === highlight) return 1
+      }
       const av = a[sortKey]
       const bv = b[sortKey]
       if (av == null && bv == null) return 0
@@ -28,7 +35,7 @@ export default function CompareBox({
       return bv - av
     })
     return copy
-  }, [rows, sortKey])
+  }, [rows, sortKey, highlight])
 
   const shown = showAll ? sorted : sorted.slice(0, initialShown)
 
@@ -85,8 +92,19 @@ export default function CompareBox({
         </div>
 
         {shown.map((r) => (
-          <div key={r.label} className="grid gap-x-3 items-baseline py-1.5 border-b border-slate-800/50" style={grid}>
-            <span className="text-[11px] text-slate-400 truncate" title={r.label}>{r.label}</span>
+          <div
+            key={r.label}
+            className={`grid gap-x-3 items-baseline py-1.5 border-b border-slate-800/50 ${
+              r.label === highlight ? 'bg-emerald-500/10 -mx-2 px-2 rounded' : ''
+            }`}
+            style={grid}
+          >
+            <span
+              className={`text-[11px] truncate ${r.label === highlight ? 'text-emerald-300 font-bold' : 'text-slate-400'}`}
+              title={r.label}
+            >
+              {r.label}
+            </span>
             <span className="text-xs text-slate-300 text-right tabular-nums">{r.count}</span>
             {columns.map((c) => (
               <span key={c.key} className={`text-xs font-semibold text-right tabular-nums ${tone(c, r[c.key])}`}>

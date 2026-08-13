@@ -14,6 +14,8 @@ import {
 } from '../services/soldReports'
 import XLSXWriter from '../services/xlsxWriter'
 import CompareBox from '../components/CompareBox'
+import InventoryVsSold from '../components/InventoryVsSold'
+import BuySellPace from '../components/BuySellPace'
 import { compareGroups, COMPARE_COLUMNS } from '../services/compare'
 
 // How many cars the By Profit list paints before you ask for more.
@@ -220,7 +222,32 @@ export default function SoldReports({ embedded = false }) {
 
   // Buyer breakdown — fetchSoldWithBuyers normalizes sale_date to ISO, so we
   // can use the shared filterByPeriod helper.
-  const filteredBuyerRows = useMemo(() => filterByPeriod(buyerRows, periodKey), [buyerRows, periodKey])
+  // Make/model come off sold_clean ('make') while these rows carry Frazer's
+  // 'vehicle_make', so match on text rather than assuming identical casing.
+  const sameText = (a, b) => String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase()
+
+  // Everything the filter bar says, applied. This used to be period-only, which
+  // is why picking a buyer changed the Summary numbers but left the Buyers,
+  // Vendors and Customers tabs sitting there unchanged — they read this set.
+  const filteredBuyerRows = useMemo(() => {
+    let rows = filterByPeriod(buyerRows, periodKey)
+    if (filterMake) rows = rows.filter((r) => sameText(r.vehicle_make, filterMake))
+    if (filterModel) rows = rows.filter((r) => sameText(r.vehicle_model, filterModel))
+    if (filterBuyer) rows = rows.filter((r) => r.buyer === filterBuyer)
+    if (filterVendor) rows = rows.filter((r) => r.vendor === filterVendor)
+    return rows
+  }, [buyerRows, periodKey, filterMake, filterModel, filterBuyer, filterVendor])
+
+  // The comparison deliberately does NOT narrow to the picked buyer/vendor —
+  // a table of one row against a baseline of itself compares nothing. Picking
+  // someone pins and highlights their row instead, so you can read them against
+  // the pack, which is the question being asked.
+  const compareRows = useMemo(() => {
+    let rows = filterByPeriod(buyerRows, periodKey)
+    if (filterMake) rows = rows.filter((r) => sameText(r.vehicle_make, filterMake))
+    if (filterModel) rows = rows.filter((r) => sameText(r.vehicle_model, filterModel))
+    return rows
+  }, [buyerRows, periodKey, filterMake, filterModel])
   const buyers    = useMemo(() => groupByBuyer(filteredBuyerRows), [filteredBuyerRows])
   const vendors   = useMemo(() => groupByField(filteredBuyerRows, 'vendor'),   [filteredBuyerRows])
   const customers = useMemo(() => groupByField(filteredBuyerRows, 'customer'), [filteredBuyerRows])
@@ -236,12 +263,12 @@ export default function SoldReports({ embedded = false }) {
     profit: r.profit_on_sale,
   })
   const buyerCompare = useMemo(
-    () => compareGroups(filteredBuyerRows, { keyOf: (r) => r.buyer, get: soldMetrics, minCount: 2 }),
-    [filteredBuyerRows],
+    () => compareGroups(compareRows, { keyOf: (r) => r.buyer, get: soldMetrics, minCount: 2 }),
+    [compareRows],
   )
   const vendorCompare = useMemo(
-    () => compareGroups(filteredBuyerRows, { keyOf: (r) => r.vendor, get: soldMetrics, minCount: 2 }),
-    [filteredBuyerRows],
+    () => compareGroups(compareRows, { keyOf: (r) => r.vendor, get: soldMetrics, minCount: 2 }),
+    [compareRows],
   )
 
   const sortedMakes = useMemo(() => {
@@ -457,6 +484,7 @@ export default function SoldReports({ embedded = false }) {
       <div className="flex gap-1.5 mb-4 overflow-x-auto -mx-4 px-4">
         {[
           { key: 'summary',   label: '📊 Summary' },
+          { key: 'pace',      label: '⚖️ Pace' },
           { key: 'cars',      label: '📉 By Profit' },
           { key: 'buyers',    label: '👥 Buyers' },
           { key: 'vendors',   label: '🏷️ Vendors' },
@@ -473,6 +501,17 @@ export default function SoldReports({ embedded = false }) {
           >{t.label}</button>
         ))}
       </div>
+
+      {/* Pace tab — the two "how is the lot doing" reads, together: what a car
+          in stock costs against what a sold one cost, and how fast cars come in
+          against how fast they go out. Both carry their own period control,
+          because they answer over different spans than the page filter. */}
+      {tab === 'pace' && (
+        <div className="grid gap-4 mb-4 lg:grid-cols-2 lg:items-start">
+          <InventoryVsSold />
+          <BuySellPace />
+        </div>
+      )}
 
       {/* KPI strip — always visible (summary of current period) */}
       {tab === 'summary' && (
@@ -884,6 +923,7 @@ export default function SoldReports({ embedded = false }) {
           rows={buyerCompare.groups}
           baseline={buyerCompare.baseline}
           baselineLabel="All buyers"
+          highlight={filterBuyer}
           footnote={buyerCompare.hiddenCars ? `${buyerCompare.hiddenCars} one-off cars not shown` : ''}
         />
       </Section>
@@ -954,6 +994,7 @@ export default function SoldReports({ embedded = false }) {
             rows={vendorCompare.groups}
             baseline={vendorCompare.baseline}
             baselineLabel="All vendors"
+            highlight={filterVendor}
             footnote={vendorCompare.hiddenCars ? `${vendorCompare.hiddenCars} one-off cars not shown` : ''}
           />
         </Section>
