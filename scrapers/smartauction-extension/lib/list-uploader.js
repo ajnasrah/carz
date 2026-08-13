@@ -1543,6 +1543,47 @@
   // SmartAuction inventory export. All statuses in one file — infer
   // status from which date columns are populated. No physical location
   // change; only listing status + sold tracking.
+  // SmartAuction hands out more than one export and they don't agree on column
+  // names — InventoryResults says "Buy Now" and "VIN", other exports say
+  // "Buy Now Price" or "Vin". The old mapping read exactly one spelling of each,
+  // so a report using any other name produced rows with no VIN, which were then
+  // dropped — leaving sa_active_cars empty and every marketplace card reading
+  // "No price" with nothing in the log to explain it. Look every field up by
+  // alias instead, and uppercase the VIN so it joins to inventory.
+  function pickCol(row, names) {
+    for (const n of names) {
+      const v = row[n];
+      if (v != null && String(v).trim() !== '') return String(v).trim();
+    }
+    return '';
+  }
+  function toDec(v) {
+    const n = Number(String(v).replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) && n !== 0 ? n : null;
+  }
+  function toIntCol(v) {
+    const n = parseInt(String(v).replace(/[^0-9-]/g, ''), 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  function mapActiveRow(r) {
+    const vin = pickCol(r, ['VIN', 'Vin', 'vin', 'Vehicle VIN']).toUpperCase();
+    if (!vin) return null;
+    return {
+      vin,
+      year: toIntCol(pickCol(r, ['Year', 'Vehicle Year'])),
+      make: pickCol(r, ['Make', 'Vehicle Make']) || null,
+      model: pickCol(r, ['Model', 'Vehicle Model']) || null,
+      trim: pickCol(r, ['Trim']) || null,
+      drivetrain: pickCol(r, ['Drivetrain', 'Drive Train']) || null,
+      odometer: toIntCol(pickCol(r, ['Odometer', 'Mileage', 'Miles'])),
+      color: pickCol(r, ['Short Color', 'Color', 'Exterior Color']) || null,
+      buy_now: toDec(pickCol(r, ['Buy Now', 'Buy Now Price', 'BuyNow', 'Buy It Now', 'Buy Now Amount'])),
+      opening_price: toDec(pickCol(r, ['Opening Price', 'Opening Bid', 'Starting Price', 'Start Price'])),
+      location: pickCol(r, ['Location', 'Auction', 'Seller Location']) || null,
+      detail_url: pickCol(r, ['Vehicle Detail Page', 'Detail Page', 'Detail URL', 'Vehicle Detail URL']) || null,
+    };
+  }
+
   async function handleSmartAuction(file) {
     // Clear previous results
     const summaryEl = document.getElementById('luSummaryBanner');
@@ -1651,22 +1692,31 @@
     // SmartAuction link + Buy-Now price for every active car (one upload does it
     // all — no separate Active-List upload needed). Reuses BuyerMatch's mapping.
     try {
-      const mapA = window.BuyerMatchUploader && window.BuyerMatchUploader.mapActive;
-      if (mapA) {
-        const activeSa = [];
-        const seenVin = new Set();
-        for (const r of rows) {
-          const vin = (r.VIN || r.Vin || '').toUpperCase();
-          if (!vin || seenVin.has(vin)) continue;
-          if (r['Sale Date'] || r['Removal Date'] || r['Hold Date']) continue; // active only
-          seenVin.add(vin);
-          const rec = mapA(r);
-          if (rec.vin) activeSa.push(rec);
-        }
-        const saOk = await replaceActiveCars(activeSa);
-        config.log(`sa_active_cars: replaced with ${saOk} active cars (SA links + prices)`, 'ok');
-      } else {
-        config.log('BuyerMatch uploader not loaded — skipped sa_active_cars refresh', 'warn');
+      const activeSa = [];
+      const seenVin = new Set();
+      for (const r of rows) {
+        // Sold and removed are gone from the listing and have no live price.
+        // A HOLD is not: the car is still listed, still ours, still carries its
+        // Buy Now, and the marketplace still shows it — marketplace_listings
+        // only hides sa_status 'sold'. Excluding holds here is what left held
+        // cars reading "No price" while the SmartAuction export sat there with
+        // a price in it, and on a day when most of the book is on hold it
+        // emptied the snapshot outright.
+        if (r['Sale Date'] || r['Removal Date']) continue;
+        const rec = mapActiveRow(r);
+        if (!rec || seenVin.has(rec.vin)) continue;
+        seenVin.add(rec.vin);
+        const seg = window.BuyerMatchUploader && window.BuyerMatchUploader.segment;
+        if (seg) rec.segment = seg(rec.make, rec.model);
+        activeSa.push(rec);
+      }
+      const priced = activeSa.filter((r) => r.buy_now != null || r.opening_price != null).length;
+      const saOk = await replaceActiveCars(activeSa);
+      config.log(`sa_active_cars: ${saOk} active cars saved, ${priced} with a price`, priced ? 'ok' : 'warn');
+      // Say it out loud. A silent null price looks identical to "the upload
+      // didn't run", and the marketplace just reads "No price" either way.
+      if (activeSa.length && !priced) {
+        config.log('No Buy Now / Opening Price column in this export — marketplace prices will stay blank. Use an export that includes them, or set prices by hand on the marketplace.', 'warn');
       }
     } catch (e) {
       config.log(`sa_active_cars refresh failed: ${e.message}`, 'warn');
