@@ -59,10 +59,11 @@ function canonicalLoc(physLoc) {
   return physLoc === "jorge" ? "body_shop" : physLoc;
 }
 
-// How many cars each location contributes to the copied report. Past ~15 the
-// paste is unreadable on a phone and nobody chases car #16 anyway — the block
-// still says how many were left off.
-const REPORT_LIMIT = 15;
+// How many cars the copy button puts on the clipboard, off the top of whatever
+// list is on screen. Five, because this gets pasted into a message and acted on
+// — a short list someone actually chases beats a long one they skim. Narrow
+// with the filters to change WHICH five.
+const REPORT_LIMIT = 5;
 
 // Friendly ?filter= values other pages link in with (Dashboard tiles, the
 // aging pages). Everything else in the URL is an internal filter value written
@@ -847,7 +848,9 @@ export default function Inventory() {
   function buildLocationReport() {
     const top = filtered.slice(0, REPORT_LIMIT);
     const header = `CARZ INC · ${reportTitle()} · ${fmtShortDate(new Date().toISOString())} · top ${top.length} of ${filtered.length}`;
-    return [header, ...top.map((r, i) => reportLine(r, i + 1))].join("\n");
+    // Blank line between entries: this lands in a text message, where five
+    // unbroken lines read as one paragraph and the eye can't find a car in it.
+    return [header, ...top.map((r, i) => reportLine(r, i + 1))].join("\n\n");
   }
 
   async function copyLocationReport() {
