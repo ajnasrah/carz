@@ -11,8 +11,8 @@ import { supabase } from '../services/supabase'
 // shop_locations()), not here, so this card, any report and any future alert
 // can't disagree about what "at the mechanic" means.
 const SHOPS = [
-  { key: 'body_shop', label: 'Body Shop', emoji: '🎨', to: '/inventory?filter=body_shop' },
-  { key: 'mechanic', label: 'Mechanic', emoji: '🔧', to: '/inventory?filter=mechanic' },
+  { key: 'body_shop', label: 'Body Shop', emoji: '🎨', to: '/inventory?filter=body_shop_cars' },
+  { key: 'mechanic', label: 'Mechanic', emoji: '🔧', to: '/inventory?filter=mechanic_cars' },
 ]
 
 const pretty = (slug) =>
@@ -54,9 +54,11 @@ export default function ShopTally() {
             </div>
 
             <div className="flex items-baseline gap-2 mt-0.5">
-              <span className="text-2xl font-bold text-white leading-none">
+              {/* The number is the way in — it lands on that shop's cars,
+                  oldest first, which is what you open it to look at. */}
+              <Link to={shop.to} className="text-2xl font-bold text-white leading-none active:text-emerald-400">
                 {rows == null ? '—' : (r?.cars ?? 0)}
-              </span>
+              </Link>
               {/* More cars than a week ago means the pile is building: red. */}
               {delta != null && delta !== 0 && (
                 <span className={`text-[11px] font-bold ${delta > 0 ? 'text-red-400' : 'text-emerald-400'}`}>

@@ -74,6 +74,11 @@ const FILTER_ALIASES = {
   stale: "__stale__",
   needs_dispatch: "__needs_dispatch__",
   front_lot_aging: "__front_lot_aging__",
+  // The dashboard's shop tally links straight in here. A shop is several
+  // location slugs — Jorge and body_shop are one place under two names, the
+  // mechanic is nine — so these can't be a plain physical_location filter.
+  body_shop_cars: "__shop_body_shop__",
+  mechanic_cars: "__shop_mechanic__",
 };
 const FILTER_SLUGS = Object.fromEntries(
   Object.entries(FILTER_ALIASES).map(([slug, internal]) => [internal, slug]),
@@ -124,6 +129,9 @@ export default function Inventory() {
   const [historyVin, setHistoryVin] = useState(null); // VIN for history modal
   const [showBulkEdit, setShowBulkEdit] = useState(false); // bulk location edit modal
   const [copied, setCopied] = useState(null); // which copy button just fired
+  // Which slugs belong to which shop is decided in the database
+  // (shop_locations), so this page and the dashboard tally always agree.
+  const [shopLocs, setShopLocs] = useState({});
 
   async function load() {
     setLoading(true);
@@ -312,6 +320,18 @@ export default function Inventory() {
     setSearchParams,
   ]);
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(
+      ["body_shop", "mechanic"].map((shop) =>
+        supabase.rpc("shop_locations", { p_shop: shop }).then(({ data }) => [shop, data || []]),
+      ),
+    ).then((pairs) => {
+      if (!cancelled) setShopLocs(Object.fromEntries(pairs));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   const LOCATION_FILTERS = [
     "__loc_M__",
     "__loc_J__",
@@ -482,6 +502,15 @@ export default function Inventory() {
             !loc.sa_status  // Not listed on SmartAuction
           );
         });
+      } else if (sectionFilter.startsWith("__shop_")) {
+        // Everything physically at that shop, whichever slug it arrived under.
+        // The page's default sort is longest-untouched first, so this lands on
+        // the oldest cars in the section — which is the point of opening it.
+        const shop = sectionFilter.slice(7, -2);
+        const set = new Set(shopLocs[shop] || []);
+        result = result.filter((r) =>
+          set.has(locMap.get(r.stock_number)?.physical_location),
+        );
       } else if (sectionFilter === "__other_small__") {
         // Consolidated "Other": any physical_location with <5 cars
         const counts = {};
@@ -561,7 +590,7 @@ export default function Inventory() {
       });
     }
     return result;
-  }, [rows, search, sectionFilter, costMap, locMap, buyerFilter, vendorFilter]);
+  }, [rows, search, sectionFilter, costMap, locMap, buyerFilter, vendorFilter, shopLocs]);
 
   const totalCost = useMemo(
     () =>
@@ -793,6 +822,8 @@ export default function Inventory() {
     __other_small__: "Other locations",
     __loc_Z_no_disp__: "Transport (Z), not dispatched",
     __loc_transit__: "In Transit",
+    __shop_body_shop__: "Body Shop (all of Jorge's)",
+    __shop_mechanic__: "Mechanic (every shop)",
   };
 
   function reportTitle() {
