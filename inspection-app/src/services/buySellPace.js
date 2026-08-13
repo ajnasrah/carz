@@ -81,21 +81,32 @@ export function periodTitle(start, mode) {
     : `Week of ${MONTHS[Number(m) - 1]} ${Number(d)}`
 }
 
+// `buyer` is OUR buyer — the person who went and got the car — not the customer
+// who took it off the lot. It sits on inventory and on the raw sold table, but
+// not on the sold_clean view, so the sold side needs a stock_number → buyer map
+// alongside. Two thin columns over the whole table beats chunked ?in=(…) joins
+// across a 200-day window's worth of stock numbers.
+export const UNASSIGNED = 'UNASSIGNED'
+const buyerOf = (v) => String(v ?? '').trim().toUpperCase() || UNASSIGNED
+
 // One fetch covers both modes; switching Weekly/Monthly re-buckets in memory,
 // the same way the Inventory vs Sold window picker re-slices rather than
 // round-trips.
 export async function fetchBuySellPace() {
   const cutoff = shiftDays(toYmd(new Date()), -MAX_LOOKBACK)
 
-  const [invRows, soldRows] = await Promise.all([
-    selectAll(() => supabase.from('inventory').select('stock_number, purchase_date')),
+  const [invRows, soldRows, buyerRows] = await Promise.all([
+    selectAll(() => supabase.from('inventory').select('stock_number, purchase_date, buyer')),
     selectAll(() =>
       supabase
         .from('sold_clean')
         .select('stock_number, sale_date, days_on_lot')
         .gte('sale_date', cutoff),
     ),
+    selectAll(() => supabase.from('sold').select('stock_number, buyer')),
   ])
+
+  const soldBuyer = new Map(buyerRows.map((r) => [r.stock_number, r.buyer]))
 
   const buys = []
   const sells = []
@@ -103,19 +114,20 @@ export async function fetchBuySellPace() {
 
   for (const r of invRows) {
     const iso = mmddyyToIso(r.purchase_date)
-    if (isYmd(iso)) buys.push(iso)
+    if (isYmd(iso)) buys.push({ d: iso, buyer: buyerOf(r.buyer) })
     else undatedBuys += 1
   }
 
   for (const r of soldRows) {
     const sale = String(r.sale_date || '').slice(0, 10)
     if (!isYmd(sale)) continue
-    sells.push(sale)
+    const buyer = buyerOf(soldBuyer.get(r.stock_number))
+    sells.push({ d: sale, buyer })
     // No days_on_lot means no way back to the buy date. Counted rather than
     // dropped in silence — a pace chart that quietly omits cars reads as a
     // slowdown that never happened.
     const dol = Number(r.days_on_lot)
-    if (Number.isFinite(dol) && dol >= 0) buys.push(shiftDays(sale, -Math.round(dol)))
+    if (Number.isFinite(dol) && dol >= 0) buys.push({ d: shiftDays(sale, -Math.round(dol)), buyer })
     else undatedBuys += 1
   }
 
@@ -139,19 +151,44 @@ export function bucketPace(pace, mode) {
     title: periodTitle(start, mode),
     bought: 0,
     sold: 0,
+    byBuyer: new Map(),
   }))
   const slot = new Map(starts.map((s, i) => [s, i]))
 
+  const tally = (row, buyer, field) => {
+    let b = row.byBuyer.get(buyer)
+    if (!b) { b = { buyer, bought: 0, sold: 0 }; row.byBuyer.set(buyer, b) }
+    b[field] += 1
+  }
+
   if (pace) {
-    for (const d of pace.buys) {
+    for (const { d, buyer } of pace.buys) {
       const i = slot.get(periodStart(d, mode))
-      if (i != null) rows[i].bought += 1
+      if (i == null) continue
+      rows[i].bought += 1
+      tally(rows[i], buyer, 'bought')
     }
-    for (const d of pace.sells) {
+    for (const { d, buyer } of pace.sells) {
       const i = slot.get(periodStart(d, mode))
-      if (i != null) rows[i].sold += 1
+      if (i == null) continue
+      rows[i].sold += 1
+      tally(rows[i], buyer, 'sold')
     }
   }
 
-  return rows.map((r, i) => ({ ...r, net: r.bought - r.sold, current: i === rows.length - 1 }))
+  return rows.map((r, i) => ({
+    ...r,
+    net: r.bought - r.sold,
+    current: i === rows.length - 1,
+    // Worst offender first: whoever is putting the most cars on the lot beyond
+    // what came off it. Ties break on volume so a busy buyer sitting at even
+    // outranks a quiet one, and the name breaks the rest so the order is stable
+    // between renders rather than shuffling on every hover.
+    buyers: [...r.byBuyer.values()]
+      .map((b) => ({ ...b, net: b.bought - b.sold }))
+      .sort((a, b) =>
+        b.net - a.net ||
+        (b.bought + b.sold) - (a.bought + a.sold) ||
+        a.buyer.localeCompare(b.buyer)),
+  }))
 }

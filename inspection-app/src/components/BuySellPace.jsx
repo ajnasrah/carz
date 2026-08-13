@@ -160,6 +160,28 @@ export default function BuySellPace() {
         </span>
       </div>
 
+      {/* Whose lot is growing. The card total says the pile got bigger; it
+          doesn't say who put the cars there, and that's the part you can act on.
+          Follows whichever column is being touched, so the same list answers
+          "this week" and "back in June" without a second control. */}
+      {!loading && active?.buyers?.length > 0 && (
+        <div className="mt-3 pt-2 border-t border-slate-700">
+          <div className="flex items-baseline justify-between mb-1">
+            <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">By buyer</span>
+            <span className="text-[9px] text-slate-600 truncate ml-2">{active.title}</span>
+          </div>
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2.5 gap-y-1 items-baseline">
+            <span />
+            <ColHead color={BOUGHT}>In</ColHead>
+            <ColHead color={SOLD}>Out</ColHead>
+            <span className="text-[8px] uppercase text-slate-600 text-right">Net</span>
+            {active.buyers.map((b) => (
+              <BuyerRow key={b.buyer} b={b} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {pace?.undatedBuys > 0 && (
         // Only ever rendered when the data is actually short, so it wears
         // readable ink rather than the muted grey the chrome uses.
@@ -168,6 +190,35 @@ export default function BuySellPace() {
         </div>
       )}
     </div>
+  )
+}
+
+// Ties the In/Out columns back to the two bar colours without painting the
+// numbers themselves — a dot beside the word, the figures in plain ink.
+function ColHead({ color, children }) {
+  return (
+    <span className="text-[8px] uppercase text-slate-600 text-right whitespace-nowrap">
+      <i className="inline-block w-1.5 h-1.5 rounded-sm mr-1 align-middle" style={{ background: color }} />
+      {children}
+    </span>
+  )
+}
+
+// Whoever is buying faster than their cars leave is the answer to the question,
+// so they're the only rows in full ink; everyone at or below even is context.
+function BuyerRow({ b }) {
+  const over = b.net > 0
+  return (
+    <>
+      <span className={`text-[11px] truncate ${over ? 'text-white font-semibold' : 'text-slate-400'}`}>
+        {b.buyer}
+      </span>
+      <span className="text-[11px] text-slate-300 text-right tabular-nums">{b.bought}</span>
+      <span className="text-[11px] text-slate-300 text-right tabular-nums">{b.sold}</span>
+      <span className={`text-[11px] font-bold text-right tabular-nums ${over ? 'text-white' : 'text-slate-500'}`}>
+        {b.net > 0 ? '+' : b.net < 0 ? '−' : ''}{Math.abs(b.net)}
+      </span>
+    </>
   )
 }
 
