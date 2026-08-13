@@ -19,6 +19,10 @@ const BUCKETS = {
   mechanic: 'at the mechanic',
   body_shop: 'in the body shop',
   stuck21: 'stuck 21+ days',
+  dispatch: 'waiting on pickup',
+  dispatch_memphis: 'waiting on pickup — Memphis',
+  dispatch_alabama: 'waiting on pickup — AL/MS',
+  dispatch_west: 'waiting on pickup — CO/OK/KS',
 }
 
 function sb(path, init = {}) {
@@ -42,7 +46,10 @@ function buildMessage(name, bucket, cars) {
     const age = []
     if (c.days_here != null) age.push(`${c.days_here}d there`)
     if (c.days_owned != null) age.push(`${c.days_owned}d owned`)
-    return `${i + 1}. ${bits.join(' ')}${age.length ? ` · ${age.join(', ')}` : ''}`
+    // Where it is matters most on the pickup lists, where the whole job is
+    // going to get it — a car with no location named is one nobody can fetch.
+    const where = c.location ? ` · ${c.location}` : ''
+    return `${i + 1}. ${bits.join(' ')}${age.length ? ` · ${age.join(', ')}` : ''}${where}`
   })
   return [
     `Carz Inc — ${name}, your ${cars.length} oldest ${BUCKETS[bucket] || bucket}:`,

@@ -42,7 +42,7 @@
   "crons": [
     {
       "path": "/api/sms-nudge",
-      "schedule": "0 14 * * *"
+      "schedule": "0 16 * * *"
     }
   ]
 }

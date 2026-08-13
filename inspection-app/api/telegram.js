@@ -315,16 +315,54 @@ async function ensureBodyShopJob(db, vin6, eventIso) {
   if (error) console.error('ensure_body_shop_job failed for', vin6, error.message || error);
 }
 
-// Match a destination keyword anywhere in the message → location_code.
-// Longest keyword wins (so "proauto" beats a stray "uax"-like substring).
+// Flatten a message the way keywords are stored: lowercase, letters+digits only,
+// separators dropped. That's what lets one keyword span typed words — "j k chevy"
+// and "Jk Chevy" both flatten to "jkchevy".
+//
+// Dropping the separators also destroys word boundaries, though, and a bare
+// `includes()` on the result matches inside unrelated words: `otw` fired on "bot
+// wont register", `otto` on "Not to Ryan", so a chat message could move a car to
+// a shop nobody named. So we keep the boundaries alongside the flattened text —
+// the offsets where each typed word begins and ends — and require a keyword to
+// start on a word start and finish on a word end.
+function flatten(text) {
+  const words = (text || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const starts = new Set(), ends = new Set();
+  let norm = '';
+  for (const w of words) { starts.add(norm.length); norm += w; ends.add(norm.length); }
+  return { norm, starts, ends };
+}
+
+// Does `keyword` occur in the flattened text on whole-word boundaries?
+function occursOnWordBoundary({ norm, starts, ends }, keyword) {
+  let i = norm.indexOf(keyword);
+  while (i !== -1) {
+    if (starts.has(i) && ends.has(i + keyword.length)) return true;
+    i = norm.indexOf(keyword, i + 1);
+  }
+  return false;
+}
+
+// Match a destination keyword in the message → location_code.
+// Highest `priority` wins first, then the longest keyword.
+//
+// Priority exists for one case the "longest wins" rule gets backwards: "back".
+// "Back summit" means the car came back FROM Summit and is on our lot now, but
+// `summit` is longer than `back`, so the car got stamped at the shop it had just
+// left. Marking `back` (and `onlot`) high-priority makes any return-to-lot word
+// beat the shop named alongside it.
 async function matchDestination(db, text) {
-  const norm = (text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (!norm) return null;
-  const { data } = await db.from('location_keywords').select('keyword, location_code');
+  const flat = flatten(text);
+  if (!flat.norm) return null;
+  const { data } = await db.from('location_keywords').select('keyword, location_code, priority');
   if (!data) return null;
   let best = null;
   for (const k of data) {
-    if (norm.includes(k.keyword) && (!best || k.keyword.length > best.keyword.length)) best = k;
+    if (!occursOnWordBoundary(flat, k.keyword)) continue;
+    const better = !best
+      || (k.priority || 0) > (best.priority || 0)
+      || ((k.priority || 0) === (best.priority || 0) && k.keyword.length > best.keyword.length);
+    if (better) best = k;
   }
   return best ? best.location_code : null;
 }
