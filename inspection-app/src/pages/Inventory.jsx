@@ -412,6 +412,25 @@ export default function Inventory() {
     rocky_mountain_dent: "Rocky Mountain Dent (Denver)",
     emich_kia: "Emich Kia",
     personal: "Personal",
+    // Memphis destinations the transport group has been naming all along — the
+    // bot just had no keyword for them until 20260813000014.
+    southern: "Southern",
+    mt_moriah: "Mt Moriah",
+    copart: "Copart",
+    kia_gossett: "Gossett Kia",
+    cashete: "Cashete",
+    b_and_j: "B&J",
+    olive_branch: "Olive Branch",
+    wilfong: "Wilfong",
+    toyota_hernando: "Toyota Hernando",
+    streamline: "Streamline",
+    dynospeed: "Dynospeed",
+    // Lot states. The slug prettifier would render these "On Lot" / "Ready
+    // Detail" / "Arb Section", which read like places rather than states.
+    on_lot: "On Lot",
+    sold_lot: "Sold Lot",
+    ready_detail: "Detail",
+    arb_section: "Arbitration",
   };
   // Format any location value for display: use the label if we have one,
   // otherwise prettify the raw slug (snake_case → Title Case) so chat entries
@@ -458,6 +477,23 @@ export default function Inventory() {
     rocky_mountain_dent: "bg-purple-600",
     emich_kia: "bg-violet-600",
     personal: "bg-slate-500",
+    // Memphis destinations + lot states. On-lot states borrow the front-lot
+    // emerald so "the car is here" reads the same everywhere.
+    southern: "bg-orange-600",
+    mt_moriah: "bg-amber-600",
+    copart: "bg-yellow-600",
+    kia_gossett: "bg-violet-400",
+    cashete: "bg-lime-600",
+    b_and_j: "bg-stone-500",
+    olive_branch: "bg-green-600",
+    wilfong: "bg-neutral-500",
+    toyota_hernando: "bg-red-500",
+    streamline: "bg-cyan-600",
+    dynospeed: "bg-indigo-400",
+    on_lot: "bg-emerald-500",
+    sold_lot: "bg-emerald-700",
+    ready_detail: "bg-sky-400",
+    arb_section: "bg-purple-400",
   };
 
   // Frazer location_code → human-readable name

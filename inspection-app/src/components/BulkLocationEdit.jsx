@@ -43,6 +43,22 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'jim_keras_nissan', label: 'Jim Keras Nissan' },
     { value: 'jim_keras_chevy_service', label: 'Jim Keras Chevy Svc' },
     { value: 'emich_kia', label: 'Emich Kia' },
+    { value: 'kia_gossett', label: 'Gossett Kia' },
+    { value: 'southern', label: 'Southern' },
+    { value: 'cashete', label: 'Cashete' },
+    { value: 'b_and_j', label: 'B&J' },
+    { value: 'toyota_hernando', label: 'Toyota Hernando' },
+    { value: 'streamline', label: 'Streamline' },
+    { value: 'dynospeed', label: 'Dynospeed' },
+    { value: 'copart', label: 'Copart' },
+    { value: 'mt_moriah', label: 'Mt Moriah' },
+    { value: 'olive_branch', label: 'Olive Branch' },
+    { value: 'wilfong', label: 'Wilfong' },
+    // ── Lot states ──
+    { value: 'on_lot', label: 'On Lot' },
+    { value: 'sold_lot', label: 'Sold Lot' },
+    { value: 'ready_detail', label: 'Detail' },
+    { value: 'arb_section', label: 'Arbitration' },
     // ── Not for sale ──
     // Parks a car out of every alert list — see isPersonalLoc in Inventory.jsx.
     { value: 'personal', label: 'Personal (not for sale)' },

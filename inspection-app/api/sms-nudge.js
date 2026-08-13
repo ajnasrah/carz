@@ -117,7 +117,13 @@ export default async function handler(req, res) {
     const now = Date.now()
     const results = []
 
+    // ?only=<digits> sends to one person — the first live run shouldn't text the
+    // whole crew to prove the wiring works.
+    const only = String(req.query?.only || '').replace(/\D/g, '')
+
     for (const person of due) {
+      if (only && !String(person.phone).replace(/\D/g, '').endsWith(only)) continue
+
       const gapDays = person.last_sent_at
         ? (now - new Date(person.last_sent_at).getTime()) / 86400000
         : Infinity

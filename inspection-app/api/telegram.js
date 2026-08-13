@@ -326,7 +326,11 @@ async function ensureBodyShopJob(db, vin6, eventIso) {
 // the offsets where each typed word begins and ends — and require a keyword to
 // start on a word start and finish on a word end.
 function flatten(text) {
-  const words = (text || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  // "BackSantamaria" is typed without a space often enough to matter, and with
+  // no separator the boundary rule below sees one long word and matches neither
+  // half. The capital is the boundary the sender meant, so split on it first.
+  const spaced = (text || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  const words = spaced.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const starts = new Set(), ends = new Set();
   let norm = '';
   for (const w of words) { starts.add(norm.length); norm += w; ends.add(norm.length); }
