@@ -9,6 +9,7 @@ import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 import VinSearchBar from '../components/VinSearchBar'
 import ActionDrawer from '../components/ActionDrawer'
+import ShopTally from '../components/ShopTally'
 import BuySellPace from '../components/BuySellPace'
 
 // Rolling windows for the sold side of the comparison. The longest one is what
@@ -223,6 +224,9 @@ export default function Dashboard() {
 
         <BuySellPace />
       </div>
+
+      {/* How much is tied up in the shops, and which way that's moving. */}
+      <ShopTally />
 
       {/* Alerts — two counts, side by side and cut to the bone. They're a
           glance on the way to somewhere else, not something to read; the page

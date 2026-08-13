@@ -282,7 +282,18 @@ export function isBodyShopTech(profile) {
 // "Only" is literal: someone who is a tech AND a lot manager is not shop-scoped —
 // the extra role is the whole reason he has the rest of the app. Same for admins.
 // A buyer never reaches this, ProtectedRoute sends them to /listings first.
-const BODY_SHOP_ROLES = ['body_shop_tech', 'body_shop_manager']
+export const BODY_SHOP_ROLES = ['body_shop_tech', 'body_shop_manager']
+
+// Money in the shop is the manager's business. Jorge prices the work, argues the
+// charge and collects it; his techs are paid by him per job, not by us — so every
+// number on a job (charge, parts, payout) is hidden from them. isBodyShopManager
+// already covers admins and owner_admin, so the owner keeps seeing everything.
+//
+// A UI gate, not a security boundary: a tech's token can still read the rows.
+// Making it real means RLS on body_shop_jobs / body_shop_parts.
+export function canSeeShopMoney(profile) {
+  return isBodyShopManager(profile)
+}
 
 export function isBodyShopOnly(profile) {
   if (!profile) return false

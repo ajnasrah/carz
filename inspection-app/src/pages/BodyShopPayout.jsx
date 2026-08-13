@@ -14,7 +14,7 @@ import { useAuth } from '../context/useAuth'
 import {
   fetchPayoutSummary, fetchPayoutLines, fetchPayoutHistory,
   confirmForPayment, collectPayout, isAccounting, vehicleLabel,
-  CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
+  CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES, canSeeShopMoney,
 } from '../services/bodyShop'
 
 const money = (n) => (n == null ? '—' : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
@@ -24,6 +24,9 @@ export default function BodyShopPayout() {
   const navigate = useNavigate()
   const { profile } = useAuth()
   const accounting = isAccounting(profile)
+  // The payout screen is money end to end. A tech who deep-links here is sent
+  // back to the board rather than shown the totals.
+  const seeMoney = canSeeShopMoney(profile)
 
   const [summary, setSummary] = useState(null)
   const [lines, setLines] = useState([])
@@ -79,6 +82,18 @@ export default function BodyShopPayout() {
 
   const weekLines = lines.filter((l) => l.week_ending === summary?.week_ending)
   const rollover = lines.filter((l) => l.week_ending !== summary?.week_ending)
+
+  if (!seeMoney) {
+    return (
+      <div className="page">
+        <button onClick={() => navigate('/body-shop')}
+          className="flex items-center gap-1 text-slate-300 text-sm active:text-white -ml-1 mb-4">
+          <ChevronLeft size={18} /> Body Shop
+        </button>
+        <p className="text-sm text-slate-400">The payout is the shop manager&apos;s to run.</p>
+      </div>
+    )
+  }
 
   return (
     <div className="page">

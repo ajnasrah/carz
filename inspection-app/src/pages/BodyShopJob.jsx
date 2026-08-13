@@ -18,7 +18,7 @@ import {
   fetchTechs, fetchTechInvites, addTech, removeTechInvite, formatPhone,
   techOptions, techValue,
   JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES,
-  ageStyle, vehicleLabel, isBodyShopManager, isBodyShopTech,
+  ageStyle, vehicleLabel, isBodyShopManager, isBodyShopTech, canSeeShopMoney,
   CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
   isChargeApprover, isShopManager,
   proposeCharge, approveCharge, counterCharge, acceptCounter,
@@ -37,6 +37,9 @@ export default function BodyShopJob() {
   const { state } = useLocation()
   const { profile } = useAuth()
   const manager = isBodyShopManager(profile)
+  // Jorge prices the work and collects it; his techs are paid by him, per job.
+  // The charge, the parts costs and the payout are his to see, not theirs.
+  const seeMoney = canSeeShopMoney(profile)
   const techOnly = isBodyShopTech(profile) && !manager
 
   const [job, setJob] = useState(null)
@@ -207,7 +210,8 @@ export default function BodyShopJob() {
         </div>
       </Section>
 
-      {/* Charge — negotiated, not just typed */}
+      {/* Charge — negotiated, not just typed. Manager and owners only. */}
+      {seeMoney && (
       <Section title="Charge">
         <ChargeCard job={job} profile={profile} onDone={() => fetchJob(id).then(setJob)}
           onError={setError} />
@@ -222,6 +226,7 @@ export default function BodyShopJob() {
           </p>
         )}
       </Section>
+      )}
 
       {/* Tech */}
       <Section title="Assigned Tech">
@@ -247,7 +252,8 @@ export default function BodyShopJob() {
 
       {/* Parts */}
       <Section title={`Parts Needed${parts.length ? ` (${parts.filter((p) => p.status === 'received').length}/${parts.length})` : ''}`}>
-        <PartsList jobId={id} parts={parts} setParts={setParts} onError={setError} onChanged={() => fetchJob(id).then(setJob)} />
+        <PartsList jobId={id} parts={parts} setParts={setParts} showCost={seeMoney}
+          onError={setError} onChanged={() => fetchJob(id).then(setJob)} />
       </Section>
 
       {/* Photos */}
@@ -597,7 +603,7 @@ function NotesEditor({ value, onSave }) {
   )
 }
 
-function PartsList({ jobId, parts, setParts, onError, onChanged }) {
+function PartsList({ jobId, parts, setParts, onError, onChanged, showCost = true }) {
   const [name, setName] = useState('')
   const [cost, setCost] = useState('')
   const [vendor, setVendor] = useState('')
@@ -657,9 +663,10 @@ function PartsList({ jobId, parts, setParts, onError, onChanged }) {
                   <div className={`text-sm truncate ${part.status === 'received' ? 'text-slate-400 line-through' : ''}`}>
                     {part.name}
                   </div>
-                  {(part.vendor || part.cost != null) && (
+                  {(part.vendor || (showCost && part.cost != null)) && (
                     <div className="text-[10px] text-slate-500 truncate">
-                      {[part.vendor, part.cost != null ? money(part.cost) : null].filter(Boolean).join(' · ')}
+                      {[part.vendor, showCost && part.cost != null ? money(part.cost) : null]
+                        .filter(Boolean).join(' · ')}
                     </div>
                   )}
                 </div>

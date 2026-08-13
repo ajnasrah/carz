@@ -11,7 +11,7 @@ import { useAuth } from '../context/useAuth'
 import {
   fetchBoard, fetchRecentlyDone, createJobFromVin6,
   JOB_STATUSES, JOB_STATUS_STYLES, ageStyle, vehicleLabel,
-  isBodyShopManager, isBodyShopTech, isBodyShopOnly,
+  isBodyShopManager, isBodyShopTech, canSeeShopMoney, isBodyShopOnly,
 } from '../services/bodyShop'
 
 const money = (n) => (n == null ? null : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
@@ -31,6 +31,7 @@ export default function BodyShop() {
   const tech = isBodyShopTech(profile)
   // A tech who isn't also a manager only ever sees his own cars.
   const techOnly = tech && !manager
+  const seeMoney = canSeeShopMoney(profile)
   // Body-shop-only staff have no dashboard to go back to — ProtectedRoute sends
   // them straight here from '/'.
   const shopOnly = isBodyShopOnly(profile)
@@ -122,9 +123,11 @@ export default function BodyShop() {
             aria-label="Refresh">
             <RefreshCw size={16} className={loading ? 'animate-spin text-slate-500' : 'text-slate-300'} />
           </button>
-          <button onClick={() => navigate('/body-shop/payout')}
-            className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm font-semibold active:bg-slate-700"
-            title="Saturday payout">💵</button>
+          {seeMoney && (
+            <button onClick={() => navigate('/body-shop/payout')}
+              className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm font-semibold active:bg-slate-700"
+              title="Saturday payout">💵</button>
+          )}
           {manager && (
             <button onClick={() => setAdding(true)}
               className="flex items-center gap-1 px-3 py-2 rounded-lg bg-emerald-500 text-slate-900 font-bold text-sm active:bg-emerald-600">
@@ -154,9 +157,11 @@ export default function BodyShop() {
       {/* The three numbers that aren't a stage. */}
       <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-400 mb-3">
         <span className="font-semibold text-slate-300">🚗 {stats.count} in shop</span>
-        <span className={stats.unpriced ? 'text-yellow-400' : undefined}>
-          💵 {stats.unpriced} no price
-        </span>
+        {seeMoney && (
+          <span className={stats.unpriced ? 'text-yellow-400' : undefined}>
+            💵 {stats.unpriced} no price
+          </span>
+        )}
         <span className={ageStyle(stats.oldest)}>
           ⏰ oldest {stats.oldest == null ? '—' : `${stats.oldest}d`}
         </span>
@@ -212,7 +217,7 @@ export default function BodyShop() {
               cars on screen here, in this order — the same filter, the same
               search, the same oldest-first sort. */}
           {visible.map((job) => (
-            <JobCard key={job.id} job={job}
+            <JobCard key={job.id} job={job} showPrice={seeMoney}
               onClick={() => navigate(`/body-shop/${job.id}`,
                 { state: { siblings: visible.map((j) => j.id) } })} />
           ))}
@@ -266,7 +271,7 @@ function FilterChip({ active, onClick, label, count }) {
   )
 }
 
-function JobCard({ job, onClick }) {
+function JobCard({ job, onClick, showPrice = true }) {
   const days = job.days_in_shop
   const status = JOB_STATUSES.find((s) => s.key === job.status)
   const partsOpen = (job.parts_needed || 0) + (job.parts_ordered || 0)
@@ -295,9 +300,11 @@ function JobCard({ job, onClick }) {
         </div>
 
         <div className="flex items-center gap-3 mt-2 text-[11px] flex-wrap">
-          <span className={job.price == null ? 'text-yellow-400 font-semibold' : 'text-emerald-400 font-bold'}>
-            {job.price == null ? 'No price yet' : money(job.price)}
-          </span>
+          {showPrice && (
+            <span className={job.price == null ? 'text-yellow-400 font-semibold' : 'text-emerald-400 font-bold'}>
+              {job.price == null ? 'No price yet' : money(job.price)}
+            </span>
+          )}
           <span className="text-slate-400 truncate">
             {job.tech_name ? `👤 ${job.tech_name}` : <span className="text-slate-500">Unassigned</span>}
           </span>

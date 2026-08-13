@@ -4,6 +4,7 @@ import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check,
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
+import { BODY_SHOP_ROLES } from '../services/bodyShop'
 
 export default function Admin() {
   const navigate = useNavigate()
@@ -76,6 +77,22 @@ export default function Admin() {
 
     setNewUser({ name: '', phone: '', role: 'inspector' })
     setShowAdd(false)
+    loadUsers()
+  }
+
+  // Body shop crew. The granular job roles live in profiles.roles[]; `role` is
+  // the coarse admin/inspector flag and is left alone. Setting a shop role is all
+  // it takes to scope someone: ProtectedRoute reads isBodyShopOnly() and lands
+  // them on /body-shop at sign-in and on every app open.
+  async function setShopRole(user, shopRole) {
+    const kept = (user.roles || []).filter((r) => !BODY_SHOP_ROLES.includes(r))
+    const roles = shopRole ? [...kept, shopRole] : kept
+    const { error } = await supabase.from('profiles').update({ roles }).eq('id', user.id)
+    if (error) {
+      setError('Could not set the shop role: ' + error.message)
+      setTimeout(() => setError(''), 3000)
+      return
+    }
     loadUsers()
   }
 
@@ -295,8 +312,34 @@ export default function Admin() {
                   )}
                 </div>
                 <p className="text-sm text-slate-400">{u.phone || 'No phone'}</p>
+                {(() => {
+                  // A shop role only scopes someone if it's ALL they have — say
+                  // which it is, so a role that looks set but isn't taking effect
+                  // explains itself instead of looking broken.
+                  const shop = (u.roles || []).filter((r) => BODY_SHOP_ROLES.includes(r))
+                  const other = (u.roles || []).filter((r) => !BODY_SHOP_ROLES.includes(r))
+                  if (!shop.length) return null
+                  const scoped = !other.length && u.role !== 'admin' && !isPrimaryAdmin(u.phone)
+                  return (
+                    <p className={`text-[11px] mt-0.5 ${scoped ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {scoped
+                        ? '🎨 Lands on Body Shop — shop only'
+                        : `Also ${u.role === 'admin' ? 'an admin' : other.join(', ')} — keeps the whole app`}
+                    </p>
+                  )
+                })()}
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                <select
+                  value={(u.roles || []).find((r) => BODY_SHOP_ROLES.includes(r)) || ''}
+                  onChange={(e) => setShopRole(u, e.target.value)}
+                  className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200"
+                  title="Body shop role"
+                >
+                  <option value="">No shop role</option>
+                  <option value="body_shop_tech">Shop Tech</option>
+                  <option value="body_shop_manager">Shop Manager</option>
+                </select>
                 {u.approval_status === 'rejected' && (
                   <button
                     onClick={() => setApproval(u.id, 'approved')}
