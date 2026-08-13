@@ -117,11 +117,15 @@ export default function VehicleQuickInfo({ result }) {
         <div className="card">
           <p className="text-xs uppercase text-slate-400 font-bold mb-3">Location</p>
           <div className="space-y-2">
+            {/* A sold or retired car's own location row is often blank, so this
+                can be recovered from the chat-sourced row or from history. Say
+                so — "Last Known" is where the car was when we stopped tracking
+                it, not a claim that it's parked there today. */}
             <Row
-              label="Most Recent"
+              label={location.last_known ? 'Last Known' : 'Most Recent'}
               value={
                 <span className="inline-flex items-center gap-1">
-                  <MapPin size={13} className="text-emerald-400" />
+                  <MapPin size={13} className={location.last_known ? 'text-amber-400' : 'text-emerald-400'} />
                   {location.physical_location || 'Unknown'}
                 </span>
               }

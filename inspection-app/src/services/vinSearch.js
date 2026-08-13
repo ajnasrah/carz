@@ -46,7 +46,11 @@ export async function searchVin(raw) {
   // 2. Pull the location/status row. Prefer the inventory stock_number match;
   //    otherwise search vehicle_locations directly (covers cars no longer in
   //    the inventory view but still tracked as sold).
-  const loc = await findLocation(inv?.vehicle?.stock_number, vinQ)
+  const invLast6 =
+    inv?.vehicle?.last_6_vin ||
+    (inv?.vehicle?.vehicle_vin || '').slice(-6) ||
+    (vinQ.length >= 6 ? vinQ.slice(-6) : null)
+  const loc = await findLocation(inv?.vehicle?.stock_number, vinQ, invLast6)
 
   // Nothing anywhere — genuinely unknown VIN.
   if (!inv && !loc) return null
@@ -67,13 +71,11 @@ export async function searchVin(raw) {
   return {
     vehicle,
     cost: inv?.cost || {},
-    location: loc
-      ? {
-          physical_location: loc.physical_location,
-          source: loc.physical_source,
-          updated_at: loc.location_updated_at || loc.updated_at,
-        }
-      : null,
+    // A sold car keeps its last known location. Prefer the live row; if that's
+    // been wiped, fall back to the newest history event that names one. Either
+    // fallback sets `last_known` so the UI can say "last seen at" rather than
+    // claiming the car is sitting there right now.
+    location: resolveLocation(loc, history),
     status,
     sale,
     history,
@@ -86,6 +88,43 @@ export async function searchVin(raw) {
 
 const labelOf = (r) =>
   [r.vehicle_year, r.vehicle_make, r.vehicle_model].filter(Boolean).join(' ') || null
+
+// A chat-sourced location row: the Telegram/WhatsApp groups name cars by last 6
+// only, so a car nobody has reconciled to inventory is stored as
+// "unknown:<last 6>" with a blank VIN. 41% of vehicle_locations looks like this.
+const CHAT_STOCK = /^unknown:/i
+const isChatStock = (s) => CHAT_STOCK.test(s || '')
+const chatLast6 = (s) => (s || '').replace(CHAT_STOCK, '').toUpperCase()
+
+// 482 location rows literally say "unknown". That's not a place, it's the
+// absence of one, so it must not block the last-known fallbacks the way a real
+// location does — otherwise the car reports "Unknown" while the chat row next
+// to it knows exactly where it sat.
+const hasLocation = (v) => Boolean(v) && String(v).trim().toLowerCase() !== 'unknown'
+
+// Fold chat-only rows into the real car when we can see they're the same
+// vehicle. "unknown:334120" and stock 03-231-26 / VIN ...JG334120 are one car,
+// and showing both in the picker makes it look like we own two. The chat row's
+// stock is kept on the survivor as `chat_stock` — it's the row that still knows
+// where the car physically was, which the real row often doesn't.
+function mergeChatTwins(list) {
+  const real = list.filter((c) => !isChatStock(c.stock_number))
+  const out = [...real]
+  for (const c of list.filter((c) => isChatStock(c.stock_number))) {
+    const last6 = chatLast6(c.stock_number)
+    const owner = real.find(
+      (r) =>
+        (r.vehicle_vin || '').toUpperCase().endsWith(last6) ||
+        (r.last_6_vin || '').toUpperCase() === last6,
+    )
+    if (owner) {
+      if (!owner.chat_stock) owner.chat_stock = c.stock_number
+      continue
+    }
+    out.push({ ...c, last_6_vin: c.last_6_vin || last6, chat_stock: c.stock_number })
+  }
+  return out
+}
 
 // Every distinct car whose VIN CONTAINS vinQ anywhere, across inventory + the
 // location table (so sold/removed cars surface too). Keyed by stock (stable id)
@@ -123,7 +162,18 @@ async function gatherCandidates(vinQ) {
     .limit(25)
   for (const r of locs || []) add(r.vin, r.stock_number, null)
 
-  return [...map.values()]
+  // Chat-sourced rows have a blank VIN, so the query above can never see them —
+  // their last 6 lives in the stock number instead ("unknown:334120"). Without
+  // this, a car the groups have been moving for months is unfindable by last 6,
+  // and a sold car whose own row lost its location shows no location at all.
+  const { data: byStock } = await supabase
+    .from('vehicle_locations')
+    .select('stock_number, vin')
+    .ilike('stock_number', `%${vinQ}%`)
+    .limit(25)
+  for (const r of byStock || []) add(r.vin, r.stock_number, null)
+
+  return mergeChatTwins([...map.values()])
 }
 
 // --- media (photo + marketplace link) --------------------------------------
@@ -184,21 +234,87 @@ async function withCost(vehicle) {
 
 // --- location / status lookup (covers sold + removed) ----------------------
 
-async function findLocation(stockNumber, vinQ) {
+async function findLocation(stockNumber, vinQ, last6) {
+  let row = null
   if (stockNumber) {
     const { data } = await supabase
       .from('vehicle_locations')
       .select('*')
       .eq('stock_number', stockNumber)
       .limit(1)
-    if (data && data.length) return data[0]
+    if (data && data.length) row = data[0]
   }
-  // No inventory match — search vehicle_locations by VIN directly.
-  let q = supabase.from('vehicle_locations').select('*')
-  if (vinQ.length === 17) q = q.eq('vin', vinQ)
-  else q = q.ilike('vin', `%${vinQ}%`)
-  const { data } = await q.limit(1)
-  return data?.[0] || null
+  if (!row) {
+    // No inventory match — search vehicle_locations by VIN directly.
+    let q = supabase.from('vehicle_locations').select('*')
+    if (vinQ.length === 17) q = q.eq('vin', vinQ)
+    else q = q.ilike('vin', `%${vinQ}%`)
+    const { data } = await q.limit(1)
+    row = data?.[0] || null
+  }
+
+  // A retired car's own row often has physical_location NULL — 78 rows are in
+  // that state, 45 of them the legacy `sold_or_gone` import. The chat twin
+  // ("unknown:<last 6>") was written by the Telegram groups and still knows
+  // where the car physically sat, so borrow the location from it.
+  if (!hasLocation(row?.physical_location) && last6) {
+    const { data } = await supabase
+      .from('vehicle_locations')
+      .select('*')
+      .eq('stock_number', `unknown:${last6}`)
+      .limit(1)
+    const twin = data?.[0]
+    if (hasLocation(twin?.physical_location)) {
+      row = row
+        ? {
+            ...row,
+            physical_location: twin.physical_location,
+            physical_source: twin.physical_source,
+            location_updated_at: twin.location_updated_at || twin.updated_at,
+            last_known: true,
+          }
+        : twin
+    }
+  }
+  return row
+}
+
+// "Where is this car, and failing that, where was it last?" in priority order:
+// the live row (already merged with its chat twin by findLocation), then the
+// newest history event naming a place, then whatever the row said even if that
+// was only "unknown" — so the Last Tracked timestamp still shows.
+function resolveLocation(loc, history) {
+  if (hasLocation(loc?.physical_location)) {
+    return {
+      physical_location: loc.physical_location,
+      source: loc.physical_source,
+      updated_at: loc.location_updated_at || loc.updated_at,
+      last_known: Boolean(loc.last_known),
+    }
+  }
+  const fromHistory = lastKnownFromHistory(history)
+  if (fromHistory) return fromHistory
+  if (!loc) return null
+  return {
+    physical_location: loc.physical_location || null,
+    source: loc.physical_source,
+    updated_at: loc.location_updated_at || loc.updated_at,
+    last_known: false,
+  }
+}
+
+// Last resort for "where was this car?": the newest history event that names a
+// location. History outlives the car, so this still answers for a car whose
+// location row was wiped and that never had a chat twin.
+function lastKnownFromHistory(history) {
+  const e = (history || []).find((h) => hasLocation(h.new_location))
+  if (!e) return null
+  return {
+    physical_location: e.new_location,
+    source: e.location_source || e.event_type,
+    updated_at: e.created_at,
+    last_known: true,
+  }
 }
 
 async function loadHistory({ vin, stock }) {
@@ -218,6 +334,14 @@ async function loadHistory({ vin, stock }) {
 function deriveStatus(loc, history, inInventory) {
   const marketplace = pickSoldMarketplace(loc)
   const soldEvent = history.find((e) => e.event_type === 'marketplace_sold')
+
+  // `sold_or_gone` is a retired import (45 rows, all stamped Mar–Apr 2026, no
+  // price or buyer). It carries no marketplace flag, so without this the car
+  // came back as state "unknown" — which reads as "we lost it" rather than
+  // "it's gone because we sold it".
+  if (!marketplace && !soldEvent && loc?.physical_source === 'sold_or_gone') {
+    return { status: { state: 'sold', marketplace: null }, sale: null }
+  }
 
   if (marketplace || soldEvent) {
     return {

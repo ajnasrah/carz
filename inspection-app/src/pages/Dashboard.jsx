@@ -179,8 +179,11 @@ export default function Dashboard() {
 
       {/* The two halves of "how is the lot doing": what a car costs us against
           what a sold one cost, and how fast cars come in against how fast they
-          go out. Side by side on a desktop, stacked on a phone. */}
-      <div className="grid gap-4 mb-4 lg:grid-cols-2 lg:items-start">
+          go out. Stacked, full width, always. Side by side squeezed Inventory
+          vs Sold until its row labels truncated to "In… / S… / D…", and left it
+          floating in a column of dead space beside a card three times its
+          height. Two cards of very different heights don't pair. */}
+      <div className="grid gap-4 mb-4">
         {/* Inventory vs Sold — what we're holding against what's actually been
             moving. Recon spend and age above the sold line means the lot is
             getting heavier than what it's selling: going backward. */}
