@@ -38,7 +38,7 @@ export async function fetchSoldWithBuyers() {
   }))
 }
 
-function mmddyyToIso(s) {
+export function mmddyyToIso(s) {
   if (!s) return s
   const parts = String(s).split('/')
   if (parts.length !== 3) return s
