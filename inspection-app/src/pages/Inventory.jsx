@@ -42,6 +42,30 @@ function isSettledTransportLoc(physLoc) {
   return physLoc.startsWith("manheim_") || SETTLED_TRANSPORT_LOCS.has(physLoc);
 }
 
+// Personal cars — ours, driven by us, not for sale and not going anywhere.
+//
+// A settled transport location only drops a car out of Needs Dispatch and
+// Stale, because a car at a Denver shop is still a car we're waiting on.
+// Personal is the stronger claim: it is not late, not lost, and not waiting on
+// anybody, so it belongs in NO alert bucket at all. It still counts in the
+// stock total and still shows under Places, because we do own it.
+const PERSONAL_LOC = "personal";
+function isPersonalLoc(physLoc) {
+  return physLoc === PERSONAL_LOC;
+}
+
+// The buckets that exist to chase a problem. Every one of them excludes
+// personal cars, and they're named in one place so a bucket added later has to
+// make a deliberate decision about it rather than silently letting them back in.
+const ALERT_FILTERS = new Set([
+  "__stuck21__",
+  "__stale__",
+  "__never__",
+  "__needs_dispatch__",
+  "__front_lot_aging__",
+  "__loc_Z_no_disp__",
+]);
+
 // A car "needs dispatch" only until we know where it physically is. The moment
 // it's tracked at ANY real location (in_transit, mechanic, a body shop, an
 // auction, etc.) it's been handled and drops off Needs Dispatch — it's no
@@ -387,6 +411,7 @@ export default function Inventory() {
     marc_pdr: "Marc Dent Doctor (Denver)",
     rocky_mountain_dent: "Rocky Mountain Dent (Denver)",
     emich_kia: "Emich Kia",
+    personal: "Personal",
   };
   // Format any location value for display: use the label if we have one,
   // otherwise prettify the raw slug (snake_case → Title Case) so chat entries
@@ -432,6 +457,7 @@ export default function Inventory() {
     marc_pdr: "bg-fuchsia-600",
     rocky_mountain_dent: "bg-purple-600",
     emich_kia: "bg-violet-600",
+    personal: "bg-slate-500",
   };
 
   // Frazer location_code → human-readable name
@@ -461,6 +487,14 @@ export default function Inventory() {
         const cost = costMap.get(r.stock_number);
         return cost && cost.vendor === vendorFilter;
       });
+    }
+
+    // One gate for every problem list, rather than the same clause repeated in
+    // six branches and forgotten in the seventh.
+    if (ALERT_FILTERS.has(sectionFilter)) {
+      result = result.filter(
+        (r) => !isPersonalLoc(locMap.get(r.stock_number)?.physical_location),
+      );
     }
 
     if (sectionFilter) {
@@ -1067,24 +1101,30 @@ export default function Inventory() {
 
       {/* Tab bar — top-level filters */}
       {(() => {
-        const stuckCount = rows.filter(
+        // Counted off the same rows the tabs will show — personal cars are out
+        // of every alert bucket, so a badge that counted them would send you
+        // into a list that doesn't contain them.
+        const alertRows = rows.filter(
+          (r) => !isPersonalLoc(locMap.get(r.stock_number)?.physical_location),
+        );
+        const stuckCount = alertRows.filter(
           (r) => r.effective_days_since != null && r.effective_days_since >= 21,
         ).length;
-        const missingCount = rows.filter(
+        const missingCount = alertRows.filter(
           (r) => r.effective_last_seen_ms == null,
         ).length;
-        const needsDispatchCount = rows.filter((r) => {
+        const needsDispatchCount = alertRows.filter((r) => {
           const c = costMap.get(r.stock_number) || {};
           const loc = locMap.get(r.stock_number) || {};
           return (
             c.location_code === "Z" && !hasBeenLocated(loc.physical_location)
           );
         }).length;
-        const frontLotAgingCount = rows.filter((r) => {
+        const frontLotAgingCount = alertRows.filter((r) => {
           const loc = locMap.get(r.stock_number) || {};
           const daysOnLot = parseInt(r.days_on_lot, 10) || 0;
           return (
-            loc.physical_location === "front_lot" && 
+            loc.physical_location === "front_lot" &&
             daysOnLot >= 10 &&
             !loc.sa_status
           );
@@ -1298,11 +1338,16 @@ export default function Inventory() {
       {!loading &&
         rows.length > 0 &&
         (() => {
-          const stuck = rows.filter(
+          const chaseable = rows.filter(
+            (r) => !isPersonalLoc(locMap.get(r.stock_number)?.physical_location),
+          );
+          const stuck = chaseable.filter(
             (r) =>
               r.effective_days_since != null && r.effective_days_since >= 21,
           );
-          const never = rows.filter((r) => r.effective_last_seen_ms == null);
+          const never = chaseable.filter(
+            (r) => r.effective_last_seen_ms == null,
+          );
           return (
             <div className="mb-3 grid grid-cols-2 gap-2">
               {stuck.length > 0 && (
@@ -1665,6 +1710,7 @@ export default function Inventory() {
                 <option value="emich_kia">Emich Kia</option>
               </optgroup>
               <optgroup label="Other">
+                <option value="personal">Personal (not for sale)</option>
                 <option value="unknown">Unknown</option>
                 <option value="__other__">✏️ Type custom…</option>
               </optgroup>

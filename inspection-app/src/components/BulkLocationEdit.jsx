@@ -43,6 +43,9 @@ export default function BulkLocationEdit({ onClose, onSuccess }) {
     { value: 'jim_keras_nissan', label: 'Jim Keras Nissan' },
     { value: 'jim_keras_chevy_service', label: 'Jim Keras Chevy Svc' },
     { value: 'emich_kia', label: 'Emich Kia' },
+    // ── Not for sale ──
+    // Parks a car out of every alert list — see isPersonalLoc in Inventory.jsx.
+    { value: 'personal', label: 'Personal (not for sale)' },
     // ── Custom ──
     { value: '__other__', label: 'Custom Location' },
   ];

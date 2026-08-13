@@ -2397,6 +2397,7 @@
             else if (v.physical_location === 'rocky_mountain_dent') locLabel = 'Rocky Mountain Dent (Denver)';
             else if (v.physical_location === 'emich_kia') locLabel = 'Emich Kia';
             else if (v.physical_location === 'santa_maria') locLabel = 'Santa Maria Tire & Alignment';
+            else if (v.physical_location === 'personal') locLabel = 'Personal';
             else if (v.physical_location === 'in_transit') locLabel = 'In Transit';
             else if (v.physical_location === 'mechanic') locLabel = 'Mechanic';
             else if (v.physical_location === 'body_shop') locLabel = 'Jorge';

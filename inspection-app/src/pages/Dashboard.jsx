@@ -31,6 +31,14 @@ function hasBeenLocated(physLoc) {
   return !!physLoc && physLoc !== 'unknown'
 }
 
+// Personal cars are ours to drive, not ours to chase. They're excluded from
+// every alert bucket on the Inventory page, so they're excluded from the tiles
+// that link into those buckets too — a tile that counts them sends you to a
+// list that doesn't.
+function isPersonalLoc(physLoc) {
+  return physLoc === 'personal'
+}
+
 export default function Dashboard() {
   const { user, profile, signOut } = useAuth()
   const [stats, setStats] = useState({
@@ -71,6 +79,7 @@ export default function Dashboard() {
       for (const r of lotRows) {
         const scanMs = r.last_seen_at ? new Date(r.last_seen_at).getTime() : 0
         const loc = locMap.get(r.stock_number) || {}
+        if (isPersonalLoc(loc.physical_location)) continue
         const locMs = loc.location_updated_at ? new Date(loc.location_updated_at).getTime() : 0
         let bestMs = Math.max(scanMs, locMs)
         let days = bestMs ? Math.floor((now - bestMs) / 86400000) : null
