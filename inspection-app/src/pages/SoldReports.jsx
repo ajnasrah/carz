@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X, Copy, Check } from 'lucide-react'
 import {
   BarChart, Bar, Line, ComposedChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend,
@@ -13,6 +13,7 @@ import {
   fmt, profitColor, PERIODS,
 } from '../services/soldReports'
 import XLSXWriter from '../services/xlsxWriter'
+import { copyText } from '../native/clipboard'
 import CompareBox from '../components/CompareBox'
 import InventoryVsSold from '../components/InventoryVsSold'
 import BuySellPace from '../components/BuySellPace'
@@ -58,6 +59,8 @@ export default function SoldReports({ embedded = false }) {
   // The car list renders capped — "All" is thousands of rows and painting them
   // all locks the phone up. Lift it on demand.
   const [carsShown, setCarsShown] = useState(CARS_PAGE)
+  // Which row last had its VIN copied, so the tick appears on that one only.
+  const [copiedVin, setCopiedVin] = useState('')
   const [lastRefreshed, setLastRefreshed] = useState(null)
   
   // Filter states
@@ -154,6 +157,17 @@ export default function SoldReports({ embedded = false }) {
     
     return result
   }, [allRows, periodKey, filterMake, filterModel, filterBuyer, filterVendor, buyerRows])
+
+  // Copy goes through native/clipboard so it works inside the iOS/Android
+  // webview as well as the browser. The tick is per-row and self-clearing —
+  // a permanent green tick on a list of 150 cars tells you nothing.
+  async function copyVin(vin, stock) {
+    try {
+      await copyText(vin)
+      setCopiedVin(stock)
+      setTimeout(() => setCopiedVin((c) => (c === stock ? '' : c)), 1500)
+    } catch { /* clipboard denied — leave the VIN on screen to read */ }
+  }
 
   // buyer / vendor / customer live on the raw `sold` table, keyed by stock
   // number. Both the car list and the export join through this.
@@ -558,6 +572,22 @@ export default function SoldReports({ embedded = false }) {
                       {b?.buyer && ` · ${b.buyer}`}
                       {r.sale_date && ` · ${r.sale_date}`}
                     </p>
+                    {/* Last 6 is what the crew reads off a windshield and types
+                        into every other screen, so that's what's shown; the tap
+                        copies all 17, which is what a listing or a history
+                        lookup wants. Absent when the sold row carries no VIN
+                        rather than rendering a blank chip. */}
+                    {(b?.last_6_vin || b?.vehicle_vin) && (
+                      <button
+                        onClick={() => copyVin(b.vehicle_vin || b.last_6_vin, r.stock_number)}
+                        title={b.vehicle_vin ? `Copy ${b.vehicle_vin}` : 'Copy VIN'}
+                        className="mt-0.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-slate-300 active:bg-slate-700"
+                      >
+                        {copiedVin === r.stock_number
+                          ? <><Check size={10} className="text-emerald-400" /> copied</>
+                          : <><Copy size={10} /> {b.last_6_vin || String(b.vehicle_vin).slice(-6)}</>}
+                      </button>
+                    )}
                   </div>
                   <div className="text-right shrink-0">
                     {/* No profit recorded is its own state — not a zero, and not
