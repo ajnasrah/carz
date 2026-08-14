@@ -16,6 +16,24 @@ function parseDate(v) {
   return new Date(yy, parseInt(mo, 10) - 1, parseInt(d, 10))
 }
 
+// Every column RetailRow, the search box, the totals and the header actually
+// read — and nothing else. The `sold` table is a Frazer SOLD.CSV dump, so
+// select('*') drags back the whole export (payment terms, lienholder, tax
+// breakdown, …) for every sold car in history, over lot wifi, to render
+// fifteen fields. Verified against the live schema: every name here resolves,
+// and one that doesn't 400s the entire query, so re-check before editing.
+//
+// Not listed on purpose: sale_price / profit / channel / sold_at / vin. Those
+// are auction-row fields and this table has no such columns — the `||`
+// fallbacks around them exist because the same screen renders both sources.
+const RETAIL_COLUMNS = [
+  'stock_number', 'vehicle_vin', 'last_6_vin',
+  'vehicle_year', 'vehicle_make', 'vehicle_model',
+  'sale_date', 'sales_price', 'profit_on_sale',
+  'buyer', 'vendor', 'type_of_sale',
+  'first_name', 'last_name', 'synced_at',
+].join(',')
+
 export default function Sold() {
   const navigate = useNavigate()
   const [source, setSource] = useState('auction') // 'auction' (live) | 'retail' (Frazer)
@@ -34,7 +52,7 @@ export default function Sold() {
     let from = 0
     while (true) {
       if (cancelledRef?.current) return []
-      const { data, error } = await supabase.from('sold').select('*').range(from, from + PAGE - 1)
+      const { data, error } = await supabase.from('sold').select(RETAIL_COLUMNS).range(from, from + PAGE - 1)
       if (error || !data) break
       all.push(...data)
       if (data.length < PAGE) break

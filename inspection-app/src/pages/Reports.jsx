@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
-import ExecutiveDashboard from './ExecutiveDashboard'
-import SoldReports from './SoldReports'
-import VehicleAnalytics from './VehicleAnalytics'
+
+// Lazy, and it has to be lazy here rather than only at the route: these three
+// tabs are the app's heaviest pages — chart.js lives in Executive and recharts
+// in Sold — and a static import of all three would pull both charting libraries
+// into whichever chunk Reports lands in, for a visitor who opened one tab.
+// Only the tab you're looking at is fetched.
+const ExecutiveDashboard = lazy(() => import('./ExecutiveDashboard'))
+const SoldReports = lazy(() => import('./SoldReports'))
+const VehicleAnalytics = lazy(() => import('./VehicleAnalytics'))
 
 // Reports hub — merges the three reporting surfaces (Executive metrics, Sold
 // profit reports, Vehicle Analytics) into one tabbed page so they're a single
@@ -45,7 +51,11 @@ export default function Reports() {
         ))}
       </div>
 
-      <Active embedded />
+      {/* Keyed by tab so switching tabs shows the spinner again rather than
+          holding the previous tab's chart on screen while the next one loads. */}
+      <Suspense key={tab} fallback={<p className="text-slate-500 text-sm py-8 text-center">Loading…</p>}>
+        <Active embedded />
+      </Suspense>
     </div>
   )
 }

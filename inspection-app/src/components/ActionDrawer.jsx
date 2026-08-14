@@ -12,6 +12,11 @@ import { X } from 'lucide-react'
 const PRIMARY = [
   { to: '/lot', emoji: '🚶', label: 'Walk Lot' },
   { to: '/inventory', emoji: '🚗', label: 'Cars' },
+  // The sold list, sitting directly under Cars because it's the other half of
+  // the same question — what we're holding, and what left. 💰 matches the
+  // bottom nav's Sold tab, but that tab goes to /sold-reports (the profit
+  // trends). This is the car list itself, which had no way in from anywhere.
+  { to: '/sold', emoji: '💰', label: 'Sold' },
   { to: '/body-shop', emoji: '🎨', label: 'Body Shop' },
   { to: '/list-builder', emoji: '🔨', label: 'List Builder' },
   { to: '/marketplace', emoji: '🏪', label: 'Marketplace' },

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext'
 import { initNativeShell } from './native/shell'
@@ -8,60 +8,80 @@ import { supabase } from './services/supabase'
 import { useAuth } from './context/useAuth'
 import { isPrimaryAdmin } from './services/adminSetup'
 import { isBodyShopOnly } from './services/bodyShop'
-import Login from './pages/Login'
-import Setup from './pages/Setup'
-import PendingApproval from './pages/PendingApproval'
-import Dashboard from './pages/Dashboard'
-import StartInspection from './pages/StartInspection'
-import StartupCheck from './pages/StartupCheck'
-import ExteriorDamage from './pages/ExteriorDamage'
-import InteriorDamage from './pages/InteriorDamage'
-import TestDrive from './pages/TestDrive'
-import PhotoCapture from './pages/PhotoCapture'
-import InspectionReview from './pages/InspectionReview'
-import Lookup from './pages/Lookup'
-import Inventory from './pages/Inventory'
-import Sold from './pages/Sold'
-import Admin from './pages/Admin'
-import LotWalk from './pages/LotWalk'
-import SoldReports from './pages/SoldReports'
-import Inspections from './pages/Inspections'
-import Marketplace from './pages/Marketplace'
-import MarketplaceListing from './pages/MarketplaceListing'
-import PullList from './pages/PullList'
-import VinCheck from './pages/VinCheck'
-import VehicleAnalytics from './pages/VehicleAnalytics'
-import FrontLotAging from './pages/FrontLotAging'
-import UnmatchedVehicles from './pages/UnmatchedVehicles'
-import ExecutiveDashboard from './pages/ExecutiveDashboard'
-import Reports from './pages/Reports'
-import BuyerMatch from './pages/BuyerMatch'
-import ListBuilder from './pages/ListBuilder'
-import Listings from './pages/Listings'
-import BodyShop from './pages/BodyShop'
-import BodyShopJob from './pages/BodyShopJob'
-import BodyShopPayout from './pages/BodyShopPayout'
-// Inbound Inspection Pages
-import InboundDashboard from './pages/InboundDashboard'
-import InboundStart from './pages/InboundStart'
-import ArrivalInspection from './pages/ArrivalInspection'
-import MechanicalInspection from './pages/MechanicalInspection'
 import BottomNav from './components/BottomNav'
+
+// The two screens that can be the FIRST thing rendered stay eagerly imported:
+// Login for a signed-out visitor, Dashboard for everyone else. Making these
+// lazy would buy nothing — the app can't paint until one of them arrives, so
+// splitting them just inserts a second network round trip before first paint.
+import Login from './pages/Login'
+import Dashboard from './pages/Dashboard'
+
+// Everything else is fetched when its route is first visited.
+//
+// Why: these 39 pages were static imports, so every one of them — plus recharts,
+// chart.js and html5-qrcode, which only three of them use — was compiled into a
+// single 1.8MB entry bundle that the crew downloaded and parsed on the lot,
+// on a phone, before the login screen could paint. Nothing here is needed to
+// render the first screen. Adding a page? Add it as lazy() unless it is the
+// first thing a user can possibly see.
+const Setup = lazy(() => import('./pages/Setup'))
+const PendingApproval = lazy(() => import('./pages/PendingApproval'))
+const StartInspection = lazy(() => import('./pages/StartInspection'))
+const StartupCheck = lazy(() => import('./pages/StartupCheck'))
+const ExteriorDamage = lazy(() => import('./pages/ExteriorDamage'))
+const InteriorDamage = lazy(() => import('./pages/InteriorDamage'))
+const TestDrive = lazy(() => import('./pages/TestDrive'))
+const PhotoCapture = lazy(() => import('./pages/PhotoCapture'))
+const InspectionReview = lazy(() => import('./pages/InspectionReview'))
+const Lookup = lazy(() => import('./pages/Lookup'))
+const Inventory = lazy(() => import('./pages/Inventory'))
+const Sold = lazy(() => import('./pages/Sold'))
+const Admin = lazy(() => import('./pages/Admin'))
+const LotWalk = lazy(() => import('./pages/LotWalk'))
+const SoldReports = lazy(() => import('./pages/SoldReports'))
+const Inspections = lazy(() => import('./pages/Inspections'))
+const Marketplace = lazy(() => import('./pages/Marketplace'))
+const MarketplaceListing = lazy(() => import('./pages/MarketplaceListing'))
+const PullList = lazy(() => import('./pages/PullList'))
+const VinCheck = lazy(() => import('./pages/VinCheck'))
+const VehicleAnalytics = lazy(() => import('./pages/VehicleAnalytics'))
+const FrontLotAging = lazy(() => import('./pages/FrontLotAging'))
+const UnmatchedVehicles = lazy(() => import('./pages/UnmatchedVehicles'))
+const ExecutiveDashboard = lazy(() => import('./pages/ExecutiveDashboard'))
+const Reports = lazy(() => import('./pages/Reports'))
+const BuyerMatch = lazy(() => import('./pages/BuyerMatch'))
+const ListBuilder = lazy(() => import('./pages/ListBuilder'))
+const Listings = lazy(() => import('./pages/Listings'))
+const BodyShop = lazy(() => import('./pages/BodyShop'))
+const BodyShopJob = lazy(() => import('./pages/BodyShopJob'))
+const BodyShopPayout = lazy(() => import('./pages/BodyShopPayout'))
+// Inbound Inspection Pages
+const InboundDashboard = lazy(() => import('./pages/InboundDashboard'))
+const InboundStart = lazy(() => import('./pages/InboundStart'))
+const ArrivalInspection = lazy(() => import('./pages/ArrivalInspection'))
+const MechanicalInspection = lazy(() => import('./pages/MechanicalInspection'))
+
+// The one loading screen the app uses, in three places: auth resolving, a
+// profile-gated route waiting on auth, and a lazy page chunk arriving. They
+// looked identical already; sharing it means a route chunk landing doesn't
+// flash a different screen than the auth check that preceded it.
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="text-center">
+        <h1 className="text-2xl font-bold text-emerald-400 mb-2">CARZ INC</h1>
+        <p className="text-slate-400">Loading...</p>
+      </div>
+    </div>
+  )
+}
 
 function ProtectedRoute({ children, requireSetup = true }) {
   const { user, profile, loading } = useAuth()
   const { pathname } = useLocation()
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-emerald-400 mb-2">CARZ INC</h1>
-          <p className="text-slate-400">Loading...</p>
-        </div>
-      </div>
-    )
-  }
+  if (loading) return <LoadingScreen />
 
   if (!user) return <Navigate to="/login" replace />
 
@@ -115,18 +135,10 @@ function ProtectedRoute({ children, requireSetup = true }) {
 function AppRoutes() {
   const { user, loading } = useAuth()
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-emerald-400 mb-2">CARZ INC</h1>
-          <p className="text-slate-400">Loading...</p>
-        </div>
-      </div>
-    )
-  }
+  if (loading) return <LoadingScreen />
 
   return (
+    <Suspense fallback={<LoadingScreen />}>
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/setup" element={<ProtectedRoute requireSetup={false}><Setup /></ProtectedRoute>} />
@@ -200,6 +212,7 @@ function AppRoutes() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   )
 }
 
