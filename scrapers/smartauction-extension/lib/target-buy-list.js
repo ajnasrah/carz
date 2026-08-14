@@ -99,6 +99,14 @@
   const int = (x) => { const n = parseInt(String(x ?? '').replace(/[^0-9-]/g, ''), 10); return Number.isFinite(n) ? n : null; };
   const dec = (x) => { const n = parseFloat(String(x ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : null; };
 
+  // A field is a list of spellings, not one. The same auction platform renames
+  // its columns between sites — see the Edge Pipeline note below — so reading
+  // r['Vin'] directly is how a run list from a new yard silently scores zero
+  // cars. `has` is the same idea for detection.
+  const pick = (r, ...names) => { for (const n of names) if (n in r) return r[n]; return ''; };
+  const has = (r, ...names) => names.some((n) => n in r);
+  const str = (x) => String(x ?? '').trim();
+
   // Normalise the several date shapes the auction feeds use into YYYY-MM-DD.
   function toISODate(v) {
     if (!v) return null;
@@ -125,25 +133,38 @@
       // columns whatsoever because a timed sale has no lane to run in. Keying
       // on Run Number alone rejected every search export. The run fields just
       // come back empty in that case, which is exactly why the table grew a VIN
-      // column. `!('MMR' in r)` keeps Manheim — the other feed with a 'Vin'
-      // header — from being swallowed here, since it's matched further down.
-      detect: (r) => 'Vin' in r && !('MMR' in r)
-        && ('Run Number' in r || ('Picture Count' in r && 'Has Condition Report' in r)),
+      // column.
+      //
+      // Two header dialects, and they are the same report from the same
+      // platform. One yard writes `Stock Number` / `Exterior Color` / `Mileage`
+      // / `Has Condition Report` / `Vin`; Des Moines and DAAS Memphis write
+      // `Stock #` / `Color` / `Odometer` / `CR` / `VIN` and add Lights +
+      // Announcements. Reading only the first spelling meant a Des Moines run
+      // list failed detection outright and reported nothing at all.
+      //
+      // `!('MMR' in r)` keeps Manheim out — the other feed with a 'Vin' header —
+      // and `!('Lane / Run' in r)` keeps ADESA out, which is important now that
+      // the all-caps 'VIN' this accepts is also ADESA's spelling. Both are
+      // matched further down.
+      detect: (r) => has(r, 'Vin', 'VIN') && !('MMR' in r) && !('Lane / Run' in r)
+        && ('Run Number' in r
+          || ('Picture Count' in r && has(r, 'Has Condition Report', 'CR'))),
       map: (r) => ({
-        vin: (r['Vin'] || '').trim().toUpperCase(),
-        stock: (r['Stock Number'] || '').trim(),
-        run: (r['Run Number'] || '').trim(),
-        lane: (r['Lane'] || '').trim(),
-        lot: (r['Lot'] || '').trim(),
-        saleDate: (r['Sale Date'] || '').trim(),
+        vin: str(pick(r, 'Vin', 'VIN')).toUpperCase(),
+        stock: str(pick(r, 'Stock Number', 'Stock #')),
+        run: str(r['Run Number']),
+        lane: str(r['Lane']),
+        lot: str(r['Lot']),
+        saleDate: str(r['Sale Date']),
         year: int(r['Year']),
-        make: (r['Make'] || '').trim(),
-        model: (r['Model'] || '').trim(),
-        style: (r['Style'] || '').trim(),
-        color: (r['Exterior Color'] || '').trim(),
-        odo: int(r['Mileage']),
-        grade: (r['Grade'] || '').trim(),
-        hasCR: String(r['Has Condition Report'] || '').toLowerCase() === 'true',
+        make: str(r['Make']),
+        model: str(r['Model']),
+        style: str(r['Style']),
+        color: str(pick(r, 'Exterior Color', 'Color')),
+        odo: int(pick(r, 'Mileage', 'Odometer')),
+        grade: str(r['Grade']),
+        // 'true'/'false' in one dialect, 'Yes'/'No' in the other.
+        hasCR: /^(true|yes)$/i.test(str(pick(r, 'Has Condition Report', 'CR'))),
         pics: int(r['Picture Count']),
         // The search export carries these and the pre-sale one doesn't; they
         // were being dropped on the floor into an Announcements column that
@@ -916,9 +937,21 @@
     manheim: (vin) => `https://www.ove.com/search/results#/details/${vin}/OVE`,
     adesa: (vin) => `https://marketplace.adesa.com/details/${vin}`,
   };
-  // Edge Pipeline is deliberately absent: its detail route is an opaque hash
-  // (/components/vehicle/detail/<32 hex>) with no VIN form, so those still have
-  // to be read off the page.
+  // Edge Pipeline is deliberately absent: its detail route takes the auction's
+  // own vehicle id, not a VIN, so those still have to be read off the page.
+
+  // A source with no VIN-addressable URL can still have its listings recognised
+  // by route, and Edge Pipeline needs that badly: its pre-sale page hangs a
+  // little "(?)" lights-legend link off every card — 144 of them against 100
+  // real car links, counted on a live Des Moines run list. Neither carries the
+  // VIN in its href and the detail anchor wraps an image, so its text is empty
+  // too; both therefore ranked `weak` below, and because the legend URL is much
+  // shorter than a detail URL with its ?btr= return path, the shortest-wins
+  // tiebreak chose the legend every single time. Pressing "open 5" opened five
+  // copies of the colour key. Matching the route settles it outright.
+  const LISTING_PATH = {
+    edge_pipeline: '/components/vehicle/detail/',
+  };
 
   // ADESA virtualises: ~20 cards exist at a time out of 2,300 results, and a
   // card is destroyed once it scrolls out. One snapshot can therefore only ever
@@ -934,7 +967,7 @@
   const SWEEP_STALLS = 4;
 
   // Runs in the page, not here — everything it needs must be inside it.
-  function scrapeVinLinks(allItems) {
+  function scrapeVinLinks(allItems, listingPath) {
     // The whole report gets handed over now, not a batch of ten, so narrow to
     // the cars this page actually shows before touching the DOM element by
     // element. One scan of the body text against 800 VINs is cheap; 800 VINs
@@ -972,7 +1005,7 @@
       return a.href;
     };
     // Links that live in a result card but never open the car.
-    const NOT_A_LISTING = /carfax|autocheck|experian|\/seller|\/dealer|feedback|rating|logout|help|report/i;
+    const NOT_A_LISTING = /carfax|autocheck|experian|\/seller|\/dealer|\/lights\/|feedback|rating|logout|help|report/i;
 
     // A badge can sit flush against the model year — OVE renders the title as
     // "NEW2023 Volkswagen Taos SE" — so drop leading letters that run straight
@@ -990,7 +1023,7 @@
     //   weak  no title-shaped anchor at all; last resort, and reported as such
     // Requiring year AND make also keeps us honest when the climb overshoots
     // into a container holding more than one card.
-    const RANK = { vin: 0, card: 1, title: 2, year: 3, weak: 4 };
+    const RANK = { listing: 0, vin: 1, card: 2, title: 3, year: 4, weak: 5 };
     const flat = new Map();
     const flatText = (a) => {
       let v = flat.get(a);
@@ -1023,9 +1056,18 @@
         // embeds the VIN in its query string, so it used to win at rank "vin"
         // and open a history report instead of the car. The exclusion has to
         // gate every branch, not just "weak".
-        if (NOT_A_LISTING.test(h) || NOT_A_LISTING.test(ownText(anchors[i]))) continue;
+        // A known listing route overrides the blocklist, and on Edge Pipeline
+        // that is the whole ballgame: every car link carries a return path,
+        // "?btr=%2Fcomponents%2Freport%2Fpresale%2Fview%2F…", and NOT_A_LISTING
+        // matches on `report`. So every real car was thrown away here and the
+        // only survivor in the card was the "(?)" lights legend — which is what
+        // the batch actually opened, five times over. Testing the route first
+        // fixes that without weakening any exclusion for the other sources.
+        const isListing = !!listingPath && h.indexOf(listingPath) !== -1;
+        if (!isListing && (NOT_A_LISTING.test(h) || NOT_A_LISTING.test(ownText(anchors[i])))) continue;
         let how = '';
-        if (h.toUpperCase().indexOf(it.vin) !== -1) how = 'vin';
+        if (isListing) how = 'listing';
+        else if (h.toUpperCase().indexOf(it.vin) !== -1) how = 'vin';
         else if (flatText(anchors[i]).indexOf(it.vin) !== -1) how = 'card';
         else if (it.year && deBadge(txt).indexOf(String(it.year)) === 0) {
           how = it.make && txt.indexOf(it.make.toUpperCase()) !== -1 ? 'title' : 'year';
@@ -1091,7 +1133,7 @@
     return { y: window.scrollY, max: winMax(), moved: window.scrollY > was };
   }
 
-  async function resolveOnPage(cars, setNote) {
+  async function resolveOnPage(cars, setNote, listingPath) {
     const items = cars.map((c) => ({ vin: c.vin, year: c.year, make: c.make, model: c.model }));
     setNote(`scanning the list for ${items.length}…`, '#666');
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -1104,7 +1146,7 @@
     // Each pass only asks about cars still missing, so the work shrinks as the
     // sweep goes on even though the list it's walking gets longer.
     const harvest = async () => {
-      const got = (await run(scrapeVinLinks, [pending])) || {};
+      const got = (await run(scrapeVinLinks, [pending, listingPath || ''])) || {};
       const names = Object.keys(got);
       if (names.length) {
         Object.assign(links, got);
@@ -1152,7 +1194,7 @@
       setNote(`${cars.length} ready · built straight from the VIN`, '#1b5e20');
       return;
     }
-    const got = await resolveOnPage(cars, setNote);
+    const got = await resolveOnPage(cars, setNote, LISTING_PATH[lastResult && lastResult.sourceId]);
     if (!got) return;
     const { items, links } = got;
     let good = 0, weak = 0;
@@ -1186,7 +1228,7 @@
       links = {};
       for (const it of items) links[it.vin] = { href: direct(it.vin), how: 'direct', text: '' };
     } else {
-      const got = await resolveOnPage(cars, setNote);
+      const got = await resolveOnPage(cars, setNote, LISTING_PATH[lastResult && lastResult.sourceId]);
       if (!got) return;
       items = got.items; links = got.links;
     }
