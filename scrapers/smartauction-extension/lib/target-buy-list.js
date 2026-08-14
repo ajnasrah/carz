@@ -24,6 +24,7 @@
 
   let cfg = { supabaseUrl: '', supabaseKey: '' };
   let lastResult = null;
+  let savedIndex = [];   // recent saved lists, newest first
 
   // ── Buy criteria ───────────────────────────────────────────────────────────
   const TARGET_PROFIT = 800;   // cohort mean net profit must clear this
@@ -314,6 +315,115 @@
     return `${yy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
   }
 
+  // ── Saved lists ────────────────────────────────────────────────────────────
+  // Scoring a run list is a minute of work — read the CSV, pull six thousand
+  // sold cars, match every one of them — and until now it lived in `lastResult`
+  // above, which the popup destroys the moment it closes. Click off the popup
+  // at the sale and the list was gone, with the cars already crossing the block.
+  //
+  // So every scored list is written to target_run_lists, and the popup reads the
+  // newest one back on open. The web app's List Builder reads and writes the
+  // same rows (inspection-app/src/services/targetRunLists.js) — score a list
+  // here and it's on the phone, score it there and it's here.
+  const TABLE = 'target_run_lists';
+  // Enough to name a list in the picker, without dragging a dozen scored run
+  // lists across the wire to fill a dropdown.
+  const SUMMARY = 'id,source_id,source_label,file_name,sale_date,car_count,'
+    + 'target_count,watch_count,book_size,built_by,created_at';
+
+  const sbHeaders = (extra) => Object.assign({
+    apikey: cfg.supabaseKey,
+    Authorization: `Bearer ${cfg.supabaseKey}`,
+    'Content-Type': 'application/json',
+  }, extra || {});
+
+  // The sale date the list is for, taken from the cars rather than the file
+  // name, which is whatever the auction site called the download. Most common
+  // wins, because one export can straddle two sale days.
+  function saleDateOf(cars) {
+    const tally = new Map();
+    for (const c of cars) {
+      const d = String(c.saleDate || '').trim();
+      if (d) tally.set(d, (tally.get(d) || 0) + 1);
+    }
+    let best = null, bestN = 0;
+    for (const [d, n] of tally) if (n > bestN) { best = d; bestN = n; }
+    return best;
+  }
+
+  async function saveRunList(result) {
+    const { scored } = result;
+    const row = {
+      source_id: result.sourceId,
+      source_label: result.source,
+      file_name: result.fileName || null,
+      sale_date: saleDateOf(scored),
+      car_count: scored.length,
+      target_count: scored.filter((c) => c.verdict === 'TARGET').length,
+      watch_count: scored.filter((c) => c.verdict === 'WATCH').length,
+      book_size: result.bookSize == null ? null : result.bookSize,
+      cars: scored,
+      opened: [],
+      built_by: 'extension',
+    };
+    const res = await fetch(`${cfg.supabaseUrl}/rest/v1/${TABLE}`, {
+      method: 'POST',
+      headers: sbHeaders({ Prefer: 'return=representation' }),
+      body: JSON.stringify(row),
+    });
+    if (!res.ok) throw new Error(`save failed (${res.status})`);
+    const [saved] = await res.json();
+    // Old lists are a few hundred KB each and nobody re-works last month's
+    // sale. Trimming on write keeps this off a scheduler.
+    fetch(`${cfg.supabaseUrl}/rest/v1/rpc/prune_target_run_lists`, {
+      method: 'POST', headers: sbHeaders(), body: '{}',
+    }).catch(() => {});
+    return saved && saved.id;
+  }
+
+  async function listSaved(limit) {
+    const res = await fetch(
+      `${cfg.supabaseUrl}/rest/v1/${TABLE}?select=${SUMMARY}&order=created_at.desc&limit=${limit || 12}`,
+      { headers: sbHeaders(), signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`reading saved lists failed (${res.status})`);
+    return res.json();
+  }
+
+  // Comes back in the shape handleRunList builds, so a restored list and a
+  // freshly scored one are the same thing to renderPanel and everything under
+  // it. The format's parser did its job at upload and doesn't survive JSON —
+  // only its id matters now, since that's what says how a car gets opened.
+  async function loadSaved(id) {
+    const res = await fetch(`${cfg.supabaseUrl}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}&select=*`,
+      { headers: sbHeaders(), signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error(`loading that list failed (${res.status})`);
+    const [row] = await res.json();
+    if (!row) return null;
+    return {
+      id: row.id,
+      scored: row.cars || [],
+      source: row.source_label || row.source_id,
+      sourceId: row.source_id,
+      fileName: row.file_name,
+      bookSize: row.book_size,
+      savedAt: row.created_at,
+      builtBy: row.built_by,
+      openedVins: row.opened || [],
+    };
+  }
+
+  // Which cars have already been sent to a window. Written after every batch so
+  // the count is right on the next surface that opens this list; failure is
+  // silent, because losing the progress marker must never cost you the list.
+  function saveOpened(id, vins) {
+    if (!id) return;
+    fetch(`${cfg.supabaseUrl}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: sbHeaders({ Prefer: 'return=minimal' }),
+      body: JSON.stringify({ opened: Array.from(vins), updated_at: new Date().toISOString() }),
+    }).catch((e) => console.error('saving open progress failed', e));
+  }
+
   async function fetchSoldBook(log) {
     const rows = [];
     const PAGE = 1000;
@@ -567,6 +677,37 @@
       String(a.run || '').localeCompare(String(b.run || ''))
   }
 
+  // Does this list have run order at all? Manheim/OVE timed sales carry no run
+  // number, lane or lot — every car sorts to MAX_SAFE_INTEGER and the
+  // comparator says nothing. There, and only there, fall back to putting the
+  // cars worth bidding on at the top, since nothing else orders them.
+  function hasRunOrder(cars) {
+    return cars.some((c) => {
+      const o = runOrder(c);
+      return o.laneNum !== Number.MAX_SAFE_INTEGER || o.lot !== Number.MAX_SAFE_INTEGER;
+    });
+  }
+
+  const BAND_ORDER = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 };
+
+  // One list in the order the cars cross the block — targets and watches
+  // interleaved, not stacked in two blocks.
+  //
+  // They used to be sorted by verdict band first, so the panel gave you every
+  // target in run order and then every watch in run order: run 42 above run 7,
+  // and you worked the lane by jumping between two halves of the table. The
+  // band is on the row already, as the row colour, and the Excel export carries
+  // it as a column. Sorting by it as well only broke the one order the sale
+  // itself runs in.
+  function sortScored(scored) {
+    scored.sort(hasRunOrder(scored)
+      ? byRunNumber
+      : (a, b) => BAND_ORDER[a.verdict] - BAND_ORDER[b.verdict] ||
+        (b.exactProfit == null ? -Infinity : b.exactProfit) - (a.exactProfit == null ? -Infinity : a.exactProfit));
+    scored.forEach((c, i) => { c.rank = i + 1; });
+    return scored;
+  }
+
   // ── Run-list handling ──────────────────────────────────────────────────────
   async function handleRunList(file, log, setStatus) {
     setStatus('reading…', '');
@@ -600,17 +741,7 @@
     }
 
     const byMake = indexBook(book);
-    const scored = cars.map((c) => evaluateCar(c, byMake));
-
-    // TARGET first, then by average profit.
-    // Rank on the exact-car number only. Sorting by a context-tier average would
-    // let cars with no real history outrank ones that have it.
-    // Verdict bands stay in order — targets, then watch, then no-data, then pass
-    // — and within each band the cars come out in run order, the order they
-    // cross the block.
-    const rankOrder = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 };
-    scored.sort((a, b) => rankOrder[a.verdict] - rankOrder[b.verdict] || byRunNumber(a, b));
-    scored.forEach((c, i) => { c.rank = i + 1; });
+    const scored = sortScored(cars.map((c) => evaluateCar(c, byMake)));
 
     // Flag rows whose verdict rests on the exact same sold cars.
     const poolCounts = new Map();
@@ -621,11 +752,63 @@
     const w = scored.filter((c) => c.verdict === 'WATCH').length;
 
     lastResult = { scored, bookSize: book.length, rawBook: rows.length, source: fmt.label,
-                   sourceId: fmt.id, removedOutliers, removedPassthrough };
+                   sourceId: fmt.id, fileName: file.name, removedOutliers, removedPassthrough };
 
     log(`${t} TARGET · ${w} WATCH · ${scored.length - t - w} PASS`, 'ok');
     setStatus(`✓ ${t} targets of ${scored.length}`, 'loaded');
     renderPanel(lastResult);
+
+    // Saved before anything is done with it, so the minute of scoring can't go
+    // with the popup. A save that fails leaves the panel up and working — it
+    // just won't be there when you open the popup again.
+    try {
+      lastResult.id = await saveRunList(lastResult);
+      log('saved — this list will still be here next time you open the popup', 'ok');
+      await refreshSaved();
+    } catch (err) {
+      log(`couldn't save this list (${err.message}) — it'll be gone when the popup closes`, 'err');
+    }
+  }
+
+  // ── Restore ────────────────────────────────────────────────────────────────
+  // Called once when the popup opens. The newest saved list goes straight back
+  // on screen — no upload, no re-scoring — which is the entire reason the rows
+  // exist. Quiet on failure: an empty panel is what the popup did before.
+  async function restoreLast() {
+    try {
+      savedIndex = (await listSaved()) || [];
+      if (!savedIndex.length) return;
+      const list = await loadSaved(savedIndex[0].id);
+      if (!list) return;
+      lastResult = list;
+      renderPanel(lastResult);
+      const st = document.getElementById('tblRunListStatus');
+      if (st) {
+        st.textContent = `✓ ${list.scored.filter((c) => c.verdict === 'TARGET').length} targets of ${list.scored.length}`;
+        st.className = 'upload-file-status loaded';
+      }
+    } catch (err) {
+      console.error('restoring the last run list failed', err);
+    }
+  }
+
+  async function refreshSaved() {
+    try {
+      savedIndex = await listSaved();
+      renderSavedStrip();
+    } catch (err) { console.error('reading saved lists failed', err); }
+  }
+
+  async function openSaved(id) {
+    if (!id || (lastResult && lastResult.id === id)) return;
+    try {
+      const list = await loadSaved(id);
+      if (!list) { logLine('that list is no longer saved', 'err'); await refreshSaved(); return; }
+      lastResult = list;
+      renderPanel(lastResult);
+    } catch (err) {
+      logLine(`couldn't open that list: ${err.message}`, 'err');
+    }
   }
 
   // ── Excel export ───────────────────────────────────────────────────────────
@@ -1057,6 +1240,33 @@
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+  // The saved lists, newest first, as one line of chips above the report. Its
+  // own function rather than part of renderPanel because saving a list changes
+  // the strip and nothing else — redrawing the whole report to add a chip would
+  // throw away the scroll position in a 300-car table.
+  function renderSavedStrip() {
+    const el = document.getElementById('tblSaved');
+    if (!el) return;
+    if (!savedIndex.length) { el.innerHTML = ''; return; }
+    const current = lastResult && lastResult.id;
+    el.innerHTML = `<div style="font-size:10px;color:#888;">Saved lists</div>`
+      + `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">`
+      + savedIndex.map((s) => {
+        const on = s.id === current;
+        const when = new Date(s.created_at).toLocaleString();
+        const where = s.built_by === 'extension' ? 'this extension' : 'the web app';
+        return `<span class="tbl-saved" data-id="${esc(s.id)}"
+          title="${esc(`${s.car_count} cars · scored ${when} in ${where}`)}"
+          style="cursor:pointer;font-size:10px;padding:2px 7px;border-radius:9px;
+            border:1px solid ${on ? '#1b5e20' : '#ccc'};background:${on ? '#1b5e20' : '#fff'};
+            color:${on ? '#fff' : '#555'};">${esc(s.source_label || s.source_id)}${
+              s.sale_date ? ` · ${esc(s.sale_date)}` : ''} · ${s.target_count}T/${s.watch_count}W</span>`;
+      }).join('')
+      + `</div>`;
+    el.querySelectorAll('.tbl-saved').forEach((n) =>
+      n.addEventListener('click', () => openSaved(n.dataset.id)));
+  }
+
   function renderPanel(result) {
     const el = document.getElementById('tblPanel');
     if (!el) return;
@@ -1067,7 +1277,12 @@
     let html = `<div style="font-size:11px;font-weight:700;color:#1b5e20;margin-bottom:2px;">
       ${targets.length} TARGET · ${watch.length} WATCH · ${scored.length} cars on the list</div>`;
     html += `<div style="font-size:10px;color:#666;margin-bottom:5px;">
-      vs ${bookSize} sold cars · avg profit &gt; $${TARGET_PROFIT} and under ${TARGET_DAYS} days</div>`;
+      vs ${bookSize || '—'} sold cars · avg profit &gt; $${TARGET_PROFIT} and under ${TARGET_DAYS} days${
+        result.savedAt ? ` · scored ${new Date(result.savedAt).toLocaleString()}${
+          result.builtBy === 'web' ? ' in the web app' : ''}` : ''}</div>`;
+    // Filled by renderSavedStrip, which also runs on its own when a save or a
+    // delete changes the list without redrawing the whole panel.
+    html += `<div id="tblSaved" style="margin-bottom:5px;"></div>`;
     html += `<div style="display:flex;gap:4px;margin-bottom:4px;">
       <button id="tblExport" class="btn btn-small" style="background:#1b5e20;font-size:10px;padding:3px 8px;">⬇ Excel</button>
       <button id="tblCopyRuns" class="btn btn-small" style="background:#1565c0;font-size:10px;padding:3px 8px;">Copy Run #s</button>
@@ -1151,8 +1366,14 @@
       setNote(`${t}/${bandOf('TARGET').length} target · ${w}/${bandOf('WATCH').length} watch opened`);
       setLeftCounts();
     };
+    // Not a blanket clear any more. A restored list brings back which cars were
+    // already sent to a window, so picking the sale back up — in this popup, or
+    // in the web app on the phone — carries on from there instead of offering
+    // all forty targets again from the top.
     opened.clear();
+    for (const vin of result.openedVins || []) opened.add(vin);
     setProgress();
+    renderSavedStrip();
 
     document.getElementById('tblExport')?.addEventListener('click', exportXlsx);
     // Reopens the same file picker the "Run List" button uses. Deliberately
@@ -1177,11 +1398,11 @@
 
     document.getElementById('tblOpenTarget')?.addEventListener('click', async () => {
       const batch = nextBatch('TARGET');
-      if (batch) { await openOnPage(batch, setNote, logLine); setLeftCounts(); }
+      if (batch) { await openOnPage(batch, setNote, logLine); setLeftCounts(); saveOpened(result.id, opened); }
     });
     document.getElementById('tblOpenWatch')?.addEventListener('click', async () => {
       const batch = nextBatch('WATCH');
-      if (batch) { await openOnPage(batch, setNote, logLine); setLeftCounts(); }
+      if (batch) { await openOnPage(batch, setNote, logLine); setLeftCounts(); saveOpened(result.id, opened); }
     });
     // Check reports without opening or consuming anything. It follows TARGET
     // while any are left, since that's the band you'd act on first.
@@ -1192,7 +1413,9 @@
       logLine(`Checking ${batch.length} ${band} cars…`, '');
       await checkOnPage(batch, setNote, logLine);
     });
-    document.getElementById('tblOpenReset')?.addEventListener('click', () => { opened.clear(); setProgress(); });
+    document.getElementById('tblOpenReset')?.addEventListener('click', () => {
+      opened.clear(); setProgress(); saveOpened(result.id, opened);
+    });
 
     el.querySelectorAll('.tbl-vin').forEach((n) => n.addEventListener('click', async () => {
       await navigator.clipboard.writeText(n.dataset.vin);
@@ -1200,9 +1423,12 @@
       n.textContent = 'copied';
       setTimeout(() => { n.textContent = was; }, 700);
     }));
-    el.querySelectorAll('.tbl-open').forEach((n) => n.addEventListener('click', () => {
+    el.querySelectorAll('.tbl-open').forEach((n) => n.addEventListener('click', async () => {
       const car = listable.find((c) => c.vin === n.dataset.vin);
-      if (car) openOnPage([car], setNote, logLine);
+      if (!car) return;
+      await openOnPage([car], setNote, logLine);
+      setLeftCounts();
+      saveOpened(result.id, opened);
     }));
   }
 
@@ -1243,10 +1469,15 @@
     };
 
     wire('tblRunListInput', 'tblRunListStatus', handleRunList);
+
+    // Put the last list back on screen without being asked. Everything above is
+    // wired first so the file picker works while this is still in flight.
+    restoreLast();
   }
 
   window.TargetBuyList = {
     bindUI, parseCSV, normModel, normMake, modelMatch,
     cleanBook, indexBook, evaluateCar, fetchSoldBook, FORMATS,
+    restoreLast, listSaved, loadSaved,
   };
 })();

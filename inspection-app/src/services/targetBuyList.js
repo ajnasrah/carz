@@ -563,6 +563,37 @@ function byRunNumber(a, b) {
     String(a.run || '').localeCompare(String(b.run || ''))
 }
 
+// Does this list have run order at all? Manheim/OVE timed sales carry no run
+// number, lane or lot — every car sorts to MAX_SAFE_INTEGER and the comparator
+// says nothing. There, and only there, fall back to putting the cars worth
+// bidding on at the top, since nothing else orders them.
+export function hasRunOrder(cars) {
+  return cars.some((c) => {
+    const o = runOrder(c)
+    return o.laneNum !== Number.MAX_SAFE_INTEGER || o.lot !== Number.MAX_SAFE_INTEGER
+  })
+}
+
+const BAND_ORDER = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 }
+
+// One list in the order the cars cross the block — targets and watches
+// interleaved, not stacked in two blocks.
+//
+// They used to be sorted by verdict band first, so "Targets + Watch" gave you
+// every target in run order and then every watch in run order: run 42 above
+// run 7, and you worked the lane by jumping between two halves of the table.
+// The band is on the row already, as the badge and its colour, and the filter
+// pills split them when splitting is what you want. Sorting by it as well only
+// broke the one order the sale itself runs in.
+export function sortScored(scored) {
+  const runOrdered = hasRunOrder(scored)
+  scored.sort(runOrdered
+    ? byRunNumber
+    : (a, b) => BAND_ORDER[a.verdict] - BAND_ORDER[b.verdict] || (b.exactProfit ?? -Infinity) - (a.exactProfit ?? -Infinity))
+  scored.forEach((c, i) => { c.rank = i + 1 })
+  return scored
+}
+
 // ── Whole-list run ───────────────────────────────────────────────────────────
 export function scoreRunList(rawRows, fmt, byMake) {
   // ADESA exports repeat rows (~20 in a 134-row list), so collapse on VIN.
@@ -575,15 +606,7 @@ export function scoreRunList(rawRows, fmt, byMake) {
     return true
   })
 
-  const scored = cars.map((c) => evaluateCar(c, byMake))
-  // Rank on the exact-car number only. Sorting by a context-tier average would
-  // let cars with no real history outrank ones that have it.
-  // Verdict bands stay in order — targets, then watch, then no-data, then pass —
-  // and within each band the cars come out in run order, the order they cross
-  // the block.
-  const rankOrder = { TARGET: 0, WATCH: 1, 'NO DATA': 2, PASS: 3 }
-  scored.sort((a, b) => rankOrder[a.verdict] - rankOrder[b.verdict] || byRunNumber(a, b))
-  scored.forEach((c, i) => { c.rank = i + 1 })
+  const scored = sortScored(cars.map((c) => evaluateCar(c, byMake)))
 
   // Flag rows whose verdict rests on the exact same sold cars.
   const poolCounts = new Map()

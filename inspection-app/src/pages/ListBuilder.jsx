@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw, ExternalLink } from 'lucide-react'
+import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw, ExternalLink, Trash2 } from 'lucide-react'
 import XLSXWriter from '../services/xlsxWriter'
 import { copyText } from '../native/clipboard'
 import {
   parseCSV, detectFormat, fetchSoldBook, cleanBook, indexBook, scoreRunList,
   TARGET_PROFIT, TARGET_DAYS, DIRECT_URL,
 } from '../services/targetBuyList'
+import {
+  saveRunList, listSavedRunLists, loadRunList, loadLatestRunList, saveOpened, deleteRunList,
+} from '../services/targetRunLists'
 
 // Matches the extension. Five, not fifty — fifty is how many windows a browser
 // will accept before it refuses, not how many a person can work, and on a
@@ -66,8 +69,61 @@ export default function ListBuilder() {
   const [copied, setCopied] = useState('')
   const [opened, setOpened] = useState(() => new Set()) // VINs already sent to a tab
   const [openNote, setOpenNote] = useState('')
+  const [saved, setSaved] = useState([])       // recent lists, either surface
+  const [restoring, setRestoring] = useState(true)
+  // Uploading a file can beat the restore back — the restore reads a whole
+  // scored list out of Postgres. Whichever the user asked for last wins, and
+  // that is always the upload.
+  const uploaded = useRef(false)
 
-  useEffect(() => { loadBook() }, [])
+  // The book and the last list are independent pulls — the list doesn't wait on
+  // six thousand sold cars to come back before it's on screen.
+  useEffect(() => { loadBook(); restoreLast() }, [])
+
+  // A scored list survived being closed, so open where it was left. This is the
+  // whole point of saving them: at a sale you put the phone down, come back,
+  // and the list you built an hour ago is still the list.
+  async function restoreLast() {
+    setRestoring(true)
+    try {
+      const [last, recent] = await Promise.all([
+        loadLatestRunList(),
+        listSavedRunLists().catch(() => []),
+      ])
+      setSaved(recent)
+      if (last && !uploaded.current) {
+        setResult(last)
+        setOpened(last.opened)
+        setFilter('ACTION')
+      }
+    } catch (e) {
+      // A restore that fails is an empty page, not a broken one — say so in the
+      // status line and leave Upload working.
+      console.error('restoring the last run list failed', e)
+    } finally { setRestoring(false) }
+  }
+
+  async function openSaved(id) {
+    if (id === result?.id) return
+    setBusy('Loading…'); setErr('')
+    try {
+      const list = await loadRunList(id)
+      if (!list) throw new Error('That list is no longer saved.')
+      setResult(list)
+      setOpened(list.opened)
+      setFilter('ACTION'); setOpenNote('')
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally { setBusy('') }
+  }
+
+  async function forgetSaved(id) {
+    try {
+      await deleteRunList(id)
+      setSaved((s) => s.filter((r) => r.id !== id))
+      if (id === result?.id) { setResult(null); setOpened(new Set()); setOpenNote('') }
+    } catch (e) { setErr(e.message || String(e)) }
+  }
 
   async function loadBook() {
     setLoading(true); setErr('')
@@ -91,6 +147,7 @@ export default function ListBuilder() {
 
   async function onFile(file) {
     if (!file || !book) return
+    uploaded.current = true
     setBusy(`Reading ${file.name}…`); setErr(''); setResult(null)
     try {
       const raw = parseCSV(await file.text())
@@ -103,6 +160,19 @@ export default function ListBuilder() {
       setResult({ scored, fmt, fileName: file.name, duplicatesDropped })
       setFilter('ACTION')
       setOpened(new Set()); setOpenNote('')
+
+      // Saved straight away, before anything is done with it, so the minute of
+      // scoring can't be lost to a closed tab. A save that fails leaves the
+      // list on screen and working — it just won't be there tomorrow.
+      setBusy('Saving…')
+      try {
+        const id = await saveRunList({ scored, fmt, fileName: file.name, bookSize: book.size })
+        setResult((r) => (r ? { ...r, id } : r))
+        setSaved(await listSavedRunLists())
+      } catch (e) {
+        console.error(e)
+        setErr(`Scored fine, but it couldn't be saved (${e.message}) — it'll be gone if you leave this page.`)
+      }
     } catch (e) {
       setErr(e.message || String(e))
     } finally { setBusy('') }
@@ -127,6 +197,13 @@ export default function ListBuilder() {
   const bandTotal = (band) => (result?.scored || [])
     .filter((c) => c.verdict === band && c.vin).length
 
+  // Open progress rides with the saved list, so picking the list up on the
+  // laptop after working it on the phone doesn't offer all forty targets again.
+  function markOpened(next) {
+    setOpened(next)
+    if (result?.id) saveOpened(result.id, next)
+  }
+
   // TARGET and WATCH open separately — one means "bid on this", the other
   // "keep an eye on it", and opening both at once buries the handful that
   // matter in a pile that doesn't.
@@ -149,7 +226,7 @@ export default function ListBuilder() {
       if (w) next.add(c.vin)   // a blocked car stays queued for the next press
       else blocked++
     }
-    setOpened(next)
+    markOpened(next)
     const left = queue.length - batch.length
     setOpenNote(blocked
       ? `Opened ${batch.length - blocked} of ${batch.length}. Your browser blocked ${blocked} — `
@@ -261,6 +338,37 @@ export default function ListBuilder() {
           ) : null}
         </div>
 
+        {/* Saved lists — the same rows the extension writes, so a list scored in
+            the popup at the sale is here, and one scored here is there. */}
+        {(restoring || saved.length > 0) && (
+          <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3 mb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500 mr-1">
+                {restoring ? 'Looking for your last list…' : 'Saved lists'}
+              </span>
+              {saved.map((s) => (
+                <span key={s.id}
+                  className={`group inline-flex items-center rounded-full border text-xs transition-colors
+                    ${s.id === result?.id
+                      ? 'bg-slate-100 text-slate-900 border-slate-100'
+                      : 'border-slate-700 text-slate-400 hover:text-slate-200'}`}>
+                  <button onClick={() => openSaved(s.id)} className="pl-3 pr-1.5 py-1"
+                    title={`${s.car_count} cars · scored ${new Date(s.created_at).toLocaleString()}`
+                      + ` · from the ${s.built_by === 'extension' ? 'extension' : 'web app'}`}>
+                    {s.source_label || s.source_id}
+                    {s.sale_date ? ` · ${s.sale_date}` : ''}
+                    <span className="opacity-60"> · {s.target_count}T/{s.watch_count}W</span>
+                  </button>
+                  <button onClick={() => forgetSaved(s.id)} title="delete this saved list"
+                    className="pr-2 pl-0.5 py-1 opacity-0 group-hover:opacity-60 hover:!opacity-100">
+                    <Trash2 size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Upload */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <label className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium cursor-pointer
@@ -300,6 +408,8 @@ export default function ListBuilder() {
               <span className="text-sm text-slate-400 mr-1">
                 {result.fmt.label} · {result.scored.length} cars
                 {result.duplicatesDropped > 0 && ` · ${result.duplicatesDropped} duplicates collapsed`}
+                {result.savedAt && ` · scored ${new Date(result.savedAt).toLocaleString()}`
+                  + `${result.builtBy === 'extension' ? ' in the extension' : ''}`}
               </span>
               {[
                 ['ACTION', `Targets + Watch (${counts.TARGET + counts.WATCH})`],
@@ -334,7 +444,7 @@ export default function ListBuilder() {
                     <ExternalLink size={13} /> Open Watch ({Math.min(OPEN_BATCH, bandQueue('WATCH').length)} of {bandQueue('WATCH').length} left)
                   </button>
                   {opened.size > 0 && (
-                    <button onClick={() => { setOpened(new Set()); setOpenNote('') }}
+                    <button onClick={() => { markOpened(new Set()); setOpenNote('') }}
                       title="offer every car again from the top"
                       className="px-3 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:text-slate-200">
                       Reset opens
@@ -417,7 +527,7 @@ export default function ListBuilder() {
                         {linkFor && c.vin
                           ? <a href={linkFor(c.vin)} target="_blank" rel="noopener noreferrer"
                               title="open this car on the auction site"
-                              onClick={() => setOpened((s) => new Set(s).add(c.vin))}
+                              onClick={() => markOpened(new Set(opened).add(c.vin))}
                               className="text-slate-500 hover:text-emerald-400 inline-flex">
                               <ExternalLink size={13} />
                             </a>
