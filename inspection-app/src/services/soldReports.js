@@ -10,21 +10,11 @@ import { supabase, selectAll } from './supabase'
 // "0145614581...." (string concat) and avg_profit becomes NaN.
 // Pull sold rows INCLUDING buyer + vendor + customer (not in the sold_clean view). Paginated.
 export async function fetchSoldWithBuyers() {
-  const PAGE = 1000
-  const all = []
-  let from = 0
-  while (true) {
-    const { data, error } = await supabase
+  const all = await selectAll(() =>
+    supabase
       .from('sold')
-      .select('stock_number, vehicle_year, vehicle_make, vehicle_model, sale_date, buyer, vendor, first_name, last_name, total_cost, added_costs, sales_price, profit_on_sale, days_on_lot')
-      .range(from, from + PAGE - 1)
-    if (error) throw error
-    if (!data || data.length === 0) break
-    all.push(...data)
-    if (data.length < PAGE) break
-    from += PAGE
-    if (from >= 50000) break
-  }
+      .select('stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model, sale_date, buyer, vendor, first_name, last_name, total_cost, added_costs, sales_price, profit_on_sale, days_on_lot'),
+  )
   return all.map((r) => ({
     ...r,
     total_cost: toNumOrNull(r.total_cost),
@@ -150,23 +140,12 @@ function toNumOrNull(v) {
 export async function fetchSoldClean() {
   // PostgREST has a default db_max_rows cap (1000 in Supabase). Paginate
   // with .range() to get ALL rows. ~4500 rows = 5 round trips of 1000 each.
-  const PAGE_SIZE = 1000
-  const all = []
-  let from = 0
-  while (true) {
-    const { data, error } = await supabase
+  const all = await selectAll(() =>
+    supabase
       .from('sold_clean')
       .select('stock_number, year, make, model, mileage, sale_date, days_on_lot, original_cost, total_cost, sales_price, profit')
-      .order('sale_date', { ascending: false })
-      .range(from, from + PAGE_SIZE - 1)
-    if (error) throw error
-    if (!data || data.length === 0) break
-    all.push(...data)
-    if (data.length < PAGE_SIZE) break
-    from += PAGE_SIZE
-    // Safety: cap at 50k rows in case something goes wrong
-    if (from >= 50000) break
-  }
+      .order('sale_date', { ascending: false }),
+  )
   return all.map((r) => ({
     ...r,
     // year, mileage, days_on_lot are postgres `integer` → already JS numbers
