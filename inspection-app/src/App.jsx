@@ -62,6 +62,27 @@ const InboundStart = lazy(() => import('./pages/InboundStart'))
 const ArrivalInspection = lazy(() => import('./pages/ArrivalInspection'))
 const MechanicalInspection = lazy(() => import('./pages/MechanicalInspection'))
 
+// Warm the chunks for the screens that are one tap away.
+//
+// Splitting the routes took the entry bundle from 1.8MB to 557KB, but it moved
+// the cost of a page to the moment you open it — and Sold Reports pulls in
+// recharts, which is 357KB on its own. On the lot that turned an instant tab
+// into a wait. So once the app is idle and the first screen is up, the bottom
+// nav's destinations are fetched in the background: first paint stays cheap,
+// and the tabs are already local by the time anyone presses one.
+//
+// Deliberately only these three. Prefetching everything would just rebuild the
+// old bundle a second late.
+function prefetchTabs() {
+  const warm = () => {
+    import('./pages/Inventory')
+    import('./pages/SoldReports')
+    import('./pages/BuyerMatch')
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 4000 })
+  else setTimeout(warm, 2000)
+}
+
 // The one loading screen the app uses, in three places: auth resolving, a
 // profile-gated route waiting on auth, and a lazy page chunk arriving. They
 // looked identical already; sharing it means a route chunk landing doesn't
@@ -134,6 +155,10 @@ function ProtectedRoute({ children, requireSetup = true }) {
 
 function AppRoutes() {
   const { user, loading } = useAuth()
+
+  // Once there's a signed-in user the bottom nav is on screen, so its
+  // destinations are worth having locally before they're pressed.
+  useEffect(() => { if (user) prefetchTabs() }, [user])
 
   if (loading) return <LoadingScreen />
 
