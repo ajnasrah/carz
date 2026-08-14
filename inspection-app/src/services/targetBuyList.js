@@ -87,6 +87,14 @@ export function parseCSV(text) {
 const int = (x) => { const n = parseInt(String(x ?? '').replace(/[^0-9-]/g, ''), 10); return Number.isFinite(n) ? n : null }
 const dec = (x) => { const n = parseFloat(String(x ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : null }
 
+// A field is a list of spellings, not one. The same auction platform renames
+// its columns between sites — see the Edge Pipeline note below — so reading
+// r['Vin'] directly is how a run list from a new yard silently scores zero
+// cars. `has` is the same idea for detection.
+const pick = (r, ...names) => { for (const n of names) if (n in r) return r[n]; return '' }
+const has = (r, ...names) => names.some((n) => n in r)
+const str = (x) => String(x ?? '').trim()
+
 function toISODate(v) {
   if (!v) return null
   if (v instanceof Date) return v.toISOString().slice(0, 10)
@@ -102,6 +110,134 @@ function toISODate(v) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
 }
 
+// ── CarMax: a run list that arrives as a PDF ─────────────────────────────────
+// Every other auction hands over a CSV. CarMax publishes the run list as a
+// laid-out PDF, so it has to be read back into rows before any of the machinery
+// below can touch it.
+//
+// No PDF library. These files are DynamicPDF output: FlateDecode streams, no
+// encryption, no object streams, and text drawn as `1 0 0 1 <x> <y> Tm` followed
+// by `(text)Tj`. That's inflate — which the browser does natively via
+// DecompressionStream — plus a regex. Adding pdf.js to a Chrome extension with a
+// strict CSP, to read four pages of a table, is not a trade worth making.
+//
+// Reading the coordinates rather than the flattened text is what makes it
+// reliable: columns are recovered from the x the header cells sit at, so a
+// vehicle whose trim runs long can't shunt the VIN into the mileage column.
+// Rows are grouped per page, because y restarts on every page and a global
+// grouping silently merges page 1's row with page 3's.
+
+// Makes CarMax writes as two words. Everything else is the token after the year.
+const MULTIWORD_MAKES = ['Land Rover', 'Alfa Romeo', 'Aston Martin']
+
+function unescapePdfString(s) {
+  return String(s).replace(/\\([nrtbf()\\]|[0-7]{1,3})/g, (m, g) => {
+    if (g === 'n') return '\n'
+    if (g === 'r') return '\r'
+    if (g === 't') return '\t'
+    if (g === 'b' || g === 'f') return ' '
+    if (g === '(' || g === ')' || g === '\\') return g
+    return String.fromCharCode(parseInt(g, 8))
+  })
+}
+
+async function inflate(bytes) {
+  const ds = new DecompressionStream('deflate')
+  const buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer()
+  return new TextDecoder('latin1').decode(buf)
+}
+
+// Every FlateDecode stream in the file, inflated. Non-flate or damaged streams
+// (fonts, metadata) just fail to inflate and are skipped rather than fatal.
+async function pdfContentStreams(bytes) {
+  const head = new TextDecoder('latin1').decode(bytes)
+  const out = []
+  // The leading non-letter matters: a bare /stream/ also matches the one inside
+  // "endstream", which would feed the closing marker back in as if it were a
+  // stream of its own and double the work with garbage.
+  const re = /(?:^|[^A-Za-z])stream\r?\n/g
+  let m
+  while ((m = re.exec(head)) !== null) {
+    const start = m.index + m[0].length
+    let end = head.indexOf('endstream', start)
+    if (end === -1) continue
+    // The EOL before "endstream" belongs to the PDF syntax, not the zlib data.
+    // Python's zlib shrugs at the extra byte; DecompressionStream rejects the
+    // whole stream as trailing junk.
+    while (end > start && (head[end - 1] === '\n' || head[end - 1] === '\r')) end--
+    try { out.push(await inflate(bytes.subarray(start, end))) } catch { /* not flate */ }
+  }
+  return out
+}
+
+// (x, y, text) for every string drawn on a page, in draw order.
+function textCells(content) {
+  const re = /1 0 0 1 ([\d.]+) ([\d.]+) Tm|\(((?:[^()\\]|\\.)*)\)\s*(?:Tj|')/g
+  const cells = []
+  let x = 0, y = 0, m
+  while ((m = re.exec(content)) !== null) {
+    if (m[1] !== undefined) { x = parseFloat(m[1]); y = parseFloat(m[2]) }
+    else cells.push({ x, y, text: unescapePdfString(m[3]).trim() })
+  }
+  return cells
+}
+
+export async function parseCarmaxPdf(arrayBuffer) {
+  const pages = await pdfContentStreams(new Uint8Array(arrayBuffer))
+  const rows = []
+
+  for (const content of pages) {
+    // Group into visual rows. Cells drawn at the same y are the same line.
+    const byY = new Map()
+    for (const c of textCells(content)) {
+      if (!c.text) continue
+      const key = Math.round(c.y * 10) / 10
+      if (!byY.has(key)) byY.set(key, [])
+      byY.get(key).push(c)
+    }
+    const lines = [...byY.entries()]
+      .map(([y, cells]) => ({ y, cells: cells.sort((a, b) => a.x - b.x) }))
+      .sort((a, b) => b.y - a.y) // top of the page down
+
+    // The header names the columns and fixes the x each one starts at.
+    const headerIdx = lines.findIndex((l) => {
+      const t = l.cells.map((c) => c.text)
+      return t.includes('VIN') && t.includes('Run')
+    })
+    if (headerIdx === -1) continue
+    const columns = lines[headerIdx].cells.map((c) => ({ x: c.x, name: c.text }))
+    const leftX = columns[0].x
+
+    // Nearest column at or to the left of the cell — the layout is left-aligned,
+    // so a long value grows right and still belongs to the column it starts in.
+    const columnFor = (x) => {
+      let best = columns[0]
+      for (const col of columns) if (x >= col.x - 2) best = col
+      return best.name
+    }
+
+    let current = null
+    for (const line of lines.slice(headerIdx + 1)) {
+      const rec = {}
+      for (const c of line.cells) {
+        const name = columnFor(c.x)
+        rec[name] = rec[name] ? `${rec[name]} ${c.text}` : c.text
+      }
+      const vin = (rec.VIN || '').replace(/[^0-9A-Za-z]/g, '')
+      if (vin.length === 17) {
+        current = rec
+        rows.push(rec)
+      } else if (current && line.cells.length === 1 && line.cells[0].x <= leftX + 2) {
+        // The disclosure line under a car: one cell, hard left. "No
+        // announcement(s)" is CarMax's way of saying clean, and is worth keeping
+        // as-is — it's the difference between "nothing declared" and "not read".
+        current.Announcements = line.cells[0].text
+      }
+    }
+  }
+  return rows
+}
+
 // ── Run-list formats ─────────────────────────────────────────────────────────
 export const FORMATS = [
   {
@@ -110,26 +246,38 @@ export const FORMATS = [
     // Edge Pipeline ships two exports and both belong here: the pre-sale run
     // list (Run Number / Lane / Lot) and the vehicle search, which has no run
     // columns whatsoever because a timed sale has no lane to run in. Keying on
-    // Run Number alone rejected every search export. `!('MMR' in r)` keeps
-    // Manheim — the other feed with a 'Vin' header — out, since it's matched
-    // further down.
-    detect: (r) => 'Vin' in r && !('MMR' in r)
-      && ('Run Number' in r || ('Picture Count' in r && 'Has Condition Report' in r)),
+    // Run Number alone rejected every search export.
+    //
+    // Two header dialects, and they are the same report from the same platform.
+    // One yard writes `Stock Number` / `Exterior Color` / `Mileage` / `Has
+    // Condition Report` / `Vin`; Des Moines and DAAS Memphis write `Stock #` /
+    // `Color` / `Odometer` / `CR` / `VIN` and add Lights + Announcements.
+    // Reading only the first spelling meant a Des Moines run list failed
+    // detection outright and reported nothing at all.
+    //
+    // `!('MMR' in r)` keeps Manheim out — the other feed with a 'Vin' header —
+    // and `!('Lane / Run' in r)` keeps ADESA out, which is important now that
+    // the all-caps 'VIN' this accepts is also ADESA's spelling. Both are
+    // matched further down.
+    detect: (r) => has(r, 'Vin', 'VIN') && !('MMR' in r) && !('Lane / Run' in r)
+      && ('Run Number' in r
+        || ('Picture Count' in r && has(r, 'Has Condition Report', 'CR'))),
     map: (r) => ({
-      vin: (r['Vin'] || '').trim().toUpperCase(),
-      stock: (r['Stock Number'] || '').trim(),
-      run: (r['Run Number'] || '').trim(),
-      lane: (r['Lane'] || '').trim(),
-      lot: (r['Lot'] || '').trim(),
-      saleDate: (r['Sale Date'] || '').trim(),
+      vin: str(pick(r, 'Vin', 'VIN')).toUpperCase(),
+      stock: str(pick(r, 'Stock Number', 'Stock #')),
+      run: str(r['Run Number']),
+      lane: str(r['Lane']),
+      lot: str(r['Lot']),
+      saleDate: str(r['Sale Date']),
       year: int(r['Year']),
-      make: (r['Make'] || '').trim(),
-      model: (r['Model'] || '').trim(),
-      style: (r['Style'] || '').trim(),
-      color: (r['Exterior Color'] || '').trim(),
-      odo: int(r['Mileage']),
-      grade: (r['Grade'] || '').trim(),
-      hasCR: String(r['Has Condition Report'] || '').toLowerCase() === 'true',
+      make: str(r['Make']),
+      model: str(r['Model']),
+      style: str(r['Style']),
+      color: str(pick(r, 'Exterior Color', 'Color')),
+      odo: int(pick(r, 'Mileage', 'Odometer')),
+      grade: str(r['Grade']),
+      // 'true'/'false' in one dialect, 'Yes'/'No' in the other.
+      hasCR: /^(true|yes)$/i.test(str(pick(r, 'Has Condition Report', 'CR'))),
       pics: int(r['Picture Count']),
       // Only the search export carries these, and they were being dropped into
       // an Announcements column that then exported blank.
@@ -208,6 +356,62 @@ export const FORMATS = [
       location: (r['Pickup Location'] || '').trim(),
       channel: (r['Inventory'] || '').trim(),
     }),
+  },
+  {
+    id: 'carmax',
+    label: 'CarMax',
+    // Rows built by parseCarmaxPdf above, keyed by the PDF's own header names.
+    // No overlap with Edge Pipeline: that one needs a Run Number or a Picture
+    // Count column, and CarMax publishes neither.
+    detect: (r) => 'VIN' in r && 'Year Make Model Trim' in r,
+    map: (r) => {
+      // "A/5" — lane A, run 5.
+      const run = (r['Run'] || '').trim()
+      const slash = run.split('/')
+      // "2019 Audi A6 Premium Plus" → 2019 / Audi / "A6 Premium Plus".
+      const ymm = (r['Year Make Model Trim'] || '').trim()
+      const year = int((ymm.match(/^(\d{4})\b/) || [])[1])
+      let rest = ymm.replace(/^\d{4}\s*/, '')
+      const multi = MULTIWORD_MAKES.find((m) => rest.toUpperCase().startsWith(m.toUpperCase()))
+      const make = multi || rest.split(/\s+/)[0] || ''
+      // Model keeps the trim on the end deliberately. modelMatch() compares
+      // nameplates by prefix, so "Grand Cherokee Trailhawk" still comps against
+      // the book's "Grand Cherokee" — whereas guessing where the nameplate stops
+      // would split "Grand Cherokee" itself on half the rows.
+      const model = rest.slice(make.length).trim()
+      return {
+        vin: (r['VIN'] || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase(),
+        stock: '',
+        run,
+        lane: slash.length > 1 ? slash[0].trim() : '',
+        lot: slash.length > 1 ? slash[1].trim() : run,
+        // "08/17/2026 9:00 am MT" — the time and zone aren't part of a sale date.
+        saleDate: toISODate((String(r['Date'] || '').match(/\d{1,2}\/\d{1,2}\/\d{4}/) || [])[0]) || '',
+        year,
+        make,
+        model,
+        style: '',
+        color: (r['Color'] || '').trim(),
+        odo: int(r['Mileage']),
+        // CarMax grades nothing and posts no condition report with the list.
+        grade: '',
+        hasCR: false,
+        pics: null,
+        drivetrain: (String(r['Drive  Transmission  Engine'] || '').split(/\s{2,}|/)[0] || '').trim(),
+        engine: '',
+        transmission: '',
+        fuel: '',
+        seller: 'CarMax',
+        // The disclosure line, and the whole reason to read the second row:
+        // "Major Engine Defect" or "Structural Damage" is the difference
+        // between a bid and a pass.
+        announcements: (r['Announcements'] || '').trim(),
+        titleStatus: '',
+        auctionValue: null,
+        location: (r['Location'] || '').trim(),
+        channel: '',
+      }
+    },
   },
 ]
 
@@ -315,11 +519,49 @@ function frazerDate(v) {
   return `${yy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
 }
 
+// One page of an RPC, paginated the only way this RPC honours.
+//
+// supabase-js has no offset(), and .range() sends a Range header that
+// list_all_sold ignores — see the note in fetchSoldBook. So the request is made
+// by hand against the same project, reusing the session token when there is one
+// so RLS sees the signed-in user exactly as the client would.
+async function rpcPage(fn, limit, offset) {
+  const url = import.meta.env.VITE_SUPABASE_URL?.trim()
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    const res = await fetch(`${url}/rest/v1/rpc/${fn}?limit=${limit}&offset=${offset}`, {
+      method: 'POST',
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${session?.access_token || key}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    })
+    if (!res.ok) return { data: null, error: new Error(`${res.status} ${await res.text()}`) }
+    return { data: await res.json(), error: null }
+  } catch (e) {
+    return { data: null, error: e }
+  }
+}
+
 export async function fetchSoldBook() {
   const rows = []
   const PAGE = 1000
   for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await supabase.rpc('list_all_sold').range(offset, offset + PAGE - 1)
+    // limit/offset as PostgREST query params, NOT .range().
+    //
+    // .range() sets a Range header, and this RPC ignores it: every page came
+    // back as the same first 1000 rows. Nothing detected that, because a full
+    // page never trips the `data.length < PAGE` break — so the loop ran to its
+    // safety stop and returned 102,000 rows that were 102 copies of the first
+    // thousand. Scoring then ran on a book with every cohort inflated 102x and
+    // the other 5,400 real sales missing entirely. Verified against the live
+    // RPC: offset=0 and offset=1000 return different rows this way, identical
+    // ones via Range. The extension's copy always used query params, which is
+    // why only this side was wrong.
+    const { data, error } = await rpcPage('list_all_sold', PAGE, offset)
     if (error) throw new Error(`list_all_sold failed: ${error.message}`)
     if (!data || !data.length) break
     rows.push(...data)

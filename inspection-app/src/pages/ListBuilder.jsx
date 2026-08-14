@@ -4,7 +4,7 @@ import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw, Ext
 import XLSXWriter from '../services/xlsxWriter'
 import { copyText } from '../native/clipboard'
 import {
-  parseCSV, detectFormat, fetchSoldBook, cleanBook, indexBook, scoreRunList,
+  parseCSV, parseCarmaxPdf, detectFormat, fetchSoldBook, cleanBook, indexBook, scoreRunList,
   TARGET_PROFIT, TARGET_DAYS, DIRECT_URL,
 } from '../services/targetBuyList'
 import {
@@ -150,11 +150,19 @@ export default function ListBuilder() {
     uploaded.current = true
     setBusy(`Reading ${file.name}…`); setErr(''); setResult(null)
     try {
-      const raw = parseCSV(await file.text())
-      if (!raw.length) throw new Error('That file has no rows.')
+      // CarMax publishes its run list as a PDF; everyone else sends a CSV.
+      const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf'
+      const raw = isPdf
+        ? await parseCarmaxPdf(await file.arrayBuffer())
+        : parseCSV(await file.text())
+      if (!raw.length) {
+        throw new Error(isPdf
+          ? "Couldn't read any vehicles out of that PDF. CarMax run lists work; a scanned or printed-to-PDF list won't."
+          : 'That file has no rows.')
+      }
       const fmt = detectFormat(raw)
       if (!fmt) {
-        throw new Error('Unrecognised run list. Supported: Edge Pipeline, ADESA, Manheim.')
+        throw new Error('Unrecognised run list. Supported: Edge Pipeline, ADESA, Manheim, CarMax.')
       }
       const { scored, duplicatesDropped } = scoreRunList(raw, fmt, book.byMake)
       setResult({ scored, fmt, fileName: file.name, duplicatesDropped })
@@ -375,10 +383,10 @@ export default function ListBuilder() {
             ${book ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}>
             <Upload size={16} />
             {busy || 'Upload Run List'}
-            <input type="file" accept=".csv" className="hidden" disabled={!book}
+            <input type="file" accept=".csv,.pdf" className="hidden" disabled={!book}
               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFile(f) }} />
           </label>
-          <span className="text-xs text-slate-500">Edge Pipeline · ADESA · Manheim</span>
+          <span className="text-xs text-slate-500">Edge Pipeline · ADESA · Manheim · CarMax (PDF)</span>
 
           {result && (
             <>
