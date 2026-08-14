@@ -27,6 +27,12 @@ number it has already seen, and it doesn't tell you kindly. `MARKETING_VERSION`
 is the version humans read (1.0); `CURRENT_PROJECT_VERSION` is the build counter
 and is the one that has to go up **every single upload**.
 
+**Screenshot dimensions.** App Store Connect rejects the listing with "the
+dimensions of one or more screenshots are wrong" unless every image is exactly
+one of: 1242 × 2688, 2688 × 1242, 1284 × 2778, or 2778 × 1284 px. A simulator
+screenshot from the wrong device is the usual cause — iPhone 11 Pro Max or 12
+Pro Max give you these sizes.
+
 ```sh
 grep -n CURRENT_PROJECT_VERSION ios/App/App.xcodeproj/project.pbxproj   # appears twice, bump both
 npm run build:native                     # vite build + cap sync + pod install
