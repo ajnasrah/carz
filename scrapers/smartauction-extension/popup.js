@@ -113,7 +113,15 @@
 
     if (path.startsWith('/vehicle/')) {
       const parts = path.split('/'); // ['', 'vehicle', vin6, ('photos')?]
-      const vin6 = (parts[2] || '').toUpperCase();
+      // The queue keys on the last 6 — that's all the inspectors type on
+      // mobile — but callers hand us whatever the user put in the box, and a
+      // full 17-char VIN pasted off a listing is the normal case. Compared
+      // whole, 'SHHFK7H46MU219992' never equals '219992', so the lookup 404'd:
+      // no photo_count, so no Load Photos button, and no intake `miles`, so the
+      // odometer silently kept the inspection's older reading. Normalise here
+      // rather than at each call site — the photos RPC below keys on it too.
+      const rawVin = (parts[2] || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+      const vin6 = rawVin.length > 6 ? rawVin.slice(-6) : rawVin;
       if (parts[3] === 'photos') {
         const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
         const limit = parseInt(query.get('limit') || String(urls.length), 10);
