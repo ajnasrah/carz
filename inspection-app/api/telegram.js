@@ -117,8 +117,13 @@ async function processUpdate(update) {
     if (answer) {
       await resolvePendingForSender(db, fromId, answer, chat.station, null, { force: true });
       await adoptUnidentified(db, fromId, chat.station, answer);
-      await db.from('wa_inbound_messages')
-        .update({ vin6: answer, processed: true, error: null }).eq('message_id', msgKey);
+      // Record it as a car this sender NAMED, not just a row that happens to
+      // carry a VIN — that is what makes it a candidate for the nearest-in-time
+      // lookup, so any straggler photos after the answer bind to it too.
+      await db.from('wa_inbound_messages').update({
+        vin6: answer, parsed: { vin6: answer, answered: true },
+        vin_source: 'caption', processed: true, error: null,
+      }).eq('message_id', msgKey);
     }
     return;
   }
