@@ -399,7 +399,72 @@
     fetch(`${cfg.supabaseUrl}/rest/v1/rpc/prune_target_run_lists`, {
       method: 'POST', headers: sbHeaders(), body: '{}',
     }).catch(() => {});
+    recordObservations(result).catch((e) =>
+      console.error('could not record run-list observations', e));
     return saved && saved.id;
+  }
+
+  // Keep the condition of every car we look at, forever.
+  //
+  // Mirror of recordObservations() in inspection-app/src/services/targetRunLists.js
+  // — change one, change the other. It has to exist on both sides because most
+  // lists are scored here, in the popup, and the row above is deleted after 30
+  // days by the prune. CR grade and announcements are the only condition facts
+  // we ever see while the car is still on the block; `sold` records what the
+  // shop spent but never what shape the car was in when we bid.
+  //
+  // Every car goes in, not just the flagged ones: a PASS we bought anyway is the
+  // only evidence that a PASS was ever wrong.
+  async function recordObservations(result) {
+    const scored = result && result.scored;
+    if (!scored || !scored.length || !result.sourceId) return 0;
+    const gradeNum = (g) => {
+      const m = String(g == null ? '' : g).match(/\d+(\.\d+)?/);
+      if (!m) return null;
+      const n = Number(m[0]);
+      return isFinite(n) && n >= 0 && n <= 5.1 ? n : null;
+    };
+    const txt = (v) => {
+      const s = String(v == null ? '' : v).trim();
+      return s ? s.slice(0, 2000) : null;
+    };
+    const int = (v) => (v != null && v !== '' && isFinite(Number(v)) ? Math.round(Number(v)) : null);
+    const dec = (v) => (isFinite(Number(v)) && v != null && v !== '' ? Number(v) : null);
+    const rows = scored
+      .filter((c) => String(c.vin || '').length === 17)
+      .map((c) => ({
+        vin: String(c.vin).toUpperCase(),
+        // '' not null: the unique index spans this column and NULLs never
+        // collide, so an undated list would re-insert in full every upload.
+        sale_date: txt(c.saleDate) || '',
+        source_id: result.sourceId,
+        source_label: result.source,
+        year: int(c.year), make: txt(c.make), model: txt(c.model),
+        trim: txt(c.style), odometer: int(c.odo),
+        cr_grade: gradeNum(c.grade), cr_grade_raw: txt(c.grade),
+        has_cr: c.hasCR == null ? null : !!c.hasCR,
+        announcements: txt(c.announcements), title_status: txt(c.titleStatus),
+        auction_value: dec(c.auctionValue),
+        seller: txt(c.seller), location: txt(c.location), lane: txt(c.lane),
+        lot: txt(c.lot), run: txt(c.run), channel: txt(c.channel),
+        drivetrain: txt(c.drivetrain), engine: txt(c.engine),
+        transmission: txt(c.transmission), fuel: txt(c.fuel), color: txt(c.color),
+        verdict: txt(c.verdict), confidence: txt(c.confidence),
+        exact_n: int(c.exactN), exact_profit: dec(c.exactProfit), exact_days: dec(c.exactDays),
+      }));
+    if (!rows.length) return 0;
+    // Chunked — a 1,200-car ADESA list in one request is a large body.
+    for (let i = 0; i < rows.length; i += 500) {
+      const r = await fetch(
+        `${cfg.supabaseUrl}/rest/v1/run_list_observations?on_conflict=vin,sale_date,source_id`,
+        {
+          method: 'POST',
+          headers: sbHeaders({ Prefer: 'resolution=ignore-duplicates,return=minimal' }),
+          body: JSON.stringify(rows.slice(i, i + 500)),
+        });
+      if (!r.ok) throw new Error(`observations failed (${r.status})`);
+    }
+    return rows.length;
   }
 
   async function listSaved(limit) {

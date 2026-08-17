@@ -56,7 +56,99 @@ export async function saveRunList({ scored, fmt, fileName, bookSize, builtBy = '
   // Old lists are a few hundred KB each and nobody re-works a sale from last
   // month. Trimming on write keeps this off a scheduler.
   supabase.rpc('prune_target_run_lists').then(() => {}, () => {})
+  // The condition record outlives the list itself — see recordObservations.
+  recordObservations({ scored, fmt }).catch((e) =>
+    console.error('could not record run-list observations', e))
   return data.id
+}
+
+// Keep the condition of every car we look at, forever.
+//
+// The scored list above is pruned after 30 days, and it carries the only
+// buy-time condition data we ever get: CR grade, announcements, and the
+// auction's own valuation. `sold` records what a car cost to recondition but
+// never what shape it was in when we bid, so without this there is no way to
+// ever learn what a grade is worth. Buying low-grade cars and reconditioning
+// them up is the business — the question worth answering is which nameplate and
+// grade combinations recondition profitably, and that needs years of rows.
+//
+// EVERY car goes in, not just TARGET and WATCH. The cars we passed on and bought
+// anyway are the only evidence that a PASS was ever wrong, and a table of
+// winners alone can't tell you what your criteria are missing.
+//
+// Best-effort by design: this is a study record, not part of the sale day. It
+// never blocks or fails the save, and the caller ignores its result.
+export async function recordObservations({ scored, fmt }) {
+  if (!scored?.length || !fmt) return 0
+
+  const gradeNum = (g) => {
+    // '2.4', '3.5 ', 'Grade 4.1', 'AS-IS' -> a number or null. Stored raw as
+    // well, because a feed that starts grading differently should be visible
+    // rather than silently parsed into nonsense.
+    const m = String(g ?? '').match(/\d+(\.\d+)?/)
+    if (!m) return null
+    const n = Number(m[0])
+    return Number.isFinite(n) && n >= 0 && n <= 5.1 ? n : null
+  }
+  const txt = (v) => {
+    const s = String(v ?? '').trim()
+    return s ? s.slice(0, 2000) : null
+  }
+  const int = (v) => (Number.isFinite(Number(v)) && v !== '' && v != null ? Math.round(Number(v)) : null)
+
+  const rows = scored
+    .filter((c) => String(c.vin || '').length === 17)
+    .map((c) => ({
+      vin: String(c.vin).toUpperCase(),
+      // '' not null — the unique index spans this column, and NULLs never
+      // collide, so an undated list would re-insert in full on every upload.
+      sale_date: txt(c.saleDate) || '',
+      source_id: fmt.id,
+      source_label: fmt.label,
+      year: int(c.year),
+      make: txt(c.make),
+      model: txt(c.model),
+      trim: txt(c.style),
+      odometer: int(c.odo),
+      cr_grade: gradeNum(c.grade),
+      cr_grade_raw: txt(c.grade),
+      has_cr: c.hasCR ?? null,
+      announcements: txt(c.announcements),
+      title_status: txt(c.titleStatus),
+      auction_value: Number.isFinite(Number(c.auctionValue)) ? Number(c.auctionValue) : null,
+      seller: txt(c.seller),
+      location: txt(c.location),
+      lane: txt(c.lane),
+      lot: txt(c.lot),
+      run: txt(c.run),
+      channel: txt(c.channel),
+      drivetrain: txt(c.drivetrain),
+      engine: txt(c.engine),
+      transmission: txt(c.transmission),
+      fuel: txt(c.fuel),
+      color: txt(c.color),
+      verdict: txt(c.verdict),
+      confidence: txt(c.confidence),
+      exact_n: int(c.exactN),
+      exact_profit: Number.isFinite(Number(c.exactProfit)) ? Number(c.exactProfit) : null,
+      exact_days: Number.isFinite(Number(c.exactDays)) ? Number(c.exactDays) : null,
+    }))
+  if (!rows.length) return 0
+
+  // Re-uploading the same list, or a car running at the same sale twice, must
+  // not double the rows — the unique index is (vin, sale_date, source_id) and
+  // ignoreDuplicates keeps the FIRST sighting, which is the decision point.
+  // Chunked because a 1,200-car ADESA list in one request is a large body.
+  let written = 0
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500)
+    const { error } = await supabase
+      .from('run_list_observations')
+      .upsert(chunk, { onConflict: 'vin,sale_date,source_id', ignoreDuplicates: true })
+    if (error) throw new Error(error.message)
+    written += chunk.length
+  }
+  return written
 }
 
 export async function listSavedRunLists(limit = 12) {
