@@ -14,6 +14,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { parseVehicleEntry, extractVin6, extractAllVin6 } from './_lib/parse.js';
 import { storePhoto, bucketForStation } from './_lib/photos.js';
+import {
+  sendTelegramMessage, nearestVin, albumVin, settleParked,
+  sweepParkedPhotos, rebindGuessedPhotos,
+} from './_lib/intake.js';
 
 export const config = { runtime: 'edge' };
 
@@ -26,16 +30,6 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 // second of each other; this is the in-request wait, so it buys correctness at
 // the cost of a slower 200 back.
 const PARK_SETTLE_MS = 3000;
-// The backstop sweep waits far longer, so it only ever picks up photos that
-// genuinely fell through — never one whose caption is still in flight in
-// somebody else's request.
-const PARK_SWEEP_MS = 60 * 1000;
-// A guess stays open to correction for this long. A VIN typed shortly AFTER an
-// uncaptioned burst is better evidence than one typed before it, and it can only
-// ever arrive once that burst has already been filed.
-const REBIND_WINDOW_MS = 30 * 60 * 1000;
-const TG = 'https://api.telegram.org';
-
 function admin() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
     auth: { persistSession: false },
@@ -287,142 +281,12 @@ async function processUpdate(update) {
   await rebindGuessedPhotos(db);
 }
 
-// The car this sender named nearest in time to `atIso` — up to 2h before the
-// photo, up to 15 min after it. "Nearest", not "last": follow-up damage shots 20
-// minutes after a caption belong to the car that was captioned, while an
-// uncaptioned burst named 30 seconds later belongs to the car it was named.
-async function nearestVin(db, fromId, station, atIso) {
-  const { data, error } = await db.rpc('intake_nearest_vin', {
-    p_from: fromId, p_station: station, p_at: atIso,
-  });
-  if (error) { console.error('intake_nearest_vin failed', error.message || error); return null; }
-  return data || null;
-}
-
 // Put a car back in the extension's ready-to-list view when the team re-shoots
 // it. Never touches 'sold' or 'listed' — see the RPC for why.
 async function reopenQueueStatus(db, vin6, eventIso) {
   const { data, error } = await db.rpc('sa_queue_reopen_on_intake', { p_vin6: vin6, p_event: eventIso });
   if (error) console.error('sa_queue_reopen_on_intake failed for', vin6, error.message || error);
   else if (data) console.log('reopened queue status for', vin6);
-}
-
-// Re-examine photos bound by inference while their evidence can still change. A
-// VIN typed AFTER an uncaptioned burst only exists once the burst is already
-// filed, so this is the only place that case can be caught. Facts are never
-// revisited: rows whose vin_source is 'caption' or 'album' are not selected.
-async function rebindGuessedPhotos(db) {
-  const since = new Date(Date.now() - REBIND_WINDOW_MS).toISOString();
-  const { data: guesses } = await db.rpc('guessed_photos_to_recheck', { p_since: since, p_limit: 25 });
-  for (const g of guesses || []) {
-    const better = await nearestVin(db, g.wa_from, g.station, g.received_at);
-    if (!better || better === g.vin6) continue;
-    console.log('rebinding', g.message_id, g.vin6, '->', better);
-    await db.from('wa_inbound_messages').update({ vin6: better }).eq('message_id', g.message_id);
-  }
-}
-
-// The VIN carried by any member of an album, once one of them has committed.
-async function albumVin(db, mediaGroupId) {
-  const { data } = await db.from('wa_inbound_messages')
-    .select('vin6').eq('media_group_id', mediaGroupId)
-    .not('vin6', 'is', null).limit(1).maybeSingle();
-  return data?.vin6 || null;
-}
-
-// Download and file a parked photo, in the same order of evidence used
-// everywhere else: the photo's own VIN (a store that failed and is being
-// retried), then its album's caption, then — last — the nearest car this sender
-// named, recomputed now so a VIN typed after the burst counts too. Idempotent:
-// re-reads the row and no-ops if something already claimed it.
-//
-// When nothing can identify it, ask the group rather than dropping it silently.
-async function settleParked(db, messageId, { ask = false } = {}) {
-  const { data: p } = await db.from('wa_inbound_messages')
-    .select('message_id, station, wa_from, received_at, vin6, media_group_id, '
-          + 'session_vin_at_receipt, pending_file_id, media_path, pending_attempts')
-    .eq('message_id', messageId).maybeSingle();
-  if (!p || p.media_path || !p.pending_file_id) return;
-
-  let source = 'guess';
-  let vin6 = p.vin6;
-  if (vin6) source = 'caption';
-  if (!vin6 && p.media_group_id) { vin6 = await albumVin(db, p.media_group_id); if (vin6) source = 'album'; }
-  if (!vin6) vin6 = await nearestVin(db, p.wa_from, p.station, p.received_at) || p.session_vin_at_receipt;
-  if (!vin6) {
-    // Nothing on the photo, nothing in the album, nothing this sender named for
-    // two hours either side. A human is the only thing left that knows.
-    if (ask) await askWhichCar(db, p);
-    return;
-  }
-
-  try {
-    const path = await storePhoto(db, bucketForStation(p.station), vin6, p.pending_file_id);
-    await db.from('wa_inbound_messages')
-      .update({ vin6, media_path: path, pending_file_id: null, vin_source: source })
-      .eq('message_id', p.message_id);
-  } catch (e) {
-    // Still failing — count the attempt so a permanently broken file eventually
-    // stops being retried, and leave it parked for the next sweep.
-    console.error('settle parked photo failed', p.message_id, e?.message || e);
-    await db.from('wa_inbound_messages')
-      .update({ pending_attempts: (p.pending_attempts || 0) + 1 })
-      .eq('message_id', p.message_id);
-  }
-}
-
-// Backstop for anything that raced or whose upload was still failing.
-//
-// There is no 6h floor any more. It was there to stop unidentifiable photos
-// being rescanned forever, but it also threw away every picture that took longer
-// than an afternoon to resolve — and because the scan was ordered oldest-first
-// with a limit, a handful of permanently stuck rows could starve everything
-// behind them anyway. The RPC now excludes rows nothing can identify and rows
-// that have already failed eight downloads, and returns newest first.
-async function sweepParkedPhotos(db) {
-  const settled = new Date(Date.now() - PARK_SWEEP_MS).toISOString();
-  const { data: parked } = await db.rpc('parked_photos_to_retry', {
-    p_before: settled, p_limit: 25,
-  });
-  // Asking happens here rather than in the 3s in-request settle: by now the
-  // caption has had a full minute to arrive and so has any VIN typed after the
-  // burst, so a question at this point is a real dead end, not impatience.
-  for (const p of parked || []) await settleParked(db, p.message_id, { ask: true });
-}
-
-// Ask the group which car a burst belongs to — once per album, not once per
-// picture, and only for the intake groups where a car is what a photo means.
-// The answer comes back as a reply and is handled at the top of processUpdate.
-async function askWhichCar(db, p) {
-  if (p.station !== 'ready' && p.station !== 'seller') return;
-  // Only about pictures somebody still remembers taking. Asking the group about
-  // a photo from six weeks ago is noise, and the backfill hands us a pile of
-  // those the first time this runs.
-  if (Date.now() - new Date(p.received_at).getTime() > 6 * 60 * 60 * 1000) {
-    await db.from('wa_inbound_messages')
-      .update({ asked_at: new Date().toISOString() }).eq('message_id', p.message_id);
-    return;
-  }
-  // One ask per album. The marker rides on the whole album so a 40-photo burst
-  // produces one question.
-  const already = await db.from('wa_inbound_messages')
-    .select('message_id')
-    .eq('station', p.station).eq('wa_from', p.wa_from)
-    .not('asked_at', 'is', null)
-    .gte('asked_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
-    .limit(1);
-  if (already.data && already.data.length) return;
-
-  const chatId = p.message_id.split('_')[1];
-  await sendTelegramMessage(chatId,
-    '❓ Which car are these photos for?\n'
-    + 'Reply to this message with the last 6 of the VIN and I\'ll file them.');
-  const scope = db.from('wa_inbound_messages')
-    .update({ asked_at: new Date().toISOString() })
-    .eq('station', p.station).eq('wa_from', p.wa_from).is('media_path', null)
-    .not('pending_file_id', 'is', null);
-  await (p.media_group_id ? scope.eq('media_group_id', p.media_group_id)
-                          : scope.eq('message_id', p.message_id));
 }
 
 // Bind every still-unidentified photo this sender parked recently to the car
@@ -505,18 +369,6 @@ async function matchDestination(db, text) {
     if (better) best = k;
   }
   return best ? best.location_code : null;
-}
-
-// Send a message back into the Telegram group (bots can post anytime).
-async function sendTelegramMessage(chatId, text, replyTo) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const body = { chat_id: chatId, text };
-  if (replyTo) body.reply_to_message_id = replyTo;
-  try {
-    await fetch(`${TG}/bot${token}/sendMessage`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    });
-  } catch (e) { console.error('sendMessage failed:', e?.message || e); }
 }
 
 // If posted mileage isn't higher than what's in inventory (Frazer), ask the
