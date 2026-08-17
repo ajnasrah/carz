@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X } from 'lucide-react'
+import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X, FileSpreadsheet } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 import { BODY_SHOP_ROLES } from '../services/bodyShop'
+import {
+  canSeeSoldReports, setSoldReportsAccess,
+  fetchPendingAccessRequests, decideAccessRequest,
+} from '../services/soldReportAccess'
 
 export default function Admin() {
   const navigate = useNavigate()
@@ -16,6 +20,8 @@ export default function Admin() {
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
+  // People who pressed "Request access" on the Sold Reports lock screen.
+  const [soldRequests, setSoldRequests] = useState([])
 
   async function loadUsers() {
     const { data } = await supabase
@@ -26,6 +32,16 @@ export default function Admin() {
     setLoading(false)
   }
 
+  // Kept separate from loadUsers so a failure here (or an unmigrated database)
+  // leaves the rest of the panel working rather than blanking the user list.
+  async function loadSoldRequests() {
+    try {
+      setSoldRequests(await fetchPendingAccessRequests())
+    } catch (e) {
+      console.error('Could not load sold-report access requests', e)
+    }
+  }
+
   useEffect(() => {
     if (profile?.role !== 'admin' && !isPrimaryAdmin(profile?.phone)) {
       navigate('/')
@@ -33,12 +49,13 @@ export default function Admin() {
     }
     let cancelled = false
     async function load() {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: true })
+      const [{ data }, requests] = await Promise.all([
+        supabase.from('profiles').select('*').order('created_at', { ascending: true }),
+        fetchPendingAccessRequests().catch(() => []),
+      ])
       if (!cancelled) {
         setUsers(data || [])
+        setSoldRequests(requests)
         setLoading(false)
       }
     }
@@ -94,6 +111,42 @@ export default function Admin() {
       return
     }
     loadUsers()
+  }
+
+  // Sold Reports = cost, sale price and profit per car. The tick controls VIEWING
+  // only; exporting the spreadsheet stays admin-only and has no per-user override
+  // (see services/soldReportAccess). Admins already have it by being admins, so
+  // their box is ticked and locked rather than tracked separately.
+  async function toggleSoldAccess(user, allowed) {
+    try {
+      await setSoldReportsAccess(user.id, allowed)
+    } catch (e) {
+      setError('Could not change Sold Reports access: ' + e.message)
+      setTimeout(() => setError(''), 3000)
+      return
+    }
+    // Granting from here answers an open request too — otherwise the queue would
+    // keep showing someone who already has what they asked for.
+    const open = soldRequests.find((r) => r.user_id === user.id)
+    if (open && allowed) {
+      try {
+        await decideAccessRequest(open, true, profile?.id)
+      } catch (e) {
+        console.error('Could not close the access request', e)
+      }
+    }
+    await Promise.all([loadUsers(), loadSoldRequests()])
+  }
+
+  async function decideSoldRequest(request, granted) {
+    try {
+      await decideAccessRequest(request, granted, profile?.id)
+    } catch (e) {
+      setError('Could not answer the request: ' + e.message)
+      setTimeout(() => setError(''), 3000)
+      return
+    }
+    await Promise.all([loadUsers(), loadSoldRequests()])
   }
 
   async function toggleRole(userId, currentRole) {
@@ -209,6 +262,43 @@ export default function Admin() {
           </div>
         )
       })()}
+
+      {/* Sold Reports access requests — filed from the lock screen on that page
+          via /api/sold-report-access. Granting here ticks the same box as the
+          checkbox in the user list below; there's no second flag. */}
+      {soldRequests.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-lg font-bold text-sky-300 mb-3 flex items-center gap-2">
+            <FileSpreadsheet size={18} /> Sold Reports Access ({soldRequests.length})
+          </h2>
+          <div className="space-y-2">
+            {soldRequests.map((r) => (
+              <div key={r.id} className="card border border-sky-500/40 bg-sky-500/5">
+                <p className="font-semibold text-white">{r.name || 'Unnamed'}</p>
+                <p className="text-sm text-slate-400">{r.phone || 'No phone'}</p>
+                {r.note && <p className="text-xs text-slate-300 mt-1 italic">“{r.note}”</p>}
+                <p className="text-[11px] text-slate-500 mt-1">
+                  asked {new Date(r.created_at).toLocaleDateString()}
+                </p>
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => decideSoldRequest(r, true)}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-emerald-500 text-slate-900 font-semibold text-sm"
+                  >
+                    <Check size={16} /> Give access
+                  </button>
+                  <button
+                    onClick={() => decideSoldRequest(r, false)}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 rounded-lg bg-red-500/20 text-red-400 font-semibold text-sm"
+                  >
+                    <X size={16} /> Deny
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search Bar */}
       <input
@@ -330,6 +420,36 @@ export default function Admin() {
                 })()}
               </div>
               <div className="flex items-center gap-2">
+                {(() => {
+                  // Admins pass on being admins, and buyers never reach an internal
+                  // page at all — in both cases the tick would be a lie if it were
+                  // editable, so show the true state and lock it.
+                  const isAdminRow = u.role === 'admin' || isPrimaryAdmin(u.phone)
+                  const isBuyer = u.account_type === 'buyer'
+                  return (
+                    <label
+                      className={`flex items-center gap-1.5 text-xs ${
+                        isAdminRow || isBuyer ? 'text-slate-500' : 'text-slate-300 cursor-pointer'
+                      }`}
+                      title={
+                        isAdminRow
+                          ? 'Admins always see Sold Reports'
+                          : isBuyer
+                          ? 'Buyers only see the marketplace'
+                          : 'Can view Sold Reports (cost + profit). Exporting stays admin-only.'
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={canSeeSoldReports(u)}
+                        disabled={isAdminRow || isBuyer}
+                        onChange={(e) => toggleSoldAccess(u, e.target.checked)}
+                        className="w-4 h-4 accent-emerald-500"
+                      />
+                      Sold
+                    </label>
+                  )
+                })()}
                 <select
                   value={(u.roles || []).find((r) => BODY_SHOP_ROLES.includes(r)) || ''}
                   onChange={(e) => setShopRole(u, e.target.value)}

@@ -21,3 +21,15 @@ export const isAndroid = () => Capacitor.getPlatform() === 'android'
 export const TRAINING_BASE_URL = isNative()
   ? 'https://carzinc.ai/training'
   : '/training'
+
+// Where the serverless functions in api/ live. On the web they're same-origin,
+// so a relative path is right and keeps preview deployments talking to their own
+// functions. The native shell serves the bundle off capacitor://localhost, where
+// a relative /api/… resolves inside the app package and 404s — it has to name the
+// production host.
+//
+// www, not the apex, unlike TRAINING_BASE_URL: carzinc.ai 307s to www.carzinc.ai,
+// and that hop is cross-origin, so the browser drops the Authorization header on
+// the way. A call that authenticates itself with a bearer token would arrive
+// anonymous and be rejected. Verified: www answers with no redirect.
+export const API_BASE_URL = isNative() ? 'https://www.carzinc.ai' : ''

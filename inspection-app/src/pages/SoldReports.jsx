@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X, Copy, Check } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X, Copy, Check, Lock, Clock, Send } from 'lucide-react'
 import {
   BarChart, Bar, Line, ComposedChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend,
@@ -14,6 +14,11 @@ import {
 } from '../services/soldReports'
 import XLSXWriter from '../services/xlsxWriter'
 import { copyText } from '../native/clipboard'
+import { useAuth } from '../context/useAuth'
+import {
+  canSeeSoldReports, canExportSoldReports,
+  requestSoldReportsAccess, fetchMyAccessRequest,
+} from '../services/soldReportAccess'
 import CompareBox from '../components/CompareBox'
 import InventoryVsSold from '../components/InventoryVsSold'
 import BuySellPace from '../components/BuySellPace'
@@ -47,6 +52,10 @@ const EXPORT_COLUMNS = [
 
 export default function SoldReports({ embedded = false }) {
   const navigate = useNavigate()
+  // Viewing is admin-or-ticked; exporting is admin-only. See services/soldReportAccess.
+  const { profile } = useAuth()
+  const allowed = canSeeSoldReports(profile)
+  const canExport = canExportSoldReports(profile)
   const [allRows, setAllRows] = useState([])
   const [buyerRows, setBuyerRows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -76,6 +85,10 @@ export default function SoldReports({ embedded = false }) {
   // Initial load + auto-refresh every 5 minutes so the dashboard stays fresh
   // when frazer-ingest pushes new sold data behind the scenes.
   useEffect(() => {
+    // No access → don't pull ~6,400 rows of margin data into a tab that is only
+    // ever going to render the lock screen. `loading` is left as-is on purpose:
+    // the !allowed branch renders before the loading branch, so it never shows.
+    if (!allowed) return
     let cancelled = false
     async function load() {
       try {
@@ -117,7 +130,7 @@ export default function SoldReports({ embedded = false }) {
       cancelled = true
       clearInterval(interval)
     }
-  }, [])
+  }, [allowed])
   
   // Update available models when make changes
   useEffect(() => {
@@ -189,7 +202,7 @@ export default function SoldReports({ embedded = false }) {
   // whole sold book: if you've narrowed to Toyota MTD, that's what lands in
   // the file, and the filename says so.
   function exportSold() {
-    if (!filtered.length) return
+    if (!canExport || !filtered.length) return
     const S = XLSXWriter.S
 
     const rows = [EXPORT_COLUMNS.map(([h]) => ({ v: h, s: S.HEADER }))]
@@ -337,6 +350,17 @@ export default function SoldReports({ embedded = false }) {
       .slice(0, 5)
   }, [sweetSpots, topBuy])
 
+  // Checked before loading: there is nothing being loaded for someone without
+  // access, and a spinner ahead of a lock screen just reads as a broken page.
+  if (!allowed) {
+    return (
+      <div className="page">
+        {!embedded && <Header navigate={navigate} />}
+        <AccessLocked profile={profile} />
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="page">
@@ -386,19 +410,24 @@ export default function SoldReports({ embedded = false }) {
             )}
             {/* Sits with the filters because that's exactly what it obeys —
                 the count is the promise of what lands in the file. Disabled at
-                zero rather than handing over an empty spreadsheet. */}
-            <button
-              onClick={exportSold}
-              disabled={!filtered.length}
-              title={filtered.length ? `Export these ${filtered.length} cars to Excel` : 'Nothing to export'}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold transition-colors ${
-                filtered.length
-                  ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
-                  : 'bg-slate-700/50 text-slate-600'
-              }`}
-            >
-              <Download size={13} /> Export {filtered.length}
-            </button>
+                zero rather than handing over an empty spreadsheet.
+                Admins only, and not merely hidden-if-not: a granted viewer reads
+                the numbers on screen, but the spreadsheet is the whole margin
+                structure in a file that can be forwarded anywhere. */}
+            {canExport && (
+              <button
+                onClick={exportSold}
+                disabled={!filtered.length}
+                title={filtered.length ? `Export these ${filtered.length} cars to Excel` : 'Nothing to export'}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold transition-colors ${
+                  filtered.length
+                    ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
+                    : 'bg-slate-700/50 text-slate-600'
+                }`}
+              >
+                <Download size={13} /> Export {filtered.length}
+              </button>
+            )}
           </div>
         </div>
         
@@ -1101,6 +1130,101 @@ export default function SoldReports({ embedded = false }) {
 }
 
 // ── Sub-components ──
+// What someone without access sees instead of the sold book: what this page is,
+// and one button that asks for it.
+//
+// The existing request is read on mount rather than kept only in component state,
+// so closing the app and coming back still says "waiting on an admin" instead of
+// offering the button again as though nothing happened.
+function AccessLocked({ profile }) {
+  const [request, setRequest] = useState(null)
+  // Nothing to look up without an id, so start settled rather than flipping the
+  // flag from inside the effect.
+  const [checking, setChecking] = useState(Boolean(profile?.id))
+  const [note, setNote] = useState('')
+  const [sending, setSending] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (!profile?.id) return
+    let cancelled = false
+    fetchMyAccessRequest(profile.id)
+      .then((r) => { if (!cancelled) setRequest(r) })
+      // A failed read must not strand them: fall through to the button. Filing a
+      // second request is harmless — the endpoint returns the open one.
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setChecking(false) })
+    return () => { cancelled = true }
+  }, [profile?.id])
+
+  async function submit() {
+    setSending(true)
+    setErr('')
+    try {
+      const status = await requestSoldReportsAccess(note)
+      if (status === 'granted') {
+        // The flag was turned on while they were sitting here — reload rather
+        // than leave them staring at a lock screen they no longer need.
+        window.location.reload()
+        return
+      }
+      setRequest({ status: 'pending', created_at: new Date().toISOString(), note })
+    } catch (e) {
+      setErr(e.message || 'Could not send the request')
+    }
+    setSending(false)
+  }
+
+  const pending = request?.status === 'pending'
+  const denied = request?.status === 'denied'
+
+  return (
+    <div className="card max-w-md mx-auto text-center py-8">
+      <div className="inline-flex p-3 rounded-full bg-slate-800 mb-3">
+        <Lock size={22} className="text-amber-400" />
+      </div>
+      <h2 className="text-lg font-bold text-white mb-1">Sold Reports is restricted</h2>
+      <p className="text-sm text-slate-400 mb-5">
+        This page shows cost, sale price and profit on every car sold. An admin has
+        to give you access.
+      </p>
+
+      {checking ? (
+        <p className="text-xs text-slate-500">Checking…</p>
+      ) : pending ? (
+        <div className="flex items-center justify-center gap-2 text-sm text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg py-3 px-4">
+          <Clock size={16} />
+          Request sent — waiting on an admin
+        </div>
+      ) : (
+        <>
+          {denied && (
+            <p className="text-xs text-red-400 mb-3">
+              Your last request wasn't approved. You can ask again.
+            </p>
+          )}
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Why do you need it? (optional)"
+            rows={2}
+            className="w-full mb-3 px-3 py-2 bg-slate-800 text-white text-sm rounded-lg border border-slate-700 focus:border-emerald-400 focus:outline-none"
+          />
+          <button
+            onClick={submit}
+            disabled={sending}
+            className="btn-primary w-full flex items-center justify-center gap-2"
+          >
+            <Send size={16} />
+            {sending ? 'Sending…' : 'Request access'}
+          </button>
+          {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
 function Header({ navigate }) {
   return (
     <div className="flex items-center gap-3 mb-4">
