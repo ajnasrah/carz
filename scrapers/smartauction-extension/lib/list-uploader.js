@@ -1794,28 +1794,21 @@
       }
     }
     
-    // Auto-mark hold vehicles as on hold in the queue
-    const holdVehicles = upserts.filter(u => u.sa_status === 'hold');
-    if (holdVehicles.length > 0) {
-      let holdCount = 0;
-      try {
-        for (const vehicle of holdVehicles) {
-          const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'hold' }) });
-          if (response.ok) {
-            holdCount++;
-            config.log(`Marked ${last6} as on hold`, 'ok');
-          }
-          // Skip 404s silently - vehicle not in queue
-        }
-        if (holdCount > 0) {
-          config.log(`Auto-marked ${holdCount} vehicles as on hold in queue`, 'ok');
-        }
-      } catch (err) {
-        config.log(`Error marking vehicles as on hold: ${err.message}`, 'warn');
-      }
-    }
-    
+    // NOT mirrored: SA 'hold' and SA 'removed'.
+    //
+    // This upload used to copy every SmartAuction status straight onto the
+    // intake queue, and those two are the ones that don't mean the same thing on
+    // both sides. The queue answers "do we still owe this car a listing?", which
+    // a car being paused or pulled on SmartAuction does not settle — if anything
+    // a car that just came off SA is one we owe a listing to. The extension's
+    // ready-to-list view only shows status 'queued', so every mirrored
+    // hold/removed silently deleted a car from it.
+    //
+    // The 2026-08-14 upload stamped 83 cars in one pass and hid ten that were
+    // still in inventory, 247722 among them; it was still hidden three days
+    // later after a complete re-shoot. Hold and Remove remain available as
+    // buttons, because a person pressing them means the queue's version of it.
+
     // Auto-mark sold vehicles as sold and remove from queue
     const soldVehicles = upserts.filter(u => u.sa_status === 'sold');
     if (soldVehicles.length > 0) {
@@ -1842,28 +1835,11 @@
       }
     }
     
-    // Auto-remove vehicles that are removed from SmartAuction
-    const removedVehicles = upserts.filter(u => u.sa_status === 'removed');
-    if (removedVehicles.length > 0) {
-      let removedCount = 0;
-      try {
-        for (const vehicle of removedVehicles) {
-          const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'removed' }) });
-          if (response.ok) {
-            removedCount++;
-            config.log(`Removed ${last6} from queue (removed from SA)`, 'ok');
-          }
-          // Skip 404s silently - vehicle not in queue
-        }
-        if (removedCount > 0) {
-          config.log(`Auto-removed ${removedCount} vehicles removed from SA from queue`, 'ok');
-        }
-      } catch (err) {
-        config.log(`Error removing vehicles: ${err.message}`, 'warn');
-      }
+    const skippedMirror = upserts.filter(u => u.sa_status === 'hold' || u.sa_status === 'removed').length;
+    if (skippedMirror > 0) {
+      config.log(`${skippedMirror} vehicle(s) on hold/removed on SmartAuction — left in the queue as-is`, 'ok');
     }
-    
+
     showSummary('smart_auction', matched, rows.length, ok, err, 0);
     renderSmartAuctionBreakdown({ activeNotInInv, removedStillInInv, soldStillInInv });
     
