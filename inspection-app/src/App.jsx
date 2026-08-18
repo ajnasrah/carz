@@ -43,6 +43,7 @@ const SoldReports = lazy(() => import('./pages/SoldReports'))
 const Inspections = lazy(() => import('./pages/Inspections'))
 const Marketplace = lazy(() => import('./pages/Marketplace'))
 const MarketplaceListing = lazy(() => import('./pages/MarketplaceListing'))
+const BuyerList = lazy(() => import('./pages/BuyerList'))
 const PullList = lazy(() => import('./pages/PullList'))
 const VinCheck = lazy(() => import('./pages/VinCheck'))
 const VehicleAnalytics = lazy(() => import('./pages/VehicleAnalytics'))
@@ -234,6 +235,8 @@ function AppRoutes() {
       <Route path="/listings" element={<Listings />} />
       <Route path="/marketplace" element={<Marketplace />} />
       <Route path="/marketplace/:id" element={<MarketplaceListing />} />
+      {/* A buyer's hand-picked list, sent to him by text. Public by design. */}
+      <Route path="/m/:slug" element={<BuyerList />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -8,10 +8,14 @@ import {
 } from '../services/buyerMatchData'
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
 import BuyerAnalytics from '../components/BuyerAnalytics'
+import BuyerCarsView from '../components/BuyerCarsView'
 import HistoryButton from '../components/HistoryButton'
 import { copyText } from '../native/clipboard'
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
+// See BuyerCarsView: Buy Now is empty on our SmartAuction listings, the ask
+// lives in Opening Price.
+const ask = (c) => c.buy_now ?? c.opening_price ?? null
 const CONF = {
   high: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
   medium: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
@@ -30,7 +34,10 @@ export default function BuyerMatch() {
   const [expanded, setExpanded] = useState(null)
   const [copied, setCopied] = useState('')
   const [ghl, setGhl] = useState('')
-  const [view, setView] = useState('cars')  // 'cars' = recommendations · 'buyers' = performance analytics
+  // 'cars'   = per car, who'd buy it        (the original view)
+  // 'match'  = per buyer, what he'd buy     (the direction you make calls in)
+  // 'buyers' = per buyer, what he has bought (performance analytics)
+  const [view, setView] = useState('cars')
 
   useEffect(() => { load() }, [])
 
@@ -122,7 +129,7 @@ export default function BuyerMatch() {
     const subject = `${v} available — ${car.odometer?.toLocaleString()} mi`
     const body =
       `Hi,\n\nWe have a ${v} (VIN ${car.vin}, ${car.odometer?.toLocaleString()} mi) on SmartAuction now.` +
-      ` Based on your buying history I thought it'd be a fit — asking around ${money(rec.predicted_price)}.` +
+      ` Based on your buying history I thought it'd be a fit — asking ${money(ask(car) ?? rec.predicted_price)}.` +
       `${car.detail_url ? `\n\n${car.detail_url}` : ''}\n\nLet me know if you want it. Thanks!`
     return { subject, body }
   }
@@ -154,7 +161,7 @@ export default function BuyerMatch() {
         </div>
         <div className="flex items-center gap-1">
           <div className="flex rounded-lg border border-slate-700 overflow-hidden mr-1">
-            {['cars', 'buyers'].map((v) => (
+            {['cars', 'match', 'buyers'].map((v) => (
               <button key={v} onClick={() => setView(v)}
                 className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
                   view === v ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800/50 text-slate-400 hover:text-slate-200'}`}>
@@ -192,7 +199,16 @@ export default function BuyerMatch() {
         </button>
       </div>
 
-      {view === 'buyers' ? (
+      {view === 'match' ? (
+        needData ? (
+          <p className="text-slate-400 text-sm p-4 text-center">
+            Upload the SmartAuction <b>active</b> list and a <b>sold</b> report first — this view reads the same
+            recommendations, grouped by buyer instead of by car.
+          </p>
+        ) : (
+          <BuyerCarsView results={results} byVin={byVin} />
+        )
+      ) : view === 'buyers' ? (
         sold.length ? (
           <BuyerAnalytics sold={sold} />
         ) : (
@@ -235,7 +251,7 @@ export default function BuyerMatch() {
                           {car.year} {car.make} {car.model} <span className="text-slate-400 font-normal">{car.trim}</span>
                         </div>
                         <div className="text-xs text-slate-400 mt-0.5">
-                          {car.odometer?.toLocaleString()} mi · Buy Now {money(car.buy_now)} · est. value {money(res.value)}
+                          {car.odometer?.toLocaleString()} mi · Ask {money(ask(car))} · est. value {money(res.value)}
                           <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">{res.segment}/{res.tier}</span>
                         </div>
                       </div>

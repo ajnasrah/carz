@@ -158,7 +158,14 @@ export function buildModel(sold) {
 function cmv(car, model) {
   const { rows } = model;
   const seg = car.segment || segment(car.make, car.model);
-  const y = num(car.year), o = num(car.odometer), bn = num(car.buy_now);
+  // The ask. SmartAuction's export fills `Opening Price` and leaves `Buy Now`
+  // empty on every car we list, so reading buy_now alone left bn null for the
+  // whole active list — which silently disabled the price band below AND
+  // dropped the 60/40 anchor, pricing every car off comps alone. The
+  // marketplace already treats opening price as the ask (price_source
+  // 'smartauction'); this agrees with it.
+  const y = num(car.year), o = num(car.odometer);
+  const bn = num(car.buy_now) ?? num(car.opening_price);
   // Only comp against sales in a price band around Buy Now, so a $6.5k micro-EV is never
   // comped against $30k Teslas that merely share the "ev" segment + year + mileage.
   const inBand = (r) => !bn || (r._p >= bn * 0.5 && r._p <= bn * 2);

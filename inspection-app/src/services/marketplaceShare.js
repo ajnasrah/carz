@@ -49,3 +49,42 @@ export function buildShareMessage(cars, { buyer } = {}) {
     cars.map(carLines).join('\n\n'),
   ].join('\n')
 }
+
+// ---------------------------------------------------------------------------
+// Buyer lists: one link per buyer instead of one link per car.
+//
+// Pitching a buyer ten cars as ten marketplace links is a wall of URLs nobody
+// opens. A buyer list is a single page holding exactly the cars we picked for
+// him, so the message stays short enough to read on a phone.
+// ---------------------------------------------------------------------------
+export function buyerListUrl(slug) {
+  return `${PUBLIC_ORIGIN}/m/${slug}`
+}
+
+// The cars are named in the message as well as on the page. A buyer skimming a
+// text should be able to tell whether it's worth tapping without tapping.
+export function buildBuyerListMessage(cars, { buyer, slug, dealer } = {}) {
+  const hello = buyer ? `Hi ${String(buyer).split(/[,(]/)[0].trim()},` : 'Hi,'
+  const n = cars.length
+  const head = `${hello}\n\n${n} unit${n === 1 ? '' : 's'} I think fit your book right now:`
+
+  const lines = cars.slice(0, 8).map((c) => {
+    const name = [c.year, c.make, c.model].filter(Boolean).join(' ') || 'Vehicle'
+    const bits = []
+    const miles = Number(String(c.odometer ?? c.mileage ?? '').replace(/[^0-9]/g, ''))
+    if (Number.isFinite(miles) && miles > 0) bits.push(`${Math.round(miles / 1000)}k mi`)
+    const price = money(c.buy_now ?? c.predicted_price)
+    if (price) bits.push(price)
+    return `• ${name}${bits.length ? ` · ${bits.join(' · ')}` : ''}`
+  })
+  if (n > 8) lines.push(`• …and ${n - 8} more`)
+
+  return [
+    head, '',
+    slug ? buyerListUrl(slug) : null,
+    slug ? '' : null,
+    lines.join('\n'),
+    '',
+    dealer || null,
+  ].filter((x) => x !== null).join('\n')
+}
