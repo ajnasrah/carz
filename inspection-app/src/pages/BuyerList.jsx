@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { Phone, Mail, ExternalLink } from 'lucide-react'
 import { fetchBuyerShareList, markBuyerShareListOpened } from '../services/buyerLists'
+import { reserveCar, rememberReserveTarget } from '../services/reservations'
 import { DEALER, dealerPhonePretty } from '../config/dealer'
 import { openExternal, smsUrl } from '../native/links'
 
@@ -14,6 +15,11 @@ const realTrim = (t) => (t && !/unspecified/i.test(t) ? t : null)
 // cars are, and how to reply.
 export default function BuyerList() {
   const { slug } = useParams()
+  const navigate = useNavigate()
+  // Reserve state, keyed by VIN so one car's error never blanks the others.
+  const [busyVin, setBusyVin] = useState(null)
+  const [notes, setNotes] = useState({})
+  const [choices, setChoices] = useState(null)   // { vin, stock, options }
   const [list, setList] = useState(null)
   const [state, setState] = useState('loading')   // loading | ok | missing | error
   const [err, setErr] = useState('')
@@ -53,6 +59,39 @@ export default function BuyerList() {
   }
   if (state === 'error') {
     return <Frame><p className="text-red-400 text-center py-16 text-sm">{err}</p></Frame>
+  }
+
+  // Same flow the marketplace listing uses, so a buyer who came from a text gets
+  // the real thing rather than a message to the office that nobody records.
+  async function reserve(car, billingLocationId = null) {
+    if (!car.stock_number) return
+    setBusyVin(car.vin)
+    setNotes((n) => ({ ...n, [car.vin]: '' }))
+    try {
+      await reserveCar(car.stock_number, billingLocationId)
+      setChoices(null)
+      setNotes((n) => ({ ...n, [car.vin]: 'Reserved — we\'ll call you.' }))
+      setList((l) => ({ ...l, cars: l.cars.map((c) => (c.vin === car.vin ? { ...c, reserved: true } : c)) }))
+    } catch (e) {
+      if (e.needsAuth) {
+        rememberReserveTarget(window.location.pathname)
+        navigate('/login')
+        return
+      }
+      if (e.needsProfile) {
+        rememberReserveTarget(window.location.pathname)
+        setNotes((n) => ({ ...n, [car.vin]: `${e.message} — taking you there…` }))
+        setTimeout(() => navigate('/setup'), 1200)
+        return
+      }
+      if (e.needsLocation) {
+        setChoices({ vin: car.vin, options: e.needsLocation })
+        return
+      }
+      setNotes((n) => ({ ...n, [car.vin]: e.message }))
+    } finally {
+      setBusyVin(null)
+    }
   }
 
   const total = list.cars.reduce((s, c) => s + (c.buy_now || 0), 0)
@@ -110,13 +149,45 @@ export default function BuyerList() {
                     <ExternalLink size={12} /> SmartAuction
                   </a>
                 )}
-                <button
-                  onClick={() => openExternal(smsUrl(DEALER.phone,
-                    `I want the ${[c.year, c.make, c.model].filter(Boolean).join(' ')} (VIN ${c.vin}).`))}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-500 text-slate-900 text-xs font-bold">
-                  I want it
-                </button>
+                {c.reserved ? (
+                  <span className="px-3 py-1.5 rounded bg-slate-700 text-slate-300 text-xs font-medium">Reserved</span>
+                ) : c.stock_number ? (
+                  <button
+                    onClick={() => reserve(c)}
+                    disabled={busyVin === c.vin}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-500 text-slate-900 text-xs font-bold disabled:opacity-50">
+                    {busyVin === c.vin ? 'Reserving…' : 'Reserve it'}
+                  </button>
+                ) : (
+                  // No stock number means it has left inventory; a text is all we
+                  // can honestly offer.
+                  <button
+                    onClick={() => openExternal(smsUrl(DEALER.phone,
+                      `I want the ${[c.year, c.make, c.model].filter(Boolean).join(' ')} (VIN ${c.vin}).`))}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-500 text-slate-900 text-xs font-bold">
+                    Ask about it
+                  </button>
+                )}
               </div>
+              {notes[c.vin] && <p className="text-[11px] text-emerald-400 mt-2">{notes[c.vin]}</p>}
+              {choices?.vin === c.vin && (
+                <div className="mt-2 border-t border-slate-700 pt-2">
+                  <p className="text-[11px] text-slate-300 mb-1.5">Bill this car to…</p>
+                  <div className="space-y-1">
+                    {choices.options.map((l) => (
+                      <button key={l.id} onClick={() => reserve(c, l.id)} disabled={busyVin === c.vin}
+                        className="w-full text-left px-2.5 py-1.5 rounded bg-slate-900 border border-slate-700 hover:border-emerald-500 disabled:opacity-50">
+                        <span className="block text-xs text-slate-100">{l.label}</span>
+                        {(l.address || l.city) && (
+                          <span className="block text-[10px] text-slate-400">
+                            {[l.address, l.city, l.state].filter(Boolean).join(', ')}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

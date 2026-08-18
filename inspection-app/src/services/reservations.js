@@ -16,7 +16,7 @@ export function rememberReserveTarget(pathname) {
   try { sessionStorage.setItem('reserveAfterSignup', pathname) } catch { /* private mode */ }
 }
 
-export async function reserveCar(stockNumber) {
+export async function reserveCar(stockNumber, billingLocationId = null) {
   const { data } = await supabase.auth.getSession()
   const token = data?.session?.access_token
   if (!token) throw Object.assign(new Error('Sign in to reserve a car'), { needsAuth: true })
@@ -24,7 +24,7 @@ export async function reserveCar(stockNumber) {
   const res = await fetch(`${API_BASE_URL}/api/reserve-car`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ stock_number: stockNumber }),
+    body: JSON.stringify({ stock_number: stockNumber, billing_location_id: billingLocationId }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -32,6 +32,9 @@ export async function reserveCar(stockNumber) {
       // The endpoint refuses until the dealership and billing contact exist, and
       // says which are missing — that's a trip back to setup, not a failure.
       needsProfile: body?.needsProfile || null,
+      // A buyer with several rooftops has to say which one to invoice. The
+      // endpoint returns the list, so this is a question to ask, not an error.
+      needsLocation: body?.needsLocation || null,
       alreadyYours: !!body?.alreadyYours,
       taken: res.status === 409,
     })

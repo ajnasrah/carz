@@ -133,6 +133,10 @@ export default function Marketplace() {
   const [mileFilter, setMileFilter] = useState([])
   const [sort, setSort] = useState('')
   const [hidden, setHidden] = useState(() => new Set())
+  // Removing a car only sets a hide flag, and nothing used to clear it: a car
+  // taken down by mistake was gone for good, because re-scraping it and
+  // re-uploading its photos rewrites the listing without touching the flag.
+  const [showRemoved, setShowRemoved] = useState(false)
   const [photoEdits, setPhotoEdits] = useState(() => new Map())
   const [picked, setPicked] = useState(() => new Set()) // cars staged for one buyer
   const [sharing, setSharing] = useState(false)
@@ -180,7 +184,16 @@ export default function Marketplace() {
     setHidden((h) => new Set(h).add(stock))
   }
 
-  const visible = useMemo(() => cars.filter((c) => !hidden.has(c.stock_number)), [cars, hidden])
+  async function restoreCar(stock) {
+    const { error } = await supabase.rpc('unhide_marketplace_car', { p_stock: stock })
+    if (error) { alert('Could not restore: ' + error.message); return }
+    setHidden((h) => { const next = new Set(h); next.delete(stock); return next })
+  }
+
+  const visible = useMemo(
+    () => cars.filter((c) => hidden.has(c.stock_number) === showRemoved),
+    [cars, hidden, showRemoved],
+  )
 
   const makes = useMemo(
     () => [...new Set(visible.map((c) => c.make).filter(Boolean))].sort(),
@@ -277,6 +290,14 @@ export default function Marketplace() {
           ) : null}
           <h1 className="text-2xl font-bold text-emerald-400">CARZ INC</h1>
           <p className="text-slate-400 text-sm">Wholesale Inventory</p>
+          {isAdmin && hidden.size > 0 && (
+            <button
+              onClick={() => setShowRemoved((s) => !s)}
+              className="mt-1 text-xs font-semibold text-slate-400 underline active:text-slate-200"
+            >
+              {showRemoved ? 'Back to the marketplace' : `Removed cars (${hidden.size})`}
+            </button>
+          )}
         </div>
 
         {/* Search stays on the surface — it's the one control used on every
@@ -497,12 +518,21 @@ export default function Marketplace() {
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold active:bg-slate-700"
                       />
                       {isAdmin && (
-                        <button
-                          onClick={() => removeCar(car.stock_number)}
-                          className="ml-auto px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold"
-                        >
-                          Remove
-                        </button>
+                        showRemoved ? (
+                          <button
+                            onClick={() => restoreCar(car.stock_number)}
+                            className="ml-auto px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold"
+                          >
+                            Restore
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => removeCar(car.stock_number)}
+                            className="ml-auto px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold"
+                          >
+                            Remove
+                          </button>
+                        )
                       )}
                     </div>
                   </div>

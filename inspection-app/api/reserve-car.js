@@ -103,6 +103,7 @@ export default async function handler(req, res) {
   const body = typeof req.body === 'string' ? safeParse(req.body) : req.body || {}
   const stock = String(body?.stock_number || '').trim()
   if (!stock) return send(res, 400, { error: 'Which car?' })
+  const wantLocation = String(body?.billing_location_id || '').trim() || null
 
   // Who they are comes from the profile, never from the request.
   const pr = await sb(`profiles?id=eq.${user.id}&select=name,phone,account_type,approval_status,` +
@@ -120,6 +121,31 @@ export default async function handler(req, res) {
   if (!p.billing_phone && !p.billing_email) missing.push('billing contact')
   if (missing.length) {
     return send(res, 400, { error: `Finish your account first — missing ${missing.join(', ')}`, needsProfile: missing })
+  }
+
+  // Which rooftop this is billed to. Read from the database keyed by the caller,
+  // never taken on trust from the body — a location id belonging to another buyer
+  // would otherwise put his store on our invoice.
+  const lr = await sb(`buyer_billing_locations?profile_id=eq.${user.id}` +
+    `&select=id,label,address,city,state,zip,billing_name,billing_phone,billing_email,is_default` +
+    `&order=is_default.desc,created_at.asc`)
+  const locations = lr.ok ? await lr.json() : []
+  let location = null
+  if (locations.length === 1) {
+    // One rooftop is not a choice worth interrupting anyone for.
+    location = locations[0]
+  } else if (locations.length > 1) {
+    location = locations.find((l) => l.id === wantLocation) || null
+    if (!location) {
+      // Several stores and no valid pick: ask, and hand back the list so the
+      // client can render it without a second round trip.
+      return send(res, 400, {
+        error: 'Which location should this be billed to?',
+        needsLocation: locations.map((l) => ({
+          id: l.id, label: l.label, address: l.address, city: l.city, state: l.state,
+        })),
+      })
+    }
   }
 
   // The car, and its asking price, from inventory.
@@ -143,6 +169,14 @@ export default async function handler(req, res) {
 
   const price = car.buy_now ?? null
   const buyerName = p.contact_name || p.name || null
+  // A location's billing contact wins over the account's when it has one; most
+  // groups run one billing desk for every rooftop, so most of these fall back.
+  const billName  = location?.billing_name  || p.billing_name  || null
+  const billPhone = location?.billing_phone || p.billing_phone || null
+  const billEmail = location?.billing_email || p.billing_email || null
+  const billAddress = location
+    ? [location.address, location.city, location.state, location.zip].filter(Boolean).join(', ') || null
+    : null
 
   // 1. record
   const ins = await sb('car_reservations', {
@@ -156,9 +190,12 @@ export default async function handler(req, res) {
       dealer_name: p.dealer_name,
       buyer_phone: p.contact_phone || p.phone || null,
       buyer_email: p.contact_email || null,
-      billing_name: p.billing_name || null,
-      billing_phone: p.billing_phone || null,
-      billing_email: p.billing_email || null,
+      billing_name: billName,
+      billing_phone: billPhone,
+      billing_email: billEmail,
+      billing_location_id: location?.id || null,
+      billing_location_label: location?.label || null,
+      billing_address: billAddress,
       price: price == null ? null : Number(String(price).replace(/[^0-9.-]/g, '')) || null,
     }),
   })
@@ -192,6 +229,7 @@ export default async function handler(req, res) {
     `Price ${money(price)}`,
     `Buyer ${buyerName || 'unnamed'}${p.dealer_name ? ` — ${p.dealer_name}` : ''}`,
     p.contact_phone || p.phone ? `Call ${p.contact_phone || p.phone}` : null,
+    location ? `Bill to ${location.label}${billAddress ? ` — ${billAddress}` : ''}` : null,
     `Stock ${car.stock_number}`,
   ].filter(Boolean).join('\n')
   const sms = await sendSms(OWNER_PHONE, text)

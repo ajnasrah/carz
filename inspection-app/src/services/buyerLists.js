@@ -45,6 +45,9 @@ export async function fetchBuyerShareList(slug) {
       buy_now: r.buy_now == null ? null : Number(r.buy_now),
       detail_url: r.detail_url,
       listing_id: r.listing_id,
+      // NULL when the car has left Frazer inventory — nothing to reserve against.
+      stock_number: r.stock_number,
+      reserved: !!r.reserved,
     })),
   }
 }

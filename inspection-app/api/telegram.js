@@ -18,6 +18,7 @@ import {
   sendTelegramMessage, nearestVin, albumVin, settleParked,
   sweepParkedPhotos, rebindGuessedPhotos,
 } from './_lib/intake.js';
+import { readKeyTagVin } from './_lib/keytag.js';
 
 export const config = { runtime: 'edge' };
 
@@ -30,6 +31,13 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 // second of each other; this is the in-request wait, so it buys correctness at
 // the cost of a slower 200 back.
 const PARK_SETTLE_MS = 3000;
+// Groups that mark work FINISHED rather than started: the car's body shop job
+// closes and it moves on to the next place. body_shop_out is typed VINs; the
+// wash line photographs the key tag instead — same meaning, different medium.
+const FINISH_STATIONS = {
+  body_shop_out: 'wash_line',   // out of Jorge's, on to be washed
+  wash_line: 'front',           // washed — it's a front line car now
+};
 function admin() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
     auth: { persistSession: false },
@@ -80,6 +88,7 @@ async function processUpdate(update) {
   const senderName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ')
     || (msg.from?.username ? '@' + msg.from.username : 'whoever sent this');
   const msgKey = `tg_${chatId}_${msg.message_id}`;
+  const eventIso = msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString();
   // Grab the image whether sent COMPRESSED (msg.photo) or "as file" (msg.document),
   // so it doesn't matter how a worker sends it.
   const photoFileId =
@@ -100,7 +109,6 @@ async function processUpdate(update) {
     .select('message_id');
   if (!claimed || claimed.length === 0) return;
 
-  const eventIso = msg.date ? new Date(msg.date * 1000).toISOString() : new Date().toISOString();
   let vin6 = null, mediaPath = null, parsed = null, vinSource = null;
 
   // An answer to the bot's "which car?" — the sender naming the car for a burst
@@ -109,8 +117,21 @@ async function processUpdate(update) {
   if (msg.reply_to_message?.from?.is_bot && /which car/i.test(msg.reply_to_message.text || '')) {
     const answer = extractVin6(text);
     if (answer) {
-      await resolvePendingForSender(db, fromId, answer, chat.station, null, { force: true });
-      await adoptUnidentified(db, fromId, chat.station, answer);
+      // If this question was about ONE specific photo, the answer belongs to
+      // that photo and nothing else. The wash line asks per key tag and every
+      // tag is a different car, so sweeping up everything this sender parked
+      // would file five cars' pictures under whichever one he answered about.
+      const targeted = await bindAnsweredPhoto(db, msg.reply_to_message.message_id, answer);
+      if (!targeted && chat.station !== 'wash_line') {
+        await resolvePendingForSender(db, fromId, answer, chat.station, null, { force: true });
+        await adoptUnidentified(db, fromId, chat.station, answer);
+      }
+      // In a finish group the question wasn't only "whose photo is this" — the
+      // car is standing there waiting to be marked done. An unreadable key tag
+      // must not cost the car its move just because a human had to answer.
+      if (FINISH_STATIONS[chat.station]) {
+        await finishCar(db, answer, FINISH_STATIONS[chat.station], eventIso);
+      }
       // Record it as a car this sender NAMED, not just a row that happens to
       // carry a VIN — that is what makes it a candidate for the nearest-in-time
       // lookup, so any straggler photos after the answer bind to it too.
@@ -154,6 +175,16 @@ async function processUpdate(update) {
       } else {
         console.warn('transport: VINs but no destination known for', fromId);
       }
+    }
+  } else if (FINISH_STATIONS[chat.station]) {
+    // A car (or a list of them) coming out of a shop. Photos in these groups are
+    // handled below — in the wash line the photo IS the message.
+    const vins = extractAllVin6(text);
+    for (const v of vins) await finishCar(db, v, FINISH_STATIONS[chat.station], eventIso);
+    if (vins.length) {
+      vin6 = vins[0];
+      vinSource = 'caption';
+      await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
     }
   } else if (chat.station === 'body_shop' || chat.station === 'mechanic') {
     const vins = extractAllVin6(text);
@@ -204,7 +235,20 @@ async function processUpdate(update) {
     // Evidence carried by the photo itself, best first: a VIN in its own
     // caption, then a VIN on a sibling of the same album. Both are facts.
     if (!vin6) { vin6 = extractVin6(text); if (vin6) vinSource = 'caption'; }
-    if (!vin6 && mediaGroupId) { vin6 = await albumVin(db, mediaGroupId); if (vin6) vinSource = 'album'; }
+
+    // The wash line is the one group where a picture identifies its own car: it
+    // is a photo of the key tag, VIN across the top. So read it, and read it
+    // per-photo — ten tags sent as one album are ten different cars, which is
+    // exactly what the album and nearest-in-time rules below would get wrong.
+    if (!vin6 && chat.station === 'wash_line') {
+      vin6 = await readKeyTagVin(photoFileId);
+      if (vin6) {
+        vinSource = 'keytag';
+        await finishCar(db, vin6, FINISH_STATIONS.wash_line, eventIso);
+      }
+    } else if (!vin6 && mediaGroupId) {
+      vin6 = await albumVin(db, mediaGroupId); if (vin6) vinSource = 'album';
+    }
 
     // Nothing on the photo says which car it is, so the nearest car this sender
     // named is a GUESS — right for "type the VIN, then send a burst", wrong the
@@ -213,7 +257,7 @@ async function processUpdate(update) {
     // and that member's webhook can land after this one, so guessing now would
     // file a properly captioned album under the previous car. Park it and let the
     // caption — or, seconds later, the settle below — decide.
-    if (!vin6 && !mediaGroupId) {
+    if (!vin6 && !mediaGroupId && chat.station !== 'wash_line') {
       vin6 = await nearestVin(db, fromId, chat.station, eventIso);
       if (vin6) vinSource = 'guess';
     }
@@ -238,7 +282,12 @@ async function processUpdate(update) {
       // photo if no caption ever shows up, and it marks the photo as already
       // spoken for so the NEXT car's VIN can't sweep it up.
       pendingFileId = photoFileId;
-      parkedSessionVin = await nearestVin(db, fromId, chat.station, eventIso);
+      // Not in the wash line: there is no "car in flight" there to fall back on,
+      // and an unreadable tag borrowing the previous tag's VIN files a photo
+      // under a car that was already finished ten minutes ago.
+      parkedSessionVin = chat.station === 'wash_line'
+        ? null
+        : await nearestVin(db, fromId, chat.station, eventIso);
     }
   }
 
@@ -255,7 +304,21 @@ async function processUpdate(update) {
   // row is committed above, re-check for its album's caption. Whichever of
   // {this photo, the captioning message} commits last sees the other and claims
   // the pile. No background job, no drops.
-  if (pendingFileId) {
+  if (pendingFileId && chat.station === 'wash_line' && !vin6) {
+    // The tag couldn't be read. Nothing else in this group can identify the car,
+    // and the washer is standing right there — so ask now rather than let a
+    // sweep discover it an hour later. The wording matters: "which car" is what
+    // the reply handler at the top of this file listens for.
+    const askedId = await sendTelegramMessage(chatId,
+      '❓ Which car is this? I couldn\'t read the VIN off that key tag.\n'
+      + 'Reply to this message with the last 6 and I\'ll finish it.',
+      msg.message_id);
+    // Remember which question is about which picture, and stamp asked_at so the
+    // sweep doesn't come back and ask the same thing an hour later.
+    await db.from('wa_inbound_messages')
+      .update({ asked_msg_id: askedId, asked_at: new Date().toISOString() })
+      .eq('message_id', msgKey);
+  } else if (pendingFileId) {
     // If we already know this car's VIN (the store failed and we parked for
     // retry), use it directly. Otherwise the album's caption may have committed
     // while we were writing — that sibling is the only thing allowed to speak
@@ -313,6 +376,43 @@ async function adoptUnidentified(db, fromId, station, vin6) {
 async function ensureBodyShopJob(db, vin6, eventIso) {
   const { error } = await db.rpc('ensure_body_shop_job', { p_vin6: vin6, p_event: eventIso });
   if (error) console.error('ensure_body_shop_job failed for', vin6, error.message || error);
+}
+
+// Bind a reply to the single photo the bot asked about, and file it. Returns
+// false when the question wasn't about one particular picture, which is what
+// sends the caller back to the broader intake rules.
+async function bindAnsweredPhoto(db, askedMsgId, vin6) {
+  if (!askedMsgId) return false;
+  const { data: row } = await db.from('wa_inbound_messages')
+    .select('message_id')
+    .eq('asked_msg_id', askedMsgId)
+    .is('media_path', null).not('pending_file_id', 'is', null)
+    .maybeSingle();
+  if (!row) return false;
+  await db.from('wa_inbound_messages')
+    .update({ vin6, session_vin_at_receipt: vin6 }).eq('message_id', row.message_id);
+  await settleParked(db, row.message_id);
+  return true;
+}
+
+// A car finished at a shop: close whatever body shop job is open on it and move
+// it to wherever finishing there sends it next.
+//
+// The two halves are independent on purpose. Most wash line cars never saw the
+// body shop, so a null from the RPC is the normal case, not a failure — and a
+// car that was never in inventory (a fresh buy) still gets its location, which
+// is how anyone finds it on the lot.
+async function finishCar(db, vin6, locationCode, eventIso) {
+  await closeBodyShopJob(db, vin6, eventIso);
+  await updateLocation(db, vin6, locationCode, eventIso);
+}
+
+// Close this car's open body shop job, stamped with the message time so the age
+// clock measures the real stay. Never throws into the webhook.
+async function closeBodyShopJob(db, vin6, eventIso) {
+  const { data, error } = await db.rpc('close_body_shop_job', { p_vin6: vin6, p_event: eventIso });
+  if (error) console.error('close_body_shop_job failed for', vin6, error.message || error);
+  else if (data) console.log('closed body shop job for', vin6);
 }
 
 // Flatten a message the way keywords are stored: lowercase, letters+digits only,
@@ -399,6 +499,13 @@ async function checkMileage(db, chatId, replyTo, vin6, postedMiles, senderName) 
 // the album this very message captions, whose siblings parked precisely because
 // they were waiting for it.
 async function resolvePendingForSender(db, fromId, vin6, station, mediaGroupId = null, { force = false } = {}) {
+  // The wash line is exempt from all of this. Its photos are key tags, one car
+  // each, so "this sender has a photo with no VIN and just named a car" is not
+  // evidence there — it's the previous tag that couldn't be read, and claiming
+  // it would file the unreadable car's picture under the readable one. Those
+  // photos are only ever bound by their own tag or by a reply to the question
+  // about that exact picture.
+  if (station === 'wash_line') return;
   const bucket = bucketForStation(station);
   const cutoff = new Date(Date.now() - (force ? 6 * 60 : 10) * 60 * 1000).toISOString();
   const { data: pend } = await db.from('wa_inbound_messages')

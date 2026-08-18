@@ -20,16 +20,20 @@ export const PARK_SWEEP_MS = 60 * 1000;
 // ever arrive once that burst has already been filed.
 export const REBIND_WINDOW_MS = 30 * 60 * 1000;
 
-// Send a message back into the Telegram group (bots can post anytime).
+// Send a message back into the Telegram group (bots can post anytime). Returns
+// the id of the message we sent, so a caller can recognise a reply to THIS
+// question later — or null if the send failed.
 export async function sendTelegramMessage(chatId, text, replyTo) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const body = { chat_id: chatId, text };
   if (replyTo) body.reply_to_message_id = replyTo;
   try {
-    await fetch(`${TG}/bot${token}/sendMessage`, {
+    const res = await fetch(`${TG}/bot${token}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
-  } catch (e) { console.error('sendMessage failed:', e?.message || e); }
+    const out = await res.json();
+    return out?.result?.message_id ?? null;
+  } catch (e) { console.error('sendMessage failed:', e?.message || e); return null; }
 }
 
 // The car this sender named nearest in time to `atIso` — up to 2h before the
@@ -70,7 +74,13 @@ export async function settleParked(db, messageId, { ask = false } = {}) {
   let vin6 = p.vin6;
   if (vin6) source = 'caption';
   if (!vin6 && p.media_group_id) { vin6 = await albumVin(db, p.media_group_id); if (vin6) source = 'album'; }
-  if (!vin6) vin6 = await nearestVin(db, p.wa_from, p.station, p.received_at) || p.session_vin_at_receipt;
+  // A wash line photo is a picture of a key tag: it names its own car or nothing
+  // does. Inferring one from what this sender sent earlier would file it under
+  // the car before it — so that group's photos only ever settle on their own
+  // evidence, and an unreadable tag is answered by a person instead.
+  if (!vin6 && p.station !== 'wash_line') {
+    vin6 = await nearestVin(db, p.wa_from, p.station, p.received_at) || p.session_vin_at_receipt;
+  }
   if (!vin6) {
     // Nothing on the photo, nothing in the album, nothing this sender named for
     // two hours either side. A human is the only thing left that knows.

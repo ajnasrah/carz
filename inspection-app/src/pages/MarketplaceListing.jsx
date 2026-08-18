@@ -165,6 +165,8 @@ export default function MarketplaceListing() {
   const [held, setHeld] = useState(null)
   const [reserving, setReserving] = useState(false)
   const [reserveMsg, setReserveMsg] = useState('')
+  // Set only when the buyer has more than one rooftop and hasn't picked yet.
+  const [locationChoices, setLocationChoices] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -215,11 +217,12 @@ export default function MarketplaceListing() {
     if (p?.url) allPhotos.push({ url: p.url, label: 'Stock' })
   }
   // Damage photos — handle both photos[] array and legacy photo_url string
-  async function handleReserve() {
+  async function handleReserve(billingLocationId = null) {
     setReserving(true)
     setReserveMsg('')
     try {
-      await reserveCar(car.stock_number)
+      await reserveCar(car.stock_number, billingLocationId)
+      setLocationChoices(null)
       // Re-read rather than trusting our own optimism, so the banner reflects
       // what the server actually recorded.
       setHeld(await myReservation(car.stock_number))
@@ -231,6 +234,14 @@ export default function MarketplaceListing() {
         rememberReserveTarget(window.location.pathname)
         setReserveMsg(`${e.message} — taking you there…`)
         setTimeout(() => navigate('/setup'), 1200)
+        return
+      }
+      // Several rooftops on the account: ask which one to invoice, then reserve
+      // again with the answer. The endpoint hands back the list so there is
+      // nothing more to fetch.
+      if (e.needsLocation) {
+        setLocationChoices(e.needsLocation)
+        setReserveMsg(e.message)
         return
       }
       if (e.taken) setHeld(await myReservation(car.stock_number))
@@ -419,6 +430,31 @@ export default function MarketplaceListing() {
             onReserve={handleReserve}
             onSignIn={handleSignInToReserve}
           />
+        )}
+
+        {locationChoices && (
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 mb-4">
+            <p className="text-xs text-slate-300 font-medium mb-2">Bill this car to…</p>
+            <div className="space-y-1.5">
+              {locationChoices.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => handleReserve(l.id)}
+                  disabled={reserving}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-500 disabled:opacity-50"
+                >
+                  <span className="block text-sm text-slate-100 font-medium">{l.label}</span>
+                  {(l.address || l.city) && (
+                    <span className="block text-[11px] text-slate-400">
+                      {[l.address, l.city, l.state].filter(Boolean).join(', ')}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { setLocationChoices(null); setReserveMsg('') }}
+              className="mt-2 text-[11px] text-slate-500 hover:text-slate-300">Cancel</button>
+          </div>
         )}
 
         {/* Vehicle details */}

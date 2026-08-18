@@ -493,6 +493,7 @@ export default function Inventory() {
     on_lot: "bg-emerald-500",
     sold_lot: "bg-emerald-700",
     ready_detail: "bg-sky-400",
+    wash_line: "bg-sky-300",
     arb_section: "bg-purple-400",
   };
 

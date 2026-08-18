@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
+import { addBillingLocation } from '../services/billingLocations'
 
 const ROLE_OPTIONS = [
   { key: 'inbound_inspector',  label: 'Inbound Inspector',       emoji: '📥' },
@@ -28,6 +29,10 @@ export default function Setup() {
     dealer_name: '', contact_phone: '', contact_email: '',
     billing_name: '', billing_phone: '', billing_email: '',
   })
+  // Rooftops. Optional: a single-store dealer bills to the account contact above
+  // and never sees a choice. A group adds one row per store, and the one they
+  // pick at reserve time is what lands on the invoice.
+  const [locations, setLocations] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -54,6 +59,16 @@ export default function Setup() {
     if (profile?.setup_complete) navigate('/', { replace: true })
   }, [profile, navigate])
 
+  function addLocation() {
+    setLocations((l) => [...l, { label: '', address: '', city: '', state: '', zip: '' }])
+  }
+  function setLocation(i, patch) {
+    setLocations((l) => l.map((row, n) => (n === i ? { ...row, ...patch } : row)))
+  }
+  function removeLocation(i) {
+    setLocations((l) => l.filter((_, n) => n !== i))
+  }
+
   function toggleRole(key) {
     setRoles((prev) => prev.includes(key) ? prev.filter((r) => r !== key) : [...prev, key])
   }
@@ -74,6 +89,11 @@ export default function Setup() {
       // for a buyer whose billing desk only gave them one of them.
       if (!biz.billing_phone.trim() && !biz.billing_email.trim()) {
         setError('Add a billing phone or a billing email'); return
+      }
+      // A half-typed rooftop is worse than none — it would show up in the picker
+      // as a blank line the buyer can't tell apart from the others.
+      if (locations.some((l) => !l.label.trim())) {
+        setError('Give every location a name, or remove it'); return
       }
     }
     setSaving(true)
@@ -108,6 +128,18 @@ export default function Setup() {
         })
         .eq('id', user.id)
       if (err) throw err
+      // Rooftops after the profile, and only for buyers. Best-effort: a failure
+      // here must not strand a finished account on the setup screen — they can be
+      // added later, and a buyer with none simply bills to the contact above.
+      if (accountType === 'buyer' && locations.length) {
+        for (const [i, loc] of locations.entries()) {
+          try {
+            await addBillingLocation(user.id, { ...loc, is_default: i === 0 })
+          } catch (locErr) {
+            console.error('billing location save failed', locErr)
+          }
+        }
+      }
       if (refreshProfile) await refreshProfile()
       // A buyer who got here by pressing Reserve on a car should land back on
       // that car, not on a generic marketplace they then have to search.
@@ -215,8 +247,47 @@ export default function Setup() {
               type="email" value={biz.billing_email}
               onChange={(e) => setBiz((b) => ({ ...b, billing_email: e.target.value }))}
               placeholder="Billing email"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-5"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-4"
             />
+
+            <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">
+              Locations <span className="text-slate-500 normal-case">(only if you bill to more than one store)</span>
+            </label>
+            {locations.map((loc, i) => (
+              <div key={i} className="bg-slate-800/60 border border-slate-700 rounded-lg p-3 mb-2">
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="text" value={loc.label}
+                    onChange={(e) => setLocation(i, { label: e.target.value })}
+                    placeholder="Store name (e.g. Brunswick)"
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-white focus:outline-none focus:border-emerald-500"
+                  />
+                  <button type="button" onClick={() => removeLocation(i)}
+                    className="text-slate-500 hover:text-red-400 text-xs px-2 py-2">Remove</button>
+                </div>
+                <input
+                  type="text" value={loc.address}
+                  onChange={(e) => setLocation(i, { address: e.target.value })}
+                  placeholder="Street address (optional)"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-white focus:outline-none focus:border-emerald-500 mb-2"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <input type="text" value={loc.city} onChange={(e) => setLocation(i, { city: e.target.value })}
+                    placeholder="City"
+                    className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-white focus:outline-none focus:border-emerald-500" />
+                  <input type="text" value={loc.state} onChange={(e) => setLocation(i, { state: e.target.value })}
+                    placeholder="State"
+                    className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-white focus:outline-none focus:border-emerald-500" />
+                  <input type="text" value={loc.zip} onChange={(e) => setLocation(i, { zip: e.target.value })}
+                    placeholder="ZIP"
+                    className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-base text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={addLocation}
+              className="w-full mb-5 py-2.5 rounded-lg border border-dashed border-slate-600 text-slate-300 text-sm hover:border-emerald-500 hover:text-emerald-400">
+              + Add {locations.length ? 'another' : 'a'} location
+            </button>
           </>
         )}
 
