@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { openReservations, decideReservation } from '../services/reservations'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X, FileSpreadsheet } from 'lucide-react'
 import { supabase } from '../services/supabase'
@@ -22,6 +23,7 @@ export default function Admin() {
   const [searchTerm, setSearchTerm] = useState('')
   // People who pressed "Request access" on the Sold Reports lock screen.
   const [soldRequests, setSoldRequests] = useState([])
+  const [reservations, setReservations] = useState([])
 
   async function loadUsers() {
     const { data } = await supabase
@@ -30,6 +32,21 @@ export default function Admin() {
       .order('created_at', { ascending: true })
     setUsers(data || [])
     setLoading(false)
+  }
+
+  // Same reasoning as loadSoldRequests: a failure here must not take the user
+  // list down with it.
+  async function loadReservations() {
+    try { setReservations(await openReservations()) } catch { setReservations([]) }
+  }
+
+  async function decideRes(r, status) {
+    try {
+      await decideReservation(r.id, status)
+      await loadReservations()
+    } catch (e) {
+      setError(e.message || 'Could not update that reservation')
+    }
   }
 
   // Kept separate from loadUsers so a failure here (or an unmigrated database)
@@ -262,6 +279,61 @@ export default function Admin() {
           </div>
         )
       })()}
+
+      {/* Cars a buyer has taken off the market. Reserving hides the car and texts
+          the owner; this is the only place it can be let go again, and releasing
+          un-hides it in the same statement so the two can't drift apart. */}
+      {reservations.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-lg font-bold text-emerald-300 mb-3">
+            Reserved cars ({reservations.length})
+          </h2>
+          <div className="space-y-2">
+            {reservations.map((r) => (
+              <div key={r.id} className="card border border-emerald-500/40 bg-emerald-500/5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-white">
+                      {r.dealer_name || r.buyer_name || 'Unnamed buyer'}
+                      {r.status === 'confirmed' && (
+                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">confirmed</span>
+                      )}
+                    </p>
+                    <p className="text-sm text-slate-400">
+                      Stock {r.stock_number}{r.price ? ` · $${Math.round(r.price).toLocaleString()}` : ''}
+                    </p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {[r.buyer_name, r.buyer_phone, r.buyer_email].filter(Boolean).join(' · ')}
+                    </p>
+                    {(r.billing_location_label || r.billing_name || r.billing_phone || r.billing_email) && (
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Bill to {[r.billing_location_label, r.billing_address].filter(Boolean).join(' — ')
+                          || [r.billing_name, r.billing_phone, r.billing_email].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      {new Date(r.created_at).toLocaleString()}
+                      {!r.notified && <span className="text-amber-400"> · text failed</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  {r.status !== 'confirmed' && (
+                    <button onClick={() => decideRes(r, 'confirmed')}
+                      className="flex-1 py-2 rounded-lg bg-emerald-500 text-slate-900 font-semibold text-sm">
+                      Confirm sale
+                    </button>
+                  )}
+                  <button onClick={() => decideRes(r, 'released')}
+                    className="flex-1 py-2 rounded-lg bg-red-500/20 text-red-400 font-semibold text-sm">
+                    Release car
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Sold Reports access requests — filed from the lock screen on that page
           via /api/sold-report-access. Granting here ticks the same box as the

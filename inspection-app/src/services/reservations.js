@@ -55,3 +55,30 @@ export async function myReservation(stockNumber) {
   if (error) return null   // not signed in, or no visibility — treat as unknown
   return data?.[0] || null
 }
+
+// ---------------------------------------------------------------------------
+// Owner side
+// ---------------------------------------------------------------------------
+
+// Every open reservation, newest first. Admin-only by RLS — a buyer reading this
+// gets back their own rows and nothing else, which is what the marketplace uses
+// to say "you reserved this".
+export async function openReservations() {
+  const { data, error } = await supabase
+    .from('car_reservations')
+    .select('id, stock_number, vin, buyer_name, dealer_name, buyer_phone, buyer_email, '
+          + 'billing_name, billing_phone, billing_email, billing_location_label, billing_address, '
+          + 'price, status, notified, notify_error, created_at')
+    .in('status', ['reserved', 'confirmed'])
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return data || []
+}
+
+// Confirm keeps the car hidden (it is sold); release puts it back on the
+// marketplace. Both happen in one statement server-side so a release can never
+// half-apply and strand a car nobody can see.
+export async function decideReservation(id, status) {
+  const { error } = await supabase.rpc('decide_car_reservation', { p_id: id, p_status: status })
+  if (error) throw new Error(error.message)
+}
