@@ -84,7 +84,7 @@ async function fetchAll(table, columns, order) {
 }
 
 export const fetchActiveCars = () =>
-  fetchAll('sa_active_cars', 'vin,year,make,model,trim,odometer,color,segment,buy_now,opening_price,location,detail_url')
+  fetchAll('sa_active_cars', 'vin,year,make,model,trim,odometer,color,segment,buy_now,opening_price,location,detail_url,uploaded_at')
 export const fetchSoldSales = () =>
   fetchAll('sa_sold_sales', 'vin,year,make,model,odometer,segment,sale_date,sale_price,buyer_name,buyer_email,buyer_phone,buyer_state', 'sale_date')
 

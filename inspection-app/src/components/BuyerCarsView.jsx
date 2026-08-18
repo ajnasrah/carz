@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Search, Check, Copy, Link2, MessageSquare, Mail, Loader2, ChevronLeft } from 'lucide-react'
+import { Search, Check, Copy, Link2, MessageSquare, Mail, Loader2, ChevronLeft, Hash } from 'lucide-react'
 import { createBuyerShareList } from '../services/buyerLists'
 import { buildBuyerListMessage, buyerListUrl } from '../services/marketplaceShare'
 import { dealerLine, DEALER } from '../config/dealer'
@@ -197,25 +197,36 @@ export default function BuyerCarsView({ results, byVin }) {
         {buyer.cars.map((c) => {
           const on = picked.has(c.vin)
           return (
-            <button key={c.vin} onClick={() => toggle(c.vin)}
-              className={`w-full text-left rounded-lg border p-3 ${on ? 'bg-emerald-500/5 border-emerald-500/40' : 'bg-slate-800/60 border-slate-700'}`}>
+            // A div, not a button: the VIN below is its own copy control, and a
+            // button inside a button is invalid and swallows the inner click.
+            <div key={c.vin}
+              className={`rounded-lg border p-3 ${on ? 'bg-emerald-500/5 border-emerald-500/40' : 'bg-slate-800/60 border-slate-700'}`}>
               <div className="flex items-start gap-2">
-                <span className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'}`}>
-                  {on && <Check size={11} className="text-slate-900" />}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-slate-100 truncate">
-                    {c.year} {c.make} {c.model} <span className="text-slate-400 font-normal">{c.trim}</span>
+                <button onClick={() => toggle(c.vin)} className="flex items-start gap-2 min-w-0 flex-1 text-left">
+                  <span className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'}`}>
+                    {on && <Check size={11} className="text-slate-900" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-slate-100 truncate">
+                      {c.year} {c.make} {c.model} <span className="text-slate-400 font-normal">{c.trim}</span>
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {c.odometer?.toLocaleString()} mi · Ask {money(ask(c))}
+                      <span className={`ml-1.5 px-1.5 py-0.5 rounded border text-[10px] ${CONF[c.confidence]}`}>#{c.rank} {c.confidence}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">{c.reason}</p>
                   </div>
-                  <div className="text-xs text-slate-400 mt-0.5">
-                    {c.odometer?.toLocaleString()} mi · Ask {money(ask(c))}
-                    <span className={`ml-1.5 px-1.5 py-0.5 rounded border text-[10px] ${CONF[c.confidence]}`}>#{c.rank} {c.confidence}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">{c.reason}</p>
-                </div>
+                </button>
                 <div className="text-emerald-400 font-semibold shrink-0">{money(c.predicted_price)}</div>
               </div>
-            </button>
+              {/* Last 6 is what the team says out loud; the copy hands over all
+                  17, which is what every form and search box wants. */}
+              <button
+                onClick={() => { copyText(c.vin); say(`${c.vin} copied`) }}
+                className="mt-1.5 ml-6 font-mono text-[11px] text-slate-500 hover:text-emerald-400 flex items-center gap-1">
+                <Copy size={10} /> {String(c.vin).slice(-6)}
+              </button>
+            </div>
           )
         })}
       </div>
@@ -245,6 +256,13 @@ export default function BuyerCarsView({ results, byVin }) {
         )}
         <Btn disabled={!chosen.length || busy} icon={Copy} label="Copy message"
           onClick={() => withMessage((msg) => { copyText(msg); say('Message copied') })} />
+        {/* One VIN per line — pastes straight into a spreadsheet, a run list,
+            or SmartAuction's search without any cleanup. */}
+        <Btn disabled={!chosen.length} icon={Hash} label={`Copy ${chosen.length} VIN${chosen.length === 1 ? '' : 's'}`}
+          onClick={() => {
+            copyText(chosen.map((c) => c.vin).join('\n'))
+            say(`${chosen.length} VIN${chosen.length === 1 ? '' : 's'} copied`)
+          }} />
       </div>
     </>
   )

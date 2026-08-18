@@ -82,9 +82,15 @@ export default async function handler(req, res) {
       return res.status(200).json({ active: active.length, sold: sold.length, buyers: 0, results: [] })
     }
 
+    // sa_active_cars is a snapshot of the last SmartAuction upload, so cars sold
+    // since then are still in it. sa_sold_sales is the newer fact — drop the
+    // overlap so the API never recommends a car we no longer own.
+    const soldVins = new Set(sold.map((r) => (r.vin || '').toUpperCase()).filter(Boolean))
+    const sellable = active.filter((c) => !soldVins.has((c.vin || '').toUpperCase()))
+
     const spread = req.query?.spread !== '0'
-    const results = recommendAll(active, sold, { spread: { enabled: spread } })
-    const byVin = new Map(active.map((c) => [c.vin, c]))
+    const results = recommendAll(sellable, sold, { spread: { enabled: spread } })
+    const byVin = new Map(sellable.map((c) => [c.vin, c]))
     const maxRank = parseInt(req.query?.rank || '3', 10) || 3
 
     // Invert: one entry per (buyer, car) pair, grouped by buyer.
@@ -137,7 +143,8 @@ export default async function handler(req, res) {
         .map(({ cars, ...rest }) => { void cars; return rest })
         .sort((a, b) => b.count - a.count || b.total_predicted - a.total_predicted)
       return res.status(200).json({
-        active: active.length, sold: sold.length, spread,
+        active: sellable.length, sold_out: active.length - sellable.length,
+        sold: sold.length, spread,
         buyers: list.length, results: list,
       })
     }

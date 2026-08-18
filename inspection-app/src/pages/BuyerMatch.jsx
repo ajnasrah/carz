@@ -103,12 +103,26 @@ export default function BuyerMatch() {
     setBusy('')
   }
 
-  const results = useMemo(() => {
-    if (!active.length || !sold.length) return []
-    return recommendAll(active, sold, { spread: { enabled: spread } })
-  }, [active, sold, spread])
+  // sa_active_cars is a SNAPSHOT of the last SmartAuction upload, so anything
+  // sold since that upload is still sitting in it — 3 of 39 on 2026-08-18, four
+  // days after the last one. sa_sold_sales is the newer fact, and both are
+  // already loaded here, so drop the overlap rather than recommend a car we no
+  // longer own and, worse, send it to a buyer.
+  const soldVins = useMemo(
+    () => new Set(sold.map((r) => (r.vin || '').toUpperCase()).filter(Boolean)),
+    [sold],
+  )
+  const sellable = useMemo(
+    () => active.filter((c) => !soldVins.has((c.vin || '').toUpperCase())),
+    [active, soldVins],
+  )
 
-  const byVin = useMemo(() => new Map(active.map((c) => [c.vin, c])), [active])
+  const results = useMemo(() => {
+    if (!sellable.length || !sold.length) return []
+    return recommendAll(sellable, sold, { spread: { enabled: spread } })
+  }, [sellable, sold, spread])
+
+  const byVin = useMemo(() => new Map(sellable.map((c) => [c.vin, c])), [sellable])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -136,6 +150,12 @@ export default function BuyerMatch() {
 
   if (loading) return <Shell><p className="text-slate-400 p-4">Loading…</p></Shell>
 
+  // How old the active snapshot is. A four-day-old list is the reason sold cars
+  // appear at all, so it belongs on screen rather than in a comment.
+  const listUploaded = active.length && active[0].uploaded_at
+    ? new Date(active[0].uploaded_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : null
+
   const needData = !active.length || !sold.length
 
   return (
@@ -156,7 +176,9 @@ export default function BuyerMatch() {
             <Sparkles size={20} /> Buyer Match
           </h1>
           <p className="text-xs text-slate-400">
-            {active.length} active · {sold.length.toLocaleString()} sold (training)
+            {sellable.length} sellable{active.length !== sellable.length && ` (${active.length - sellable.length} sold)`}
+            {' · '}{sold.length.toLocaleString()} sold (training)
+            {listUploaded && <> · list {listUploaded}</>}
           </p>
         </div>
         <div className="flex items-center gap-1">
