@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check, Image as ImageIcon, Wrench } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
+import { reserveCar, myReservation, rememberReserveTarget } from '../services/reservations'
 import { isAdminProfile } from '../services/adminSetup'
 import MarketplacePrice from '../components/MarketplacePrice'
 import PhotoEditor from '../components/PhotoEditor'
@@ -109,6 +110,45 @@ function StatusBadge({ status }) {
   return <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 font-bold">N/A</span>
 }
 
+// The button a buyer actually presses. Deliberately not hidden from signed-out
+// visitors: the marketplace is public and the whole point is that a buyer who
+// arrived from a texted link can act on the car in front of them. Pressing it
+// without an account sends them to sign in and remembers the car.
+function ReserveBox({ profile, held, reserving, msg, onReserve, onSignIn }) {
+  const isBuyer = profile?.account_type === 'buyer'
+  const signedIn = !!profile
+  if (held) {
+    const mine = isBuyer
+    return (
+      <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-center">
+        <p className="text-sm font-bold text-amber-300">
+          {mine ? 'You reserved this car' : `Reserved${held.dealer_name ? ` — ${held.dealer_name}` : ''}`}
+        </p>
+        <p className="text-[11px] text-slate-400 mt-0.5">
+          It's off the marketplace while we confirm it.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-3">
+      <button
+        onClick={signedIn ? onReserve : onSignIn}
+        disabled={reserving}
+        className="w-full bg-emerald-500 text-slate-900 font-bold py-3 rounded-lg disabled:opacity-40"
+      >
+        {reserving ? 'Reserving…' : signedIn ? 'Reserve this car' : 'Buy it now'}
+      </button>
+      <p className="text-[11px] text-slate-500 mt-1.5 text-center">
+        {signedIn
+          ? 'Takes it off the marketplace and texts our team right away.'
+          : 'Takes 30 seconds to set up a buyer account.'}
+      </p>
+      {msg && <p className="text-xs text-amber-300 mt-2 text-center">{msg}</p>}
+    </div>
+  )
+}
+
 export default function MarketplaceListing() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -120,6 +160,20 @@ export default function MarketplaceListing() {
   const [photoEdit, setPhotoEdit] = useState(null)
   const [editingPhotos, setEditingPhotos] = useState(false)
   const [editingDamages, setEditingDamages] = useState(false)
+  // Reserve state. `held` is any live reservation on this car that we're allowed
+  // to see — our own, or all of them if we're an admin.
+  const [held, setHeld] = useState(null)
+  const [reserving, setReserving] = useState(false)
+  const [reserveMsg, setReserveMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    if (!car?.stock_number) return
+    myReservation(car.stock_number)
+      .then((r) => { if (!cancelled) setHeld(r) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [car?.stock_number])
 
   useEffect(() => {
     async function load() {
@@ -161,6 +215,36 @@ export default function MarketplaceListing() {
     if (p?.url) allPhotos.push({ url: p.url, label: 'Stock' })
   }
   // Damage photos — handle both photos[] array and legacy photo_url string
+  async function handleReserve() {
+    setReserving(true)
+    setReserveMsg('')
+    try {
+      await reserveCar(car.stock_number)
+      // Re-read rather than trusting our own optimism, so the banner reflects
+      // what the server actually recorded.
+      setHeld(await myReservation(car.stock_number))
+    } catch (e) {
+      if (e.needsAuth) { handleSignInToReserve(); return }
+      // Missing dealership / billing details: the endpoint refuses and says which,
+      // and the setup screen is where they get filled in.
+      if (e.needsProfile) {
+        rememberReserveTarget(window.location.pathname)
+        setReserveMsg(`${e.message} — taking you there…`)
+        setTimeout(() => navigate('/setup'), 1200)
+        return
+      }
+      if (e.taken) setHeld(await myReservation(car.stock_number))
+      setReserveMsg(e.message)
+    } finally {
+      setReserving(false)
+    }
+  }
+
+  function handleSignInToReserve() {
+    rememberReserveTarget(window.location.pathname)
+    navigate('/login')
+  }
+
   function collectDamagePhotos(damages, label) {
     for (const d of damages || []) {
       if (Array.isArray(d.photos)) {
@@ -322,6 +406,20 @@ export default function MarketplaceListing() {
               </a>
           )}
         </div>
+
+        {/* Reserve. Sits directly under the price because that is the decision
+            being made, and staff don't need it — an admin looking at a car is
+            managing it, not buying it. */}
+        {!isAdmin && profile?.account_type !== 'employee' && (
+          <ReserveBox
+            profile={profile}
+            held={held}
+            reserving={reserving}
+            msg={reserveMsg}
+            onReserve={handleReserve}
+            onSignIn={handleSignInToReserve}
+          />
+        )}
 
         {/* Vehicle details */}
         <Section title="Vehicle Details">

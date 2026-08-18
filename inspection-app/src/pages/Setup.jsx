@@ -21,6 +21,13 @@ export default function Setup() {
   const [accountType, setAccountType] = useState(null) // 'buyer' | 'employee'
   const [name, setName] = useState('')
   const [roles, setRoles] = useState([])
+  // Buyer accounts only. A reserved car is inventory off the market, so we need
+  // the dealership, someone to call, and someone to invoice before that can
+  // happen — see api/reserve-car.js, which refuses without them.
+  const [biz, setBiz] = useState({
+    dealer_name: '', contact_phone: '', contact_email: '',
+    billing_name: '', billing_phone: '', billing_email: '',
+  })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -30,6 +37,16 @@ export default function Setup() {
     if (profile?.account_type) setAccountType(profile.account_type)
     if (profile?.roles?.length) setRoles(profile.roles)
     else if (profile?.role) setRoles([profile.role])
+    setBiz((b) => ({
+      dealer_name: profile?.dealer_name ?? b.dealer_name,
+      // The phone they signed in with is the obvious default for the contact
+      // number; they can change it if the desk line is different.
+      contact_phone: profile?.contact_phone ?? profile?.phone ?? b.contact_phone,
+      contact_email: profile?.contact_email ?? b.contact_email,
+      billing_name: profile?.billing_name ?? b.billing_name,
+      billing_phone: profile?.billing_phone ?? b.billing_phone,
+      billing_email: profile?.billing_email ?? b.billing_email,
+    }))
   }, [profile])
 
   // If already set up, kick to home (ProtectedRoute handles the approval gate)
@@ -50,6 +67,15 @@ export default function Setup() {
     if (accountType === 'employee' && roles.length === 0) {
       setError('Pick at least one role'); return
     }
+    if (accountType === 'buyer') {
+      if (!biz.dealer_name.trim()) { setError('Dealership name is required'); return }
+      if (!biz.contact_phone.trim()) { setError('A contact phone is required'); return }
+      // Either is enough to raise an invoice against; demanding both stalls signup
+      // for a buyer whose billing desk only gave them one of them.
+      if (!biz.billing_phone.trim() && !biz.billing_email.trim()) {
+        setError('Add a billing phone or a billing email'); return
+      }
+    }
     setSaving(true)
     try {
       // Buyers have no internal role; employees keep their selected roles in roles[].
@@ -67,12 +93,31 @@ export default function Setup() {
           account_type: accountType,
           roles: finalRoles,
           setup_complete: true,
-          // approval_status stays 'pending' — an admin must approve before access
+          // Buyers are approved by the DB guard on the NULL -> 'buyer' transition
+          // (migration 20260818000007) because a buyer only ever reaches the
+          // public marketplace. Employees still land pending for an admin.
+          ...(accountType === 'buyer' ? {
+            dealer_name: biz.dealer_name.trim(),
+            contact_name: trimmed,
+            contact_phone: biz.contact_phone.trim(),
+            contact_email: biz.contact_email.trim() || null,
+            billing_name: biz.billing_name.trim() || null,
+            billing_phone: biz.billing_phone.trim() || null,
+            billing_email: biz.billing_email.trim() || null,
+          } : {}),
         })
         .eq('id', user.id)
       if (err) throw err
       if (refreshProfile) await refreshProfile()
-      navigate('/', { replace: true })
+      // A buyer who got here by pressing Reserve on a car should land back on
+      // that car, not on a generic marketplace they then have to search.
+      const pending = accountType === 'buyer' ? sessionStorage.getItem('reserveAfterSignup') : null
+      if (pending) {
+        sessionStorage.removeItem('reserveAfterSignup')
+        navigate(pending, { replace: true })
+      } else {
+        navigate('/', { replace: true })
+      }
     } catch (err) {
       setError(err.message || 'Could not save — try again')
     } finally {
@@ -127,6 +172,54 @@ export default function Setup() {
           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-5"
         />
 
+        {/* Buyers: the business behind the account. Required before a car can be
+            reserved, so it is collected once here rather than interrupting later. */}
+        {accountType === 'buyer' && (
+          <>
+            <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">Dealership</label>
+            <input
+              type="text" value={biz.dealer_name}
+              onChange={(e) => setBiz((b) => ({ ...b, dealer_name: e.target.value }))}
+              autoComplete="organization" placeholder="Dealership name"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-4"
+            />
+            <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">How we reach you</label>
+            <input
+              type="tel" value={biz.contact_phone}
+              onChange={(e) => setBiz((b) => ({ ...b, contact_phone: e.target.value }))}
+              autoComplete="tel" placeholder="Phone"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-2"
+            />
+            <input
+              type="email" value={biz.contact_email}
+              onChange={(e) => setBiz((b) => ({ ...b, contact_email: e.target.value }))}
+              autoComplete="email" placeholder="Email (optional)"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-4"
+            />
+            <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">
+              Billing department <span className="text-slate-500 normal-case">(who we invoice)</span>
+            </label>
+            <input
+              type="text" value={biz.billing_name}
+              onChange={(e) => setBiz((b) => ({ ...b, billing_name: e.target.value }))}
+              placeholder="Contact name"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-2"
+            />
+            <input
+              type="tel" value={biz.billing_phone}
+              onChange={(e) => setBiz((b) => ({ ...b, billing_phone: e.target.value }))}
+              placeholder="Billing phone"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-2"
+            />
+            <input
+              type="email" value={biz.billing_email}
+              onChange={(e) => setBiz((b) => ({ ...b, billing_email: e.target.value }))}
+              placeholder="Billing email"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base text-white focus:outline-none focus:border-emerald-500 mb-5"
+            />
+          </>
+        )}
+
         {/* Roles only apply to employees */}
         {accountType === 'employee' && (
           <>
@@ -163,9 +256,15 @@ export default function Setup() {
           </>
         )}
 
-        {accountType && (
+        {accountType === 'employee' && (
           <p className="text-xs text-slate-500 mb-3">
             After you continue, an admin will review and approve your account before you get access.
+          </p>
+        )}
+        {accountType === 'buyer' && (
+          <p className="text-xs text-slate-500 mb-3">
+            You'll go straight to the marketplace. Reserving a car takes it off the
+            market and texts our team, so we ask for billing details up front.
           </p>
         )}
 
