@@ -1310,11 +1310,37 @@
     }
     if (overflow) log(`  ${hits.length} found — opening ${MAX_OPEN_AT_ONCE}, press again for the other ${overflow}`, '');
 
-    let n = 0, weak = 0;
+    // Size and place them explicitly. Left to itself, chrome.windows.create
+    // inherits the geometry of the last window you sized, which is how these
+    // ended up full-width; and every window lands at the same coordinates, so
+    // five cars stack exactly on top of each other and the only way to read
+    // them is to drag each one aside.
+    //
+    // A car page wants roughly two thirds of the screen, and the cascade steps
+    // down-right so the batch reads as a pile in run order. Anchored to the
+    // right edge so the panel you're working from stays uncovered.
+    const SW = (typeof screen !== 'undefined' && screen.availWidth) || 1680;
+    const SH = (typeof screen !== 'undefined' && screen.availHeight) || 1050;
+    const WIN_W = Math.round(Math.min(1200, SW * 0.62));
+    const WIN_H = Math.round(Math.min(900, SH * 0.86));
+    const STEP = 30;
+    const spread = (MAX_OPEN_AT_ONCE - 1) * STEP;
+    const BASE_LEFT = Math.max(0, SW - WIN_W - spread - 20);
+    const BASE_TOP = Math.max(0, Math.round((SH - WIN_H - spread) / 2));
+
+    let n = 0, weak = 0, firstWindowId = null;
     for (const { it, hit } of batch) {
       if (hit.how === 'weak') { weak++; log(`  ? ${it.vin} → ${hit.href}  [guessed — no title link]`, 'err'); }
       try {
-        await chrome.windows.create({ url: hit.href, focused: false });
+        const win = await chrome.windows.create({
+          url: hit.href,
+          focused: false,
+          width: WIN_W,
+          height: WIN_H,
+          left: BASE_LEFT + n * STEP,
+          top: BASE_TOP + n * STEP,
+        });
+        if (firstWindowId === null && win) firstWindowId = win.id;
       } catch (err) {
         // Don't let one refused window kill the rest of the batch.
         log(`  ✗ ${it.vin} — couldn't open a window: ${err.message}`, 'err');
@@ -1322,6 +1348,16 @@
       }
       opened.add(it.vin);
       n++;
+    }
+    // Still created unfocused, so the batch keeps its order and the panel isn't
+    // yanked away mid-run. Raising the FIRST car once at the end brings the
+    // whole cascade forward in one go — otherwise the pile sits behind whatever
+    // window you were already working in, which is the other half of why these
+    // needed shoving around by hand.
+    if (firstWindowId !== null) {
+      try {
+        await chrome.windows.update(firstWindowId, { focused: true });
+      } catch { /* closed already, or the profile refused focus — harmless */ }
     }
     // Cars this page didn't have are left completely alone — they're not gone,
     // they're on another page, and the next press picks them up there.
