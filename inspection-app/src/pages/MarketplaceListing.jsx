@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check, Image as ImageIcon, Wrench } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { reserveCar, myReservation, rememberReserveTarget } from '../services/reservations'
+import { fetchBillingLocations } from '../services/billingLocations'
 import { isAdminProfile } from '../services/adminSetup'
 import MarketplacePrice from '../components/MarketplacePrice'
 import PhotoEditor from '../components/PhotoEditor'
@@ -152,8 +153,12 @@ function ReserveBox({ profile, held, reserving, msg, onReserve, onSignIn }) {
 export default function MarketplaceListing() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const routerLocation = useLocation()
   const { profile } = useAuth()
   const isAdmin = isAdminProfile(profile)
+  // See Marketplace.jsx: the location timeline is internal, and this page is
+  // public and is what we text to buyers.
+  const isStaff = isAdmin || profile?.account_type === 'employee'
   const [car, setCar] = useState(null)
   const [allIds, setAllIds] = useState([])
   const [loading, setLoading] = useState(true)
@@ -167,6 +172,14 @@ export default function MarketplaceListing() {
   const [reserveMsg, setReserveMsg] = useState('')
   // Set only when the buyer has more than one rooftop and hasn't picked yet.
   const [locationChoices, setLocationChoices] = useState(null)
+  // Reserving takes a car off the market and texts the team, so it gets a
+  // confirmation step rather than firing on one tap — especially after a sign-in
+  // round trip, where the tap that started it was minutes and an SMS code ago.
+  // Arriving straight from sign-in means the tap that started this happened
+  // before an SMS code — so the car is confirmed, not silently reserved.
+  const [confirming, setConfirming] = useState(() => !!routerLocation.state?.reserve)
+  const [rooftops, setRooftops] = useState([])
+  const [rooftop, setRooftop] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -223,6 +236,8 @@ export default function MarketplaceListing() {
     try {
       await reserveCar(car.stock_number, billingLocationId)
       setLocationChoices(null)
+      setConfirming(false)
+      try { sessionStorage.removeItem('reserveAfterSignup') } catch { /* private mode */ }
       // Re-read rather than trusting our own optimism, so the banner reflects
       // what the server actually recorded.
       setHeld(await myReservation(car.stock_number))
@@ -254,6 +269,19 @@ export default function MarketplaceListing() {
   function handleSignInToReserve() {
     rememberReserveTarget(window.location.pathname)
     navigate('/login')
+  }
+
+  // Open the confirm step and load the buyer's rooftops, so the choice is made
+  // up front rather than by bouncing off a needsLocation error.
+  async function startReserve() {
+    setReserveMsg('')
+    setConfirming(true)
+    if (!profile?.id) return
+    try {
+      const locs = await fetchBillingLocations(profile.id)
+      setRooftops(locs)
+      setRooftop(locs.length === 1 ? locs[0].id : (locs.find((l) => l.is_default)?.id ?? null))
+    } catch { setRooftops([]) }
   }
 
   function collectDamagePhotos(damages, label) {
@@ -338,7 +366,7 @@ export default function MarketplaceListing() {
               disabled={!nextId}
               className="p-2 rounded-lg bg-slate-800 disabled:opacity-30"
             ><ChevronRight size={18} /></button>
-            <HistoryButton stockNumber={car.stock_number} vin={fullVin} />
+            {isStaff && <HistoryButton stockNumber={car.stock_number} vin={fullVin} />}
           </div>
         </div>
 
@@ -427,33 +455,67 @@ export default function MarketplaceListing() {
             held={held}
             reserving={reserving}
             msg={reserveMsg}
-            onReserve={handleReserve}
+            onReserve={startReserve}
             onSignIn={handleSignInToReserve}
           />
         )}
 
-        {locationChoices && (
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 mb-4">
-            <p className="text-xs text-slate-300 font-medium mb-2">Bill this car to…</p>
-            <div className="space-y-1.5">
-              {locationChoices.map((l) => (
-                <button
-                  key={l.id}
-                  onClick={() => handleReserve(l.id)}
-                  disabled={reserving}
-                  className="w-full text-left px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 hover:border-emerald-500 disabled:opacity-50"
-                >
-                  <span className="block text-sm text-slate-100 font-medium">{l.label}</span>
-                  {(l.address || l.city) && (
-                    <span className="block text-[11px] text-slate-400">
-                      {[l.address, l.city, l.state].filter(Boolean).join(', ')}
-                    </span>
-                  )}
-                </button>
-              ))}
+        {(confirming || locationChoices) && !held && (
+          <div className="bg-slate-800 border border-emerald-500/40 rounded-xl p-4 mb-4">
+            <p className="text-sm font-bold text-white">Reserve this car?</p>
+            <p className="text-xs text-slate-300 mt-0.5">
+              {vehicle}{miles ? ` · ${miles.toLocaleString()} mi` : ''}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              It comes off the marketplace and our team is texted right away.
+            </p>
+
+            {/* Only a real choice gets shown. One rooftop, or none, is not a
+                question worth asking. */}
+            {(locationChoices || rooftops).length > 1 && (
+              <div className="mt-3">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">Bill it to</p>
+                <div className="space-y-1.5">
+                  {(locationChoices || rooftops).map((l) => (
+                    <button
+                      key={l.id}
+                      onClick={() => setRooftop(l.id)}
+                      className={`w-full text-left px-3 py-2 rounded-lg border ${
+                        rooftop === l.id
+                          ? 'bg-emerald-500/10 border-emerald-500'
+                          : 'bg-slate-900 border-slate-700'}`}
+                    >
+                      <span className="block text-sm text-slate-100 font-medium">{l.label}</span>
+                      {(l.address || l.city) && (
+                        <span className="block text-[11px] text-slate-400">
+                          {[l.address, l.city, l.state].filter(Boolean).join(', ')}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => handleReserve(rooftop)}
+                disabled={reserving || ((locationChoices || rooftops).length > 1 && !rooftop)}
+                className="flex-1 py-2.5 rounded-lg bg-emerald-500 text-slate-900 font-bold text-sm disabled:opacity-40"
+              >
+                {reserving ? 'Reserving…' : 'Yes, reserve it'}
+              </button>
+              <button
+                onClick={() => {
+                  setConfirming(false); setLocationChoices(null); setReserveMsg('')
+                  try { sessionStorage.removeItem('reserveAfterSignup') } catch { /* private mode */ }
+                }}
+                className="px-4 py-2.5 rounded-lg bg-slate-700 text-slate-200 text-sm"
+              >
+                Cancel
+              </button>
             </div>
-            <button onClick={() => { setLocationChoices(null); setReserveMsg('') }}
-              className="mt-2 text-[11px] text-slate-500 hover:text-slate-300">Cancel</button>
+            {reserveMsg && <p className="text-xs text-amber-300 mt-2">{reserveMsg}</p>}
           </div>
         )}
 

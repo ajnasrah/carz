@@ -159,6 +159,10 @@ export default function Marketplace() {
   // Admin controls follow the signed-in profile the app already loaded — no
   // extra round trip, and one shared definition of "admin" with every other page.
   const isAdmin = isAdminProfile(profile)
+  // Location history is an internal record — which shop, which transporter,
+  // which auction. It is not part of what we sell, and the marketplace is
+  // public, so it is staff-only wherever it appears.
+  const isStaff = isAdmin || profile?.account_type === 'employee'
 
   // Price edits land on one car; re-running the whole listings RPC to see them
   // would throw away scroll position and filters for a number we already know.
@@ -512,7 +516,7 @@ export default function Marketplace() {
                       >
                         View Details
                       </Link>
-                      <HistoryButton stockNumber={car.stock_number} vin={vin} />
+                      {isStaff && <HistoryButton stockNumber={car.stock_number} vin={vin} />}
                       <ShareCarButton
                         car={car}
                         className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold active:bg-slate-700"

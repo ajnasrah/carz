@@ -166,7 +166,7 @@ function AppRoutes() {
   return (
     <Suspense fallback={<LoadingScreen />}>
     <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={user ? <AfterLogin /> : <Login />} />
       <Route path="/setup" element={<ProtectedRoute requireSetup={false}><Setup /></ProtectedRoute>} />
       <Route path="/pending" element={<ProtectedRoute requireSetup={false}><PendingApproval /></ProtectedRoute>} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -404,7 +404,27 @@ function RouteMemory() {
   return null
 }
 
-export default function App() {
+export default // Where a signed-in visitor on /login actually belongs.
+//
+// This used to be a flat <Navigate to="/" />, which threw away the whole point
+// of the trip: someone presses "Buy it now" on a car, signs in, and lands on the
+// home screen with no idea what happened to the car they wanted. reserveAfterSignup
+// remembers it. Setup consumes the same key for brand-new accounts; this covers
+// the returning buyer, who never sees Setup at all.
+function AfterLogin() {
+  let target = '/'
+  try {
+    const pending = sessionStorage.getItem('reserveAfterSignup')
+    // Only ever an in-app path — never trust it to be absolute, or a poisoned
+    // sessionStorage value becomes an open redirect off the site.
+    if (pending && pending.startsWith('/') && !pending.startsWith('//')) target = pending
+  } catch { /* private mode */ }
+  // The flag rides on navigation state so the destination can open its confirm
+  // step during render — no effect, no second read of sessionStorage.
+  return <Navigate to={target} replace state={{ reserve: target !== '/' }} />
+}
+
+function App() {
   return (
     <BrowserRouter>
       <AuthProvider>

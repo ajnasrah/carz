@@ -105,9 +105,13 @@ export default function Listings() {
                   ) : (
                     <div className="text-center text-[11px] text-slate-500 font-mono">{c.vin}</div>
                   )}
-                  <div className="mt-2">
-                    <HistoryButton vin={c.vin} />
-                  </div>
+                  {/* Internal record — which shop, which transporter, which
+                      auction. This page is public. */}
+                  {isStaff && (
+                    <div className="mt-2">
+                      <HistoryButton vin={c.vin} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

@@ -75,6 +75,8 @@ export default function Admin() {
         setSoldRequests(requests)
         setLoading(false)
       }
+      // Held cars load alongside; without this the section never populates.
+      if (!cancelled) loadReservations()
     }
     load()
     return () => { cancelled = true }
