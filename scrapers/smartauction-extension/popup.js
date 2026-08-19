@@ -36,15 +36,7 @@
   const powerAppsBadge = document.getElementById('powerAppsBadge');
   const powerAppsSyncResult = document.getElementById('powerAppsSyncResult');
 
-  // Scraper
-  const scrapeBtn = document.getElementById('scrapeBtn');
-  const scraperStatus = document.getElementById('scraperStatus');
-  const scrapeResult = document.getElementById('scrapeResult');
-  const scraperDates = document.getElementById('scraperDates');
-  const toggleScrapeDates = document.getElementById('toggleScrapeDates');
-  const scrapeStart = document.getElementById('scrapeStart');
-  const scrapeEnd = document.getElementById('scrapeEnd');
-  const scrapeDateBtn = document.getElementById('scrapeDateBtn');
+  // Intake queue lookup
   const msgLookupBtn = document.getElementById('msgLookupBtn');
   const msgLookupResult = document.getElementById('msgLookupResult');
 
@@ -94,7 +86,7 @@
     const query = new URLSearchParams(after.split('?')[1] || '');
     const ok = (data) => ({ ok: true, status: 200, json: async () => data, text: async () => JSON.stringify(data) });
 
-    if (path === '/status' || path === '/whatsapp/status') return ok({ online: true, connected: true, whatsapp_connected: true });
+    if (path === '/status') return ok({ online: true, connected: true });
 
     if (path === '/queue/all' || path === '/queue') {
       const rows = (await sbRpc('ready_to_sell_queue')) || [];
@@ -148,7 +140,6 @@
       await sbRpc('sa_queue_set_status', { p_vin6: decodeURIComponent(mark[2]).toUpperCase(), p_status: map[mark[1]] });
       return ok({ success: true });
     }
-    if (path === '/scrape') return ok({ success: true, message: 'serverless', vehicle_updates: 0 });
     return { ok: false, status: 404, json: async () => ({}) };
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -172,7 +163,7 @@
     return stampedAt;
   }
 
-  // Tracks whether the local WhatsApp scraper server is running.
+  // Tracks whether the intake queue is reachable.
   // Flipped by setServerOnline(). When false we short-circuit the localhost
   // fetches so Chrome's console isn't filled with ERR_CONNECTION_REFUSED.
   let scraperServerAvailable = true; // serverless: Supabase-backed
@@ -826,10 +817,7 @@
 
   // ── Scraper ──
   async function checkScraperStatus() {
-    // Serverless — there is no local server. Hide the obsolete scrape/server
-    // controls and just show the queue count.
-    if (scrapeBtn) scrapeBtn.style.display = 'none';
-    if (scraperStatus) scraperStatus.style.display = 'none';
+    // Serverless — there is no local server, so this only counts the queue.
     try {
       const qRes = await serverFetch(`${SCRAPER_URL}/queue/stats`);
       const stats = await qRes.json();
@@ -850,53 +838,10 @@
   // Removed — serverless. There is no local server to start or stop.
   function toggleServer() {}
 
-  async function runScrape(body = {}) {
-    scrapeBtn.disabled = true;
-    scrapeResult.textContent = 'Scraping all WhatsApp groups...';
-    scrapeResult.className = 'scraper-result';
-    try {
-      // Always scrape all groups unless specific parameters provided
-      if (!body.groupType) {
-        body.groupType = 'all';
-      }
-      if (!body.limit) {
-        body.limit = 1000;  // Get plenty of messages
-      }
-      
-      const res = await serverFetch(`${SCRAPER_URL}/scrape`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      if (data.success) {
-        // Show WhatsApp scrape results
-        const messages = data.message_count || 0;
-        const locationUpdates = data.location_updates || 0;
-        const vehicleUpdates = data.vehicle_updates || 0;
-        
-        if (locationUpdates > 0 || vehicleUpdates > 0) {
-          scrapeResult.textContent = `✓ ${messages} messages • ${locationUpdates} locations • ${vehicleUpdates} vehicles`;
-        } else if (messages > 0) {
-          scrapeResult.textContent = `✓ Processed ${messages} messages`;
-        } else {
-          scrapeResult.textContent = '✓ Done!';
-        }
-        scrapeResult.className = 'scraper-result ok';
-        checkScraperStatus();
-      } else {
-        scrapeResult.textContent = 'Error: ' + (data.error || 'Unknown');
-        scrapeResult.className = 'scraper-result err';
-      }
-    } catch (err) {
-      scrapeResult.textContent = 'WhatsApp server not running';
-      scrapeResult.className = 'scraper-result err';
-    } finally {
-      scrapeBtn.disabled = false;
-    }
-  }
-
-  // ── Scraper: Lookup VIN from WhatsApp Queue ──
+  // ── Look a VIN up in the intake queue ──
+  //
+  // Named "messages" because it used to read a WhatsApp scrape; it reads the
+  // Telegram-fed ready_to_sell_queue now, through the shim above.
   async function lookupFromMessages() {
     const vin6 = vin6Input.value.trim();
     if (vin6.length < 4) {
@@ -1073,7 +1018,6 @@
       soldData = await parseUploadFile(file);
       await chrome.storage.local.set({ soldData, soldDate: Date.now() });
       if (st) { st.textContent = `${soldData.length} sold`; st.className = 'upload-file-status loaded'; }
-      // Cross-check removed - now part of Prepare to List button
     } catch (err) { if (st) st.textContent = 'Error: ' + err.message; }
   }
 
@@ -1111,7 +1055,6 @@
     console.log(`[CrossCheck] SA listings refreshed: ${saListings.length} vehicles`);
     // Re-run cross-check if we have inventory
     if (inventory.length > 0) {
-      // Cross-check removed - now part of Prepare to List button
     }
   };
 
@@ -1248,7 +1191,7 @@
     if (!hasQueueData && !hasInspections && !crossCheckData) {
       let msg = 'Loading queue data...';
       if (queueData && queueData.length === 0) {
-        msg = 'No vehicles in queue. Click "Scrape WhatsApp" to add vehicles.';
+        msg = 'No vehicles in queue. Cars arrive from the Telegram intake group.';
       }
       queueList.innerHTML = `<div style="text-align:center;color:#999;padding:20px;">${msg}</div>`;
       // Don't return early - continue to show any data we have
@@ -1295,7 +1238,7 @@
 
     if (items.length === 0 && !hasSupabaseInspections) {
       let hint = '';
-      if (activeFilter === 'ready' && queueData.length === 0) hint = '<br><span style="font-size:11px;">No vehicles in queue. Click "Scrape WhatsApp" to get vehicles.</span>';
+      if (activeFilter === 'ready' && queueData.length === 0) hint = '<br><span style="font-size:11px;">No vehicles in queue. Cars arrive from the Telegram intake group.</span>';
       else if (activeFilter === 'ready') hint = '<br><span style="font-size:11px;">No vehicles with photos ready to list</span>';
       queueList.innerHTML = `<div style="text-align:center;color:#999;padding:20px;">No vehicles${hint}</div>`;
       return;
@@ -2312,8 +2255,6 @@
     return Object.values(photos).filter((p) => p && p.url).length;
   }
 
-  // Old scrapeNewTexts function removed - replaced with WhatsApp scraper integration
-
   // ── Event Binding ──
   function bindEvents() {
     // Server control
@@ -2458,136 +2399,6 @@
       await Promise.all([loadQueue(), loadCompletedInspections()]); 
       renderDashList(); 
     });
-
-    // Scrape WhatsApp - get new vehicles from WhatsApp groups
-    const scrapeWhatsAppBtn = document.getElementById('scrapeWhatsAppBtn');
-    if (scrapeWhatsAppBtn) scrapeWhatsAppBtn.addEventListener('click', async () => {
-      scrapeWhatsAppBtn.disabled = true;
-      const orig = scrapeWhatsAppBtn.textContent;
-      scrapeWhatsAppBtn.textContent = 'Scraping...';
-      statusDiv.textContent = 'Scraping WhatsApp messages...';
-      statusDiv.className = 'status';
-      try {
-        const scrapeRes = await serverFetch(`${SCRAPER_URL}/scrape`, { 
-          method: 'POST', 
-          signal: AbortSignal.timeout(60000) 
-        });
-        const scrapeData = await scrapeRes.json();
-        
-        await loadQueue();
-        const newVehicles = scrapeData.vehicles_found || scrapeData.new_vehicles || 0;
-        statusDiv.textContent = newVehicles > 0 
-          ? `Found ${newVehicles} new vehicle${newVehicles !== 1 ? 's' : ''} from WhatsApp`
-          : 'No new vehicles found in WhatsApp';
-        statusDiv.className = 'status success';
-        
-        // Counts come from Supabase (inventory + sa_active_cars), not the local queue.
-        await updateSaCounts();
-
-        renderDashList();
-      } catch (err) {
-        statusDiv.textContent = err.name === 'TimeoutError'
-          ? 'WhatsApp scrape timed out — try again'
-          : 'WhatsApp server not running';
-        statusDiv.className = 'status error';
-      } finally {
-        scrapeWhatsAppBtn.disabled = false;
-        scrapeWhatsAppBtn.textContent = orig;
-      }
-    });
-
-    // Removed Update Locations button - functionality integrated into Scrape WhatsApp
-
-    // Prepare to List - cross-check and prepare vehicles for SmartAuction listing
-    const prepareBtn = document.getElementById('prepareListingBtn');
-    if (prepareBtn) prepareBtn.addEventListener('click', async () => {
-      prepareBtn.disabled = true;
-      const orig = prepareBtn.textContent;
-      prepareBtn.textContent = 'Preparing...';
-      statusDiv.textContent = 'Preparing vehicles for SmartAuction...';
-      statusDiv.className = 'status';
-      try {
-        // Load latest data
-        await Promise.all([loadQueue(), loadCompletedInspections()]);
-        
-        // Get vehicles ready to list (with photos, not on SA)
-        const readyToList = queueData.filter(v => 
-          v.ready_with_photos && 
-          !v.on_smartauction && 
-          !v.physical_location?.toLowerCase().includes('sold')
-        );
-        
-        statusDiv.textContent = `${readyToList.length} vehicle${readyToList.length !== 1 ? 's' : ''} ready to list on SmartAuction`;
-        statusDiv.className = 'status success';
-        
-        // Switch to ready filter to show the vehicles
-        activeFilter = 'ready';
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        document.querySelector('.filter-btn[data-filter="ready"]')?.classList.add('active');
-        renderDashList();
-      } catch (err) {
-        statusDiv.textContent = 'Failed to prepare listing: ' + (err.message || String(err));
-        statusDiv.className = 'status error';
-      } finally {
-        prepareBtn.disabled = false;
-        prepareBtn.textContent = orig;
-      }
-    });
-
-    // Front Lot Aging Report
-    const frontLotAgingBtn = document.getElementById('frontLotAgingBtn');
-    if (frontLotAgingBtn) frontLotAgingBtn.addEventListener('click', async () => {
-      frontLotAgingBtn.disabled = true;
-      const orig = frontLotAgingBtn.textContent;
-      frontLotAgingBtn.textContent = 'Loading...';
-      statusDiv.textContent = 'Fetching front lot aging data...';
-      
-      const resultsDiv = document.getElementById('frontLotAgingResults');
-      const queueListDiv = document.getElementById('queueList');
-      const crossCheckDiv = document.getElementById('crossCheckResults');
-      
-      try {
-        // Initialize the tracker
-        const tracker = new FrontLotTracker();
-        
-        // Get aging vehicles
-        const vehicles = await tracker.getFrontLotAging();
-        
-        // Generate and display report
-        resultsDiv.innerHTML = tracker.generateAgingReport(vehicles);
-        
-        // Initialize event listeners for the report
-        tracker.initEventListeners(resultsDiv);
-        
-        // Show the results and hide others
-        resultsDiv.style.display = 'block';
-        queueListDiv.style.display = 'none';
-        crossCheckDiv.style.display = 'none';
-        
-        statusDiv.textContent = `Found ${vehicles.length} vehicles on front lot over 10 days old not on SmartAuction`;
-        
-        // Listen for add to upload list events
-        window.addEventListener('addToUploadList', async (event) => {
-          const { stockNumbers } = event.detail;
-          
-          // Update SmartAuction status when added to upload list
-          if (stockNumbers && stockNumbers.length > 0) {
-            await tracker.updateSmartAuctionStatus(stockNumbers);
-            statusDiv.textContent = `Added ${stockNumbers.length} vehicles to upload list and marked as listed`;
-          }
-        }, { once: true });
-        
-      } catch (err) {
-        console.error('Front lot aging report failed', err);
-        statusDiv.textContent = `Report failed: ${err.message}`;
-        resultsDiv.innerHTML = `<div style="color: red; padding: 10px;">Error: ${err.message}</div>`;
-      }
-      
-      frontLotAgingBtn.textContent = orig;
-      frontLotAgingBtn.disabled = false;
-    });
-
-    // Removed old Cross-Check button - functionality integrated into Prepare to List
     document.getElementById('queueSearch').addEventListener('input', (e) => {
       queueSearchFilter = e.target.value.toUpperCase();
       renderDashList();
@@ -2676,23 +2487,7 @@
       }
     });
 
-    // Scraper buttons
-    scrapeBtn.addEventListener('click', () => runScrape());
-    scrapeDateBtn.addEventListener('click', () => {
-      const body = {};
-      if (scrapeStart.value) body.start = scrapeStart.value;
-      if (scrapeEnd.value) body.end = scrapeEnd.value;
-      if (body.start) body.all = true;
-      runScrape(body);
-    });
-    toggleScrapeDates.addEventListener('click', (e) => {
-      e.preventDefault();
-      const shown = scraperDates.style.display !== 'none';
-      scraperDates.style.display = shown ? 'none' : 'flex';
-      toggleScrapeDates.textContent = shown ? 'Custom date range' : 'Hide date range';
-    });
-
-    // Scraper: message lookup
+    // Intake queue lookup
     msgLookupBtn.addEventListener('click', lookupFromMessages);
 
     // Step 2: Inventory upload + VIN lookup + copy + reset
@@ -3132,7 +2927,6 @@
       if (badge) { badge.textContent = `${mapped.length} inv`; badge.className = 'scraper-badge online'; }
       if (result && !silent) { result.textContent = `${mapped.length} inventory rows`; result.className = 'scraper-result ok'; }
       // Re-run the cross-check if SA data is already loaded
-      // Cross-check removed - now part of Prepare to List button
     } catch (err) {
       console.error('[syncSupabaseInventory]', err);
       if (badge) { badge.textContent = 'Error'; badge.className = 'scraper-badge offline'; }
@@ -3156,7 +2950,6 @@
       }
       const result = document.getElementById('supabaseInvResult');
       if (result && !silent) { result.textContent = `${mapped.length} sold rows`; result.className = 'scraper-result ok'; }
-      // Cross-check removed - now part of Prepare to List button
     } catch (err) {
       console.error('[syncSupabaseSold]', err);
       const result = document.getElementById('supabaseInvResult');
@@ -4009,10 +3802,9 @@
     inventoryMatch.classList.remove('visible');
     matchedVehicle = null;
     manheimOdoSet = false;
-    // Scraper / message lookup results
+    // Intake lookup results
     document.getElementById('msgLookupResult').innerHTML = '';
     document.getElementById('msgLookupResult').className = 'msg-lookup-result';
-    document.getElementById('scrapeResult').textContent = '';
     document.getElementById('manheimResult').textContent = '';
 
     // ── Step 3: Photos + Tires ──

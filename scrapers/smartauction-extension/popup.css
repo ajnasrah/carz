@@ -295,31 +295,6 @@ h3 {
   color: #c62828;
 }
 
-.scraper-dates {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 6px;
-  font-size: 11px;
-}
-
-.scraper-dates input[type="date"] {
-  padding: 3px 4px;
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  font-size: 11px;
-}
-
-.scraper-toggle {
-  font-size: 11px;
-  color: #7b1fa2;
-  text-decoration: none;
-}
-
-.scraper-toggle:hover {
-  text-decoration: underline;
-}
-
 .msg-lookup-result {
   display: none;
   margin-top: 6px;

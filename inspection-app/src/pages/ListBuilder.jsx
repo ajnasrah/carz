@@ -230,7 +230,7 @@ export default function ListBuilder() {
     const next = new Set(opened)
     let blocked = 0
     for (const c of batch) {
-      const w = window.open(linkFor(c.vin), '_blank', 'noopener')
+      const w = window.open(linkFor(c), '_blank', 'noopener')
       if (w) next.add(c.vin)   // a blocked car stays queued for the next press
       else blocked++
     }
@@ -533,7 +533,7 @@ export default function ListBuilder() {
                           single car always opens even with pop-ups blocked. */}
                       <td className="px-2.5 py-1.5">
                         {linkFor && c.vin
-                          ? <a href={linkFor(c.vin)} target="_blank" rel="noopener noreferrer"
+                          ? <a href={linkFor(c)} target="_blank" rel="noopener noreferrer"
                               title="open this car on the auction site"
                               onClick={() => markOpened(new Set(opened).add(c.vin))}
                               className="text-slate-500 hover:text-emerald-400 inline-flex">

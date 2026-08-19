@@ -423,18 +423,32 @@ export const detectFormat = (rows) => (rows.length ? FORMATS.find((f) => f.detec
 // and no extension needed, just a URL built from the run list.
 //
 // Keyed by the format the run list was recognised as, because that is what says
-// which site the cars live on — a Manheim export is browsed on OVE, an ADESA
-// export on the ADESA marketplace.
+// which site the cars live on — but the format alone does not finish the job for
+// Manheim, which runs two marketplaces and exports both from one report.
+//
+// Its `Inventory` column is the tell: `OVE` is the online exchange, `Simulcast`
+// is a car rolling through a physical lane. This used to send every Manheim car
+// to an OVE detail route on the assumption that a Manheim export IS an OVE
+// export; every list we actually get is Simulcast, so every link searched a
+// marketplace the car was never in and came back empty.
+//
+// The lane route is Manheim's own: their legacy
+// /members/powersearch/searchResults.do?vin= 301s to
+// search.manheim.com/results?vin=<VIN>, and that route carries the VIN through
+// the login redirect in its `state`, so it lands on the car from a cold browser.
 //
 // Edge Pipeline is deliberately absent: its detail route is an opaque 32-hex
 // hash with no VIN form, so those cars can only be reached by reading the
 // links off the results page, which the browser extension does and this can't.
 //
-// Keep in lockstep with DIRECT_URL in
+// Takes the car, not the VIN — which site it opens on is a property of the
+// listing. Keep in lockstep with DIRECT_URL in
 // scrapers/smartauction-extension/lib/target-buy-list.js
 export const DIRECT_URL = {
-  manheim: (vin) => `https://www.ove.com/search/results#/details/${vin}/OVE`,
-  adesa: (vin) => `https://marketplace.adesa.com/details/${vin}`,
+  manheim: (c) => (/OVE/i.test(c.channel || '')
+    ? `https://www.ove.com/search/results#/details/${c.vin}/OVE`
+    : `https://search.manheim.com/results?vin=${c.vin}`),
+  adesa: (c) => `https://marketplace.adesa.com/details/${c.vin}`,
 }
 
 // ── Normalisation ────────────────────────────────────────────────────────────
