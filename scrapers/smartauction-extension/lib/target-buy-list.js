@@ -1445,10 +1445,14 @@
   // the zeros from no-data cars drags a genuinely good lane down toward whatever
   // share of it we happen to have no history on.
   function laneStudyHtml(scored) {
+    const UNKNOWN = '(not listed)';
     const roll = (keyOf) => {
       const m = new Map();
       for (const c of scored) {
-        const k = String(keyOf(c) || '').trim() || '—';
+        // A blank never drops the car — it buckets. The Edge Pipeline feed
+        // carries no seller at all (315 of 315 rows), and those cars are scored
+        // like any other, so throwing them out would hide a third of a sale.
+        const k = String(keyOf(c) || '').trim() || UNKNOWN;
         if (!m.has(k)) m.set(k, { k, n: 0, t: 0, w: 0, p: [], d: [], cr: [], sub: new Map() });
         const a = m.get(k);
         a.n++;
@@ -1464,7 +1468,12 @@
       const avg = (xs) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
       return [...m.values()]
         .map((a) => ({ ...a, ep: avg(a.p), ed: avg(a.d), acr: avg(a.cr) }))
-        .sort((x, y) => (y.ep == null ? -1e9 : y.ep) - (x.ep == null ? -1e9 : x.ep));
+        // Unknown always sits at the bottom whatever it scores. On a feed with
+        // no seller column it is the biggest bucket on the list, and sorted on
+        // profit like everything else it would head the table — reading as
+        // "your best consignor is (not listed)".
+        .sort((x, y) => (x.k === UNKNOWN) - (y.k === UNKNOWN)
+          || (y.ep == null ? -1e9 : y.ep) - (x.ep == null ? -1e9 : x.ep));
     };
     const money = (v) => (v == null ? '—' : `$${Math.round(v).toLocaleString()}`);
     const tint = (v) => (v == null ? '#fafafa' : v >= 600 ? '#e8f5e9' : v >= 200 ? '#fffde7' : '#ffebee');
@@ -1477,8 +1486,10 @@
         <td title="average days on lot for exact comps">Days</td><td>CR</td>${showTop ? '<td>Top seller</td>' : ''}</tr>`;
       for (const a of rows) {
         const top = showTop ? [...a.sub.entries()].sort((x, y) => y[1] - x[1])[0] : null;
-        h += `<tr style="border-top:1px solid #e0e0e0;background:${tint(a.ep)};">
-          <td style="font-family:monospace;font-weight:700;">${esc(a.k)}</td>
+        const unknown = a.k === UNKNOWN;
+        h += `<tr style="border-top:1px solid #e0e0e0;background:${unknown ? '#f5f5f5' : tint(a.ep)};${
+          unknown ? 'color:#888;' : ''}">
+          <td style="font-family:monospace;font-weight:700;${unknown ? 'font-style:italic;' : ''}">${esc(a.k)}</td>
           <td>${a.n}</td><td style="font-weight:700;">${a.t || ''}</td>
           <td style="font-weight:700;">${money(a.ep)}</td>
           <td>${a.ed == null ? '—' : Math.round(a.ed) + 'd'}</td>
@@ -1488,14 +1499,20 @@
       return h + '</table></div>';
     };
     const lanes = roll((c) => c.lane);
-    const sellers = roll((c) => c.seller).filter((a) => a.n >= 2);
+    // 2+ only, so a fifty-consignor ADESA list doesn't render fifty one-car rows.
+    // The count below says how many were folded away so the table never looks
+    // like the whole picture when it isn't.
+    const allSellers = roll((c) => c.seller);
+    const sellers = allSellers.filter((a) => a.n >= 2);
+    const singles = allSellers.filter((a) => a.n < 2);
     const anyLane = scored.some((c) => String(c.lane ?? '').trim());
     let h = '';
     if (anyLane) h += `<div style="font-size:10px;font-weight:700;color:#1b5e20;margin:2px 0 3px;">Where to stand — by lane</div>`
       + table(lanes, 'Lane', true);
     h += `<div style="font-size:10px;font-weight:700;color:#1b5e20;margin:2px 0 3px;">Whose cars to watch — by consignor (2+ on this list)</div>`
       + table(sellers, 'Seller', false);
-    h += `<div style="font-size:9px;color:#777;">Avg $ and Days count only cars with a real comp behind them. Green ≥ $600, amber ≥ $200.</div>`;
+    h += `<div style="font-size:9px;color:#777;">Avg $ and Days count only cars with a real comp behind them. Green ≥ $600, amber ≥ $200.${
+      singles.length ? ` ${singles.length} seller${singles.length === 1 ? '' : 's'} with a single car not shown.` : ''}</div>`;
     return h;
   }
 
