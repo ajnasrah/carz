@@ -25,10 +25,17 @@ export default async function handler(req, res) {
   const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
     auth: { persistSession: false },
   })
+  // Ledger first: sold is truncate-and-reload, so anything that fell outside the
+  // latest export only survives in sold_book. This used to be a trigger on the
+  // load itself, which made the daily Frazer sync measurably slower — it has no
+  // business costing that run anything, so it happens here instead.
+  const merged = await db.rpc('merge_sold_to_book')
+  if (merged.error) console.error('merge_sold_to_book failed:', merged.error.message)
+
   const { data, error } = await db.rpc('link_purchase_sources')
   if (error) {
     console.error('link_purchase_sources failed:', error.message)
-    return res.status(502).json({ error: error.message })
+    return res.status(502).json({ error: error.message, merged: merged.data ?? 0 })
   }
-  return res.status(200).json({ linked: data ?? 0 })
+  return res.status(200).json({ merged: merged.data ?? 0, linked: data ?? 0 })
 }

@@ -18,6 +18,16 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
 // Map CSV header → Postgres column. Lowercase, strip non-alphanumeric, collapse to single underscores.
+// The target's columns, fetched once per warm instance. One round trip on a cold
+// start, none afterwards — the load should do as little as it possibly can.
+const COLUMN_CACHE = new Map<string, any>()
+async function columnsFor(supabase: any, target: string) {
+  if (COLUMN_CACHE.has(target)) return { data: COLUMN_CACHE.get(target), error: null }
+  const r = await supabase.rpc('frazer_target_columns', { p_target: target })
+  if (!r.error && Array.isArray(r.data)) COLUMN_CACHE.set(target, r.data)
+  return r
+}
+
 function normalizeHeader(h: string): string {
   return h
     .toLowerCase()
@@ -205,9 +215,7 @@ Deno.serve(async (req) => {
   // stopped the sync, with nothing anywhere saying why. Skipped headers come back
   // in the response so a genuinely new column gets noticed instead of guessed at.
   const skipped: string[] = []
-  const { data: colRows, error: colErr } = await supabase.rpc('frazer_target_columns', {
-    p_target: target,
-  })
+  const { data: colRows, error: colErr } = await columnsFor(supabase, target)
   if (!colErr && Array.isArray(colRows) && colRows.length) {
     const known = new Set(colRows.map((r: any) => r.column_name))
     cols.forEach((c, i) => {
