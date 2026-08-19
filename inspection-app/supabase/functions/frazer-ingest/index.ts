@@ -147,6 +147,11 @@ Deno.serve(async (req) => {
 
   const providedSecret = req.headers.get('x-frazer-secret') ?? ''
   if (!SHARED_SECRET || providedSecret !== SHARED_SECRET) {
+    // Drain before answering. Returning without consuming the request leaves the
+    // client still sending, and on a multi-hundred-KB CSV that reads as a hang
+    // rather than a rejection — which is exactly how a wrong secret would look
+    // from Power Automate: a step that sits there for minutes and then retries.
+    try { await req.arrayBuffer() } catch { /* client already gone */ }
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { 'content-type': 'application/json', ...corsHeaders() },
