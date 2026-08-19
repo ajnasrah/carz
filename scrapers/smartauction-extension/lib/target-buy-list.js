@@ -247,6 +247,12 @@
         // Manheim is the one feed that carries a market benchmark.
         auctionValue: dec(r['MMR']),
         location: (r['Pickup Location'] || '').trim(),
+        // The SALE, as distinct from where the car sits. Usually the same place
+        // with the state prefix stripped ("MO - Manheim Kansas City" vs "Manheim
+        // Kansas City"), and not the same at all for an offsite unit, which
+        // lists the lot holding it. Studies group on this.
+        auction: (r['Auction House'] || '').trim(),
+        saleName: (r['Event Sale Name'] || '').trim(),
         channel: (r['Inventory'] || '').trim(),
       }),
     },
@@ -446,6 +452,10 @@
         announcements: txt(c.announcements), title_status: txt(c.titleStatus),
         auction_value: dec(c.auctionValue),
         seller: txt(c.seller), location: txt(c.location), lane: txt(c.lane),
+        // Falls back to the pickup location with its state prefix stripped, so a
+        // feed that has no explicit auction column still groups with the rest.
+        auction: txt(c.auction) || txt(String(c.location || '').replace(/^[A-Z]{2}\s*-\s*/, '')),
+        sale_name: txt(c.saleName),
         lot: txt(c.lot), run: txt(c.run), channel: txt(c.channel),
         drivetrain: txt(c.drivetrain), engine: txt(c.engine),
         transmission: txt(c.transmission), fuel: txt(c.fuel), color: txt(c.color),
@@ -998,9 +1008,24 @@
   // Keyed by the format the run list was recognised as, because that is what
   // says which site the cars live on: a Manheim export is browsed on OVE, an
   // ADESA export on the ADESA marketplace.
+  // Where a car actually lives — which is not one site per format. A Manheim
+  // export carries both of Manheim's marketplaces and its `Inventory` column
+  // says which: `OVE` is the online exchange, `Simulcast` is a car rolling
+  // through a physical lane. Every export we get is Simulcast (Kansas City,
+  // Denver — lanes 1 through 36), and a Simulcast car is not an OVE listing, so
+  // sending it to an OVE detail route searched a marketplace the car was never
+  // in and found nothing. Every time, for every car.
+  //
+  // The lane route is Manheim's own answer, not a guess: their legacy
+  // /members/powersearch/searchResults.do?vin= 301s to
+  // search.manheim.com/results?vin=<VIN>. That route also carries the VIN
+  // through the login redirect in its `state` parameter, so it lands on the car
+  // even from a browser that has to sign in first.
   const DIRECT_URL = {
-    manheim: (vin) => `https://www.ove.com/search/results#/details/${vin}/OVE`,
-    adesa: (vin) => `https://marketplace.adesa.com/details/${vin}`,
+    manheim: (c) => (/OVE/i.test(c.channel || '')
+      ? `https://www.ove.com/search/results#/details/${c.vin}/OVE`
+      : `https://search.manheim.com/results?vin=${c.vin}`),
+    adesa: (c) => `https://marketplace.adesa.com/details/${c.vin}`,
   };
   // Edge Pipeline is deliberately absent: its detail route takes the auction's
   // own vehicle id, not a VIN, so those still have to be read off the page.
@@ -1254,7 +1279,7 @@
     const direct = DIRECT_URL[lastResult && lastResult.sourceId];
     if (direct) {
       const shown = cars.slice(0, 10);
-      for (const c of shown) log(`  ✓ ${c.vin} → ${direct(c.vin)}  [direct link — no page needed]`, 'ok');
+      for (const c of shown) log(`  ✓ ${c.vin} → ${direct(c)}  [direct link — no page needed]`, 'ok');
       if (cars.length > shown.length) log(`  …and ${cars.length - shown.length} more, same form`, '');
       setNote(`${cars.length} ready · built straight from the VIN`, '#1b5e20');
       return;
@@ -1291,7 +1316,9 @@
       // No page needed, so nothing can be "not on this page".
       items = cars.map((c) => ({ vin: c.vin }));
       links = {};
-      for (const it of items) links[it.vin] = { href: direct(it.vin), how: 'direct', text: '' };
+      // Built from the car, not the VIN: which marketplace it opens on is a
+      // property of the listing (see DIRECT_URL), not of the number.
+      for (const c of cars) links[c.vin] = { href: direct(c), how: 'direct', text: '' };
     } else {
       const got = await resolveOnPage(cars, setNote, LISTING_PATH[lastResult && lastResult.sourceId]);
       if (!got) return;
@@ -1410,6 +1437,68 @@
       n.addEventListener('click', () => openSaved(n.dataset.id)));
   }
 
+  // The scored list, rolled up. Two tables: lanes, then the consignors inside
+  // them — a lane tells you where to stand today, a consignor tells you whose
+  // cars to look for next month, when the lane numbers have moved.
+  //
+  // Expected profit only counts cars that HAVE a comp (exactN > 0). Averaging in
+  // the zeros from no-data cars drags a genuinely good lane down toward whatever
+  // share of it we happen to have no history on.
+  function laneStudyHtml(scored) {
+    const roll = (keyOf) => {
+      const m = new Map();
+      for (const c of scored) {
+        const k = String(keyOf(c) || '').trim() || '—';
+        if (!m.has(k)) m.set(k, { k, n: 0, t: 0, w: 0, p: [], d: [], cr: [], sub: new Map() });
+        const a = m.get(k);
+        a.n++;
+        if (c.verdict === 'TARGET') a.t++;
+        if (c.verdict === 'WATCH') a.w++;
+        if (Number(c.exactN) > 0 && isFinite(Number(c.exactProfit))) a.p.push(Number(c.exactProfit));
+        if (Number(c.exactN) > 0 && isFinite(Number(c.exactDays))) a.d.push(Number(c.exactDays));
+        const g = Number(String(c.grade == null ? '' : c.grade).match(/\d+(\.\d+)?/) || [NaN]);
+        if (isFinite(g)) a.cr.push(g);
+        const sk = String(c.seller || '').trim();
+        if (sk) a.sub.set(sk, (a.sub.get(sk) || 0) + 1);
+      }
+      const avg = (xs) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null);
+      return [...m.values()]
+        .map((a) => ({ ...a, ep: avg(a.p), ed: avg(a.d), acr: avg(a.cr) }))
+        .sort((x, y) => (y.ep == null ? -1e9 : y.ep) - (x.ep == null ? -1e9 : x.ep));
+    };
+    const money = (v) => (v == null ? '—' : `$${Math.round(v).toLocaleString()}`);
+    const tint = (v) => (v == null ? '#fafafa' : v >= 600 ? '#e8f5e9' : v >= 200 ? '#fffde7' : '#ffebee');
+    const table = (rows, head, showTop) => {
+      let h = `<div style="max-height:190px;overflow:auto;font-size:10px;margin-bottom:8px;">
+        <table style="width:100%;border-collapse:collapse;">
+        <tr style="background:#f0f0f0;font-weight:700;position:sticky;top:0;">
+        <td>${head}</td><td>Cars</td><td title="cars flagged TARGET">Tgt</td>
+        <td title="average net profit on exact comps">Avg $</td>
+        <td title="average days on lot for exact comps">Days</td><td>CR</td>${showTop ? '<td>Top seller</td>' : ''}</tr>`;
+      for (const a of rows) {
+        const top = showTop ? [...a.sub.entries()].sort((x, y) => y[1] - x[1])[0] : null;
+        h += `<tr style="border-top:1px solid #e0e0e0;background:${tint(a.ep)};">
+          <td style="font-family:monospace;font-weight:700;">${esc(a.k)}</td>
+          <td>${a.n}</td><td style="font-weight:700;">${a.t || ''}</td>
+          <td style="font-weight:700;">${money(a.ep)}</td>
+          <td>${a.ed == null ? '—' : Math.round(a.ed) + 'd'}</td>
+          <td>${a.acr == null ? '—' : a.acr.toFixed(1)}</td>
+          ${showTop ? `<td style="color:#555;">${esc(top ? top[0].slice(0, 28) : '')}</td>` : ''}</tr>`;
+      }
+      return h + '</table></div>';
+    };
+    const lanes = roll((c) => c.lane);
+    const sellers = roll((c) => c.seller).filter((a) => a.n >= 2);
+    const anyLane = scored.some((c) => String(c.lane ?? '').trim());
+    let h = '';
+    if (anyLane) h += `<div style="font-size:10px;font-weight:700;color:#1b5e20;margin:2px 0 3px;">Where to stand — by lane</div>`
+      + table(lanes, 'Lane', true);
+    h += `<div style="font-size:10px;font-weight:700;color:#1b5e20;margin:2px 0 3px;">Whose cars to watch — by consignor (2+ on this list)</div>`
+      + table(sellers, 'Seller', false);
+    h += `<div style="font-size:9px;color:#777;">Avg $ and Days count only cars with a real comp behind them. Green ≥ $600, amber ≥ $200.</div>`;
+    return h;
+  }
+
   function renderPanel(result) {
     const el = document.getElementById('tblPanel');
     if (!el) return;
@@ -1455,9 +1544,36 @@
     const bandOf = (v) => scored.filter((x) => x.verdict === v && x.vin);
     const listable = bandOf('TARGET').concat(bandOf('WATCH'));
 
+    // Lane leads, because that is how the table is already sorted (byRunNumber
+    // is lane-major) and how a sale is actually worked: you stand in a lane and
+    // wait for a run to cross. Without it the run numbers read as shuffled —
+    // 15, 19, 122, 39 — when they are in perfect order within lanes you cannot
+    // see, and a bare run number is ambiguous anyway on a Manheim sale with
+    // twenty lanes running at once.
+    //
+    // Only shown when the list HAS lanes: an OVE or Manheim timed sale has no
+    // lane to run in, and an always-on column would spend width on a column of
+    // blanks in a panel this narrow.
+    const showLane = scored.some((c) => String(c.lane ?? '').trim());
+
+    // SECOND VIEW — the same list, read by where it runs rather than car by car.
+    //
+    // The car list answers "what do I bid on". It cannot answer "where should I
+    // stand", which is the question you actually have before a sale opens: a
+    // Manheim sale runs twenty lanes at once and you cannot work all of them.
+    // Rolling the scored list up by lane, and by the consignor inside it, turns
+    // the same numbers into that answer — and the consignor is the half that
+    // stays put, because lane assignments rotate between sale days.
+    html += `<div style="display:flex;gap:4px;margin:8px 0 4px;align-items:center;">
+      <button id="tblViewCars" class="btn btn-small" style="background:#1b5e20;font-size:10px;padding:3px 8px;">Cars</button>
+      <button id="tblViewLanes" class="btn btn-small" style="background:#eee;color:#333;font-size:10px;padding:3px 8px;">By lane &amp; seller</button>
+      <span style="font-size:10px;color:#666;">${esc(result.auction || result.source || '')}</span>
+    </div>`;
+    html += `<div id="tblLaneView" style="display:none;">${laneStudyHtml(scored)}</div>`;
+    html += `<div id="tblCarView">`;
     html += `<div style="max-height:260px;overflow-y:auto;font-size:10px;"><table style="width:100%;border-collapse:collapse;">
       <tr style="background:#f0f0f0;font-weight:700;position:sticky;top:0;">
-      <td>Run</td><td>VIN</td><td>Vehicle</td><td>Miles</td><td title="average net profit on exact comps">Avg $</td>
+      ${showLane ? '<td>Lane</td>' : ''}<td>Run</td><td>VIN</td><td>Vehicle</td><td>Miles</td><td title="average net profit on exact comps">Avg $</td>
       <td title="average days on lot for exact comps">Days</td>
       <td title="exact comps: same year, ±20k mi">n</td><td></td></tr>`;
     // TARGET and WATCH only, which is what the footer has always claimed.
@@ -1468,6 +1584,7 @@
       const bg = c.verdict === 'TARGET' ? '#e8f5e9' : '#fffde7';
       const vin = esc(c.vin || '');
       html += `<tr style="border-top:1px solid #e0e0e0;background:${bg};" title="${esc(c.why)}">
+        ${showLane ? `<td style="font-family:monospace;font-weight:700;">${esc(c.lane || '')}</td>` : ''}
         <td style="font-family:monospace;">${esc(c.run || '')}</td>
         <td>${vin ? `<span class="tbl-vin" data-vin="${vin}" title="${vin} — click to copy"
           style="font-family:monospace;cursor:pointer;border-bottom:1px dotted #999;">${vin.slice(-8)}</span>` : ''}</td>
@@ -1480,6 +1597,7 @@
           style="cursor:pointer;color:#e65100;font-weight:700;">↗</span>` : ''}</td></tr>`;
     }
     html += `</table></div>`;
+    html += `</div>`;   // /tblCarView
     html += `<div style="font-size:10px;color:#888;padding-top:4px;">
       VIN shows the last 8 — click it to copy the full 17. ↗ opens that one car in its
       own window. <b>↗ TARGET</b> and <b>↗ WATCH</b> open only their own band, up to
@@ -1525,8 +1643,17 @@
     // re-renders over this panel once a file actually arrives.
     document.getElementById('tblNewList')?.addEventListener('click', () =>
       document.getElementById('tblRunListInput')?.click());
+    // "7/5", not "5" — same reason the column is there. A run number copied off
+    // a twenty-lane sale names one car per lane, so a bare list of them is a
+    // list of guesses. Lists with no lanes copy exactly as before.
     document.getElementById('tblCopyRuns')?.addEventListener('click', () =>
-      navigator.clipboard.writeText(targets.map((c) => c.run).filter(Boolean).join('\n')));
+      navigator.clipboard.writeText(targets
+        .map((c) => {
+          const lane = String(c.lane ?? '').trim()
+          const run = String(c.run ?? '').trim()
+          return lane && run ? `${lane}/${run}` : run
+        })
+        .filter(Boolean).join('\n')));
     document.getElementById('tblCopyVins')?.addEventListener('click', () =>
       navigator.clipboard.writeText(targets.map((c) => c.vin).filter(Boolean).join('\n')));
 
@@ -1556,6 +1683,23 @@
       logLine(`Checking ${batch.length} ${band} cars…`, '');
       await checkOnPage(batch, setNote, logLine);
     });
+    document.getElementById('tblViewCars')?.addEventListener('click', () => {
+      document.getElementById('tblCarView').style.display = '';
+      document.getElementById('tblLaneView').style.display = 'none';
+      document.getElementById('tblViewCars').style.background = '#1b5e20';
+      document.getElementById('tblViewCars').style.color = '#fff';
+      document.getElementById('tblViewLanes').style.background = '#eee';
+      document.getElementById('tblViewLanes').style.color = '#333';
+    });
+    document.getElementById('tblViewLanes')?.addEventListener('click', () => {
+      document.getElementById('tblCarView').style.display = 'none';
+      document.getElementById('tblLaneView').style.display = '';
+      document.getElementById('tblViewLanes').style.background = '#1b5e20';
+      document.getElementById('tblViewLanes').style.color = '#fff';
+      document.getElementById('tblViewCars').style.background = '#eee';
+      document.getElementById('tblViewCars').style.color = '#333';
+    });
+
     document.getElementById('tblOpenReset')?.addEventListener('click', () => {
       opened.clear(); setProgress(); saveOpened(result.id, opened);
     });

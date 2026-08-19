@@ -118,6 +118,9 @@ export async function recordObservations({ scored, fmt }) {
       auction_value: Number.isFinite(Number(c.auctionValue)) ? Number(c.auctionValue) : null,
       seller: txt(c.seller),
       location: txt(c.location),
+      // The sale, not the lot the car sits on — see the extension mirror.
+      auction: txt(c.auction) || txt(String(c.location || '').replace(/^[A-Z]{2}\s*-\s*/, '')),
+      sale_name: txt(c.saleName),
       lane: txt(c.lane),
       lot: txt(c.lot),
       run: txt(c.run),
