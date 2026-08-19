@@ -38,7 +38,7 @@ export default function Listings() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-200 safe-top">
-      <header className="bg-slate-950 border-b border-slate-800 px-4 py-4 sticky top-0 z-10">
+      <header className="bg-slate-950 border-b border-slate-800 px-4 py-4 sticky top-0 sticky-top-safe z-10">
         {/* This page is public, so BottomNav hides here — and inside the native
             shell there's no URL bar and no browser back either, which left staff
             who tapped through with no way off the screen but force-quitting.

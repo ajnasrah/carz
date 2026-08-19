@@ -76,18 +76,34 @@
   }
 
   /* For fixed full-screen overlays (camera, modals, scanner) that need to keep
-     their own chrome out from under the notch and home indicator. */
-  .safe-inset {
+     their own chrome out from under the notch and home indicator.
+
+     Written doubled — .safe-top.safe-top — to raise specificity above a plain
+     utility. These live in @layer components, which Tailwind emits BEFORE its
+     utilities, so at equal specificity `p-3` wins on source order and quietly
+     replaces the inset with 12px. That is not theoretical: Buyer Match was
+     `p-3 … safe-top` and its header sat under the notch, unreadable on a phone,
+     while every other page using safe-top alone was fine. Doubling the class
+     costs nothing and means padding and inset can be written on the same
+     element without one silently eating the other. */
+  .safe-inset.safe-inset {
     padding-top: var(--safe-top);
     padding-bottom: var(--safe-bottom);
   }
 
-  .safe-top {
+  .safe-top.safe-top {
     padding-top: var(--safe-top);
   }
 
-  .safe-bottom {
+  .safe-bottom.safe-bottom {
     padding-bottom: var(--safe-bottom);
+  }
+
+  /* A header that pins to the top of the page as you scroll has to pin BELOW
+     the status bar, not under it — `sticky top-0` puts it behind the notch and
+     behind the strip that covers it. */
+  .sticky-top-safe.sticky-top-safe {
+    top: var(--safe-top);
   }
 
   /* App content wrapper: clears the fixed bottom nav plus the home indicator.

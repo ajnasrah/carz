@@ -347,7 +347,15 @@ export default function BuyerMatch() {
 }
 
 function Shell({ children }) {
-  return <div className="p-3 min-h-screen bg-slate-900 text-slate-200 safe-top">{children}</div>
+  // Top padding is the notch PLUS the same 0.75rem the other three sides get —
+  // written as one utility rather than `p-3 safe-top`, which is what broke this
+  // page: same specificity, and p-3 is emitted later, so the inset lost and the
+  // header sat under the speaker.
+  return (
+    <div className="p-3 pt-[calc(0.75rem+var(--safe-top))] min-h-screen bg-slate-900 text-slate-200">
+      {children}
+    </div>
+  )
 }
 
 function UploadBox({ label, sub, onPick, done }) {

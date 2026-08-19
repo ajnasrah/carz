@@ -477,7 +477,7 @@ export default function LotWalk() {
       </div>
 
       {/* Sticky section selector */}
-      <div className="sticky top-0 z-30 -mx-4 px-4 py-3 bg-slate-900/95 backdrop-blur border-b border-slate-800">
+      <div className="sticky top-0 sticky-top-safe z-30 -mx-4 px-4 py-3 bg-slate-900/95 backdrop-blur border-b border-slate-800">
         <label className="block text-[10px] uppercase tracking-wide text-slate-400 mb-1">
           Current Section
         </label>
