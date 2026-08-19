@@ -250,6 +250,7 @@ async function processUpdate(update) {
     }
   } else {
     parsed = parseVehicleEntry(text);
+    parsed = await preferInventoryVin(db, parsed, text);
     if (parsed?.vin6) {
       vin6 = parsed.vin6;
       vinSource = 'caption';
@@ -521,6 +522,49 @@ async function matchDestination(db, text) {
     if (better) best = k;
   }
   return best ? best.location_code : null;
+}
+
+// The parser reads; INVENTORY decides which car it was — the same rule the key
+// tag reader follows, for the same reason.
+//
+// The intake convention is VIN on line 1, miles on line 2, and a worker who puts
+// the VIN on line 2 gets both wrong at once: the slip on line 1 becomes the car
+// and the VIN becomes the odometer. That happened with
+//
+//     73893 / 437541 / 9/10 / Tires are Great / Light abrasion
+//
+// which filed thirty photographs under 073893 — no such car — and gave it 437,541
+// miles, while the Tesla those photos are of showed nothing anywhere.
+//
+// So when the VIN we read matches no car and another number in the same message
+// does, the message is about that car. Deliberately narrow: it only moves when
+// line 1 matches NOTHING, so a fresh buy that Frazer hasn't stocked yet still
+// files under the number the worker typed, which is the whole point of the
+// "not in inventory" flag in the extension.
+//
+// A miles reading equal to the VIN we just switched to was never a reading.
+async function preferInventoryVin(db, parsed, text) {
+  if (!parsed?.vin6) return parsed;
+
+  const inInventory = async (v6) => {
+    const { data } = await db.rpc('lookup_vin_by_last6', { last6: v6 });
+    return Array.isArray(data) ? !!data[0]?.stock_number : !!data?.stock_number;
+  };
+
+  if (await inInventory(parsed.vin6)) return parsed;
+
+  // Bounded: a chatty message can mention plenty of numbers, and each candidate
+  // costs a round trip.
+  const others = extractAllVin6(text).filter((v) => v !== parsed.vin6).slice(0, 4);
+  for (const cand of others) {
+    if (!(await inInventory(cand))) continue;
+    const digits = (x) => String(x ?? '').replace(/\D/g, '').replace(/^0+/, '');
+    const next = { ...parsed, vin6: cand };
+    if (next.miles != null && digits(next.miles) === digits(cand)) delete next.miles;
+    console.log(`intake: ${parsed.vin6} matches no car, using ${cand} from the same message`);
+    return next;
+  }
+  return parsed;
 }
 
 // If posted mileage isn't higher than what's in inventory (Frazer), ask the

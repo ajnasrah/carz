@@ -60,6 +60,22 @@
     return res.ok ? res.json() : null;
   }
 
+  // Same call, but a refusal comes back as an error you can read. sbRpc returns
+  // null on failure, which is right for the reads it was written for — a missing
+  // queue costs nothing — and wrong for anything that CHANGES something: an RPC
+  // that refuses because a last 6 isn't in inventory has said exactly what went
+  // wrong, and swallowing it leaves the user staring at a button that did nothing.
+  async function sbRpcOrThrow(name, body) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    if (res.ok) return res.json();
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.message || `${name} failed (${res.status})`);
+  }
+
   // Download a car's ready-to-sell photos into Downloads/SA Photos/<vin6>/ so
   // they can be uploaded to SmartAuction via the Add Photos folder picker.
   // Serverless: pulls public Supabase URLs straight through chrome.downloads.
@@ -1383,6 +1399,18 @@
             <div class="queue-card">
               <div class="queue-card-info">
                 <div class="queue-card-vin">${v.vin6}${v.in_inventory === false ? ' <span style="font-size:9px;background:#ffebee;color:#c62828;padding:1px 5px;border-radius:3px;font-weight:700;">⚠ NOT IN INVENTORY</span>' : ''}</div>
+                ${v.in_inventory === false ? `
+                <!-- The car this intake is really about. A VIN typed on the wrong
+                     line files the photos under a number that is nobody; this
+                     moves them onto the right car rather than leaving you to
+                     re-shoot it. -->
+                <div class="queue-card-details" style="display:flex;gap:4px;align-items:center;margin-top:3px;">
+                  <input class="queue-fix-input" data-vin6="${v.vin6}" maxlength="6" placeholder="right last 6"
+                    style="width:78px;padding:2px 4px;border:1px solid #ffcdd2;border-radius:3px;font-family:monospace;font-size:11px;text-transform:uppercase;" />
+                  <button class="btn btn-small queue-fix-btn" data-vin6="${v.vin6}"
+                    style="background:#c62828;margin:0;padding:2px 8px;font-size:10px;">Move photos</button>
+                  <span class="queue-fix-note" data-vin6="${v.vin6}" style="font-size:10px;color:#999;"></span>
+                </div>` : ''}
                 <div class="queue-card-details">${v.miles || '?'} mi | ${v.condition || ''} | Tires: ${v.tire_condition || '?'} | ${v.photo_count} photos</div>
                 ${v.notes ? `<div class="queue-card-details" style="color:#999;font-style:italic;">${escHtml(v.notes.substring(0, 60))}</div>` : ''}
               </div>
@@ -1672,6 +1700,38 @@
           try { await serverFetch(`${SCRAPER_URL}/queue/hold/${vin6}`, { method: 'POST' }); } catch {}
           btn.closest('.queue-card').remove();
           statusDiv.textContent = `${vin6} on hold`;
+        });
+      });
+      // Move a misfiled intake onto the car it was really about. The photos live
+      // under a vin6 and every reader keys on it, so this rewrites that one
+      // column server-side and everything — queue, marketplace, this list —
+      // follows. The RPC refuses a last 6 that isn't in inventory, so a typo
+      // here says so instead of moving the pictures somewhere worse.
+      queueList.querySelectorAll('.queue-fix-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const from = btn.dataset.vin6;
+          const card = btn.closest('.queue-card');
+          const input = card.querySelector(`.queue-fix-input[data-vin6="${from}"]`);
+          const note = card.querySelector(`.queue-fix-note[data-vin6="${from}"]`);
+          const to = (input?.value || '').trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
+          if (to.length !== 6) { note.textContent = 'needs the last 6'; note.style.color = '#c62828'; return; }
+
+          btn.disabled = true;
+          note.style.color = '#666';
+          note.textContent = 'moving…';
+          try {
+            const rows = await sbRpcOrThrow('rebind_intake_vin6', { p_from: from, p_to: to });
+            const r = Array.isArray(rows) ? rows[0] : rows;
+            statusDiv.textContent = `${r.photos} photo${r.photos === 1 ? '' : 's'} moved from ${from} to ${to} (${r.stock_number})`
+              + (r.miles_dropped ? ' — dropped the odometer, it was the VIN' : '');
+            statusDiv.className = 'status success';
+            await loadQueue();
+            renderDashList();
+          } catch (err) {
+            note.textContent = (err.message || String(err)).replace(/^.*?:\s*/, '').slice(0, 60);
+            note.style.color = '#c62828';
+            btn.disabled = false;
+          }
         });
       });
       queueList.querySelectorAll('.queue-skip-btn').forEach(btn => {
