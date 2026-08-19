@@ -26,14 +26,36 @@ export function AuthProvider({ children }) {
         // That gate means "the profile genuinely failed to load", not "it
         // hasn't arrived yet". Only the query settling may clear this.
         setLoading(true)
+        // Clear from HERE, not only from doLoadProfile's finally.
+        //
+        // loadProfile hands back the in-flight promise when one exists, and that
+        // promise may ALREADY be settled: doLoadProfile clears loading inside its
+        // own finally, and the outer .finally() that removes it from the map runs
+        // a microtask later. A hydrate landing in that gap set loading=true and
+        // then got a settled promise back, so nothing was ever going to clear it
+        // again — the app sat on the loading screen forever. Both hydrates run on
+        // a fresh sign-in (getSession and onAuthStateChange), so the gap is hit
+        // often enough to be the "it just loads" report. Attaching here works
+        // either way: .finally() on a settled promise still fires.
         loadProfile(session.user.id)
+          .catch(() => {})
+          .finally(() => { if (!cancelled) setLoading(false) })
       } else {
         setProfile(null)
         setLoading(false)
       }
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => hydrate(session))
+    // No catch here meant a failed getSession (offline, DNS, Supabase blip) left
+    // loading=true with nothing to clear it — a permanent loading screen for a
+    // problem that has nothing to do with being signed in.
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => hydrate(session))
+      .catch((e) => {
+        console.error('getSession failed:', e?.message || e)
+        if (cancelled) return
+        setUser(null); setProfile(null); setLoading(false)
+      })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       // Supabase runs this callback while holding its internal auth lock, and
@@ -48,8 +70,20 @@ export function AuthProvider({ children }) {
       setTimeout(() => hydrate(session), 0)
     })
 
+    // Last resort. Whatever else goes wrong, an app that shows a login screen is
+    // recoverable and one that spins is not — you cannot even sign out of it.
+    const backstop = setTimeout(() => {
+      if (!cancelled) {
+        setLoading((wasLoading) => {
+          if (wasLoading) console.error('auth bootstrap timed out — showing signed-out state')
+          return false
+        })
+      }
+    }, 15000)
+
     return () => {
       cancelled = true
+      clearTimeout(backstop)
       subscription.unsubscribe()
     }
   }, [])
