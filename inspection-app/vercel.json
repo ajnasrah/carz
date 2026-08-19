@@ -51,6 +51,10 @@
     {
       "path": "/api/photo-sort",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/link-sources",
+      "schedule": "30 4 * * *"
     }
   ]
 }
