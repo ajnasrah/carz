@@ -435,6 +435,16 @@ export default function App() {
           <AppRoutes />
         </div>
         <BottomNav />
+        {/* The status bar strip. viewport-fit=cover means the webview runs the
+            full height of the phone, under the notch and the speaker, so every
+            page pads its FIRST screen clear of it (.page) — and then the second
+            screen scrolls straight underneath, which is what puts a row of the
+            list half-behind the speaker.
+            This covers that strip in the app's own background, so what scrolls
+            past disappears behind it instead of showing through. Exactly what
+            BottomNav already does for the home indicator, at the other end.
+            Zero height in a browser, where the inset is 0. */}
+        <div aria-hidden className="fixed top-0 left-0 right-0 z-50 bg-slate-900 safe-top pointer-events-none" />
       </AuthProvider>
     </BrowserRouter>
   )

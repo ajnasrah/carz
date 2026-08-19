@@ -32,6 +32,14 @@
        notch on one side — keep content clear of it. */
     padding-left: var(--safe-left);
     padding-right: var(--safe-right);
+    /* Sideways drift, belt to html's braces. WKWebView will still pan the body
+       horizontally when something inside is a few pixels too wide — a full-bleed
+       scroller (-mx-4) or a min-w-max table — and the fixed bars are pinned to
+       the viewport, so panning slides the content out from under its own
+       header and nav. `clip` rather than `hidden` on purpose: hidden makes the
+       body a scroll container, which silently breaks position:sticky inside it. */
+    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   input, select, textarea {
