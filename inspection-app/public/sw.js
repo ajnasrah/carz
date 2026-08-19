@@ -6,7 +6,15 @@
 // from before the user was logged in. Bumping CACHE_NAME forces the activate
 // handler below to delete all old caches.
 
-const CACHE_NAME = 'carz-inspect-v4'
+// Bumped to v5 on 2026-08-18. The cache holds the app shell, and the shell names
+// its JS by content hash — so a stale cached index.html points at bundles that no
+// longer exist on the server, and the page comes up blank rather than merely old.
+// Network-first means that only bites when a fetch fails, but the recovery was
+// manual (clear the site data), which is not something you can ask a buyer to do.
+// Changing this file at all is what makes browsers install a new worker; the
+// activate handler below then deletes every carz-inspect-* cache that isn't this
+// one, so the bad shell clears itself on the next load.
+const CACHE_NAME = 'carz-inspect-v5'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
