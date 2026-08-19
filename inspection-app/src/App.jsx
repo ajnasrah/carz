@@ -404,7 +404,7 @@ function RouteMemory() {
   return null
 }
 
-export default // Where a signed-in visitor on /login actually belongs.
+// Where a signed-in visitor on /login actually belongs.
 //
 // This used to be a flat <Navigate to="/" />, which threw away the whole point
 // of the trip: someone presses "Buy it now" on a car, signs in, and lands on the
@@ -424,7 +424,7 @@ function AfterLogin() {
   return <Navigate to={target} replace state={{ reserve: target !== '/' }} />
 }
 
-function App() {
+export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
