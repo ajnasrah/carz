@@ -178,7 +178,7 @@ Deno.serve(async (req) => {
   }
 
   // Map headers → Postgres columns
-  const cols = parsed.headers.map((h) => {
+  const cols: string[] = parsed.headers.map((h) => {
     const normalized = normalizeHeader(h)
     return COLUMN_ALIASES[normalized] ?? normalized
   })
@@ -187,6 +187,7 @@ Deno.serve(async (req) => {
   const rowObjects = parsed.rows.map((row) => {
     const obj: Record<string, any> = {}
     cols.forEach((col, idx) => {
+      if (!col) return                      // header the target has no column for
       const v = row[idx] ?? ''
       obj[col] = v === '' ? null : v
     })
@@ -196,6 +197,26 @@ Deno.serve(async (req) => {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
   })
+
+  // Drop headers the target cannot store, rather than failing the whole load.
+  //
+  // Every header became a key on the row object and one unknown column rejects
+  // the entire 500-row batch — so Frazer adding a column to its export silently
+  // stopped the sync, with nothing anywhere saying why. Skipped headers come back
+  // in the response so a genuinely new column gets noticed instead of guessed at.
+  const skipped: string[] = []
+  const { data: colRows, error: colErr } = await supabase.rpc('frazer_target_columns', {
+    p_target: target,
+  })
+  if (!colErr && Array.isArray(colRows) && colRows.length) {
+    const known = new Set(colRows.map((r: any) => r.column_name))
+    cols.forEach((c, i) => {
+      if (!known.has(c)) {
+        skipped.push(`${parsed.headers[i]} -> ${c}`)
+        cols[i] = ''            // '' is dropped when the row object is built
+      }
+    })
+  }
 
   // Truncate via RPC (bypasses RLS via service role anyway)
   const { error: truncErr } = await supabase.rpc('frazer_truncate', { target })
@@ -227,7 +248,11 @@ Deno.serve(async (req) => {
   }
 
   return new Response(
-    JSON.stringify({ success: true, target, rows: inserted, headers_mapped: cols }),
+    JSON.stringify({
+      success: true, target, rows: inserted,
+      headers_mapped: cols.filter(Boolean),
+      skipped_headers: skipped,
+    }),
     { status: 200, headers: { 'content-type': 'application/json', ...corsHeaders() } },
   )
 })
