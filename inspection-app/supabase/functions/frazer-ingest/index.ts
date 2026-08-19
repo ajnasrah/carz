@@ -32,6 +32,26 @@ const COLUMN_ALIASES: Record<string, string> = {
   stock_number: 'stock_number',
   last_6_vin: 'last_6_vin',
   last_six_vin: 'last_6_vin',
+  // The sold export writes some headers without separators, which normalise to
+  // one run-on word and match no column. An unknown column fails the entire
+  // batch, so these are the difference between the first sold sync landing and
+  // 500 rows bouncing off a message nobody is watching for.
+  daysonlot: 'days_on_lot',
+  days_on_lot: 'days_on_lot',
+  salesprice: 'sales_price',
+  sales_price: 'sales_price',
+  netprofit: 'net_profit',
+  net_profit: 'net_profit',
+  totalcost: 'total_cost',
+  addedcosts: 'added_costs',
+  saledate: 'sale_date',
+  titlein: 'title_in',
+  vehiclevin: 'vehicle_vin',
+  vehicleyear: 'vehicle_year',
+  vehiclemake: 'vehicle_make',
+  vehiclemodel: 'vehicle_model',
+  vehiclenotes: 'vehicle_notes',
+  locationcode: 'location_code',
 }
 
 // Simple RFC 4180-ish CSV parser. Handles quoted fields with embedded commas and escaped quotes.
