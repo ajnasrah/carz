@@ -47,6 +47,10 @@
     {
       "path": "/api/intake-sweep",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/photo-sort",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

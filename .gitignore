@@ -12,3 +12,4 @@ scrapers/whatsapp_session/
 scrapers/whatsapp_session/
 scrapers/.wwebjs_auth/
 scrapers/.wwebjs_cache/
+.vercel

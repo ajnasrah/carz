@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { API_BASE_URL } from '../native/platform'
 
 // The photo overlay for marketplace listings: which photos are hidden, and what
 // order the rest appear in. Stored per VIN in listing_photo_edits and addressed
@@ -62,4 +63,34 @@ export async function savePhotoEdits(vin, { hidden = [], ordering = [] }) {
     p_ordering: ordering,
   })
   if (error) throw error
+}
+
+// The house order for one car's photos — front three-quarter first, then the
+// rest of the walkaround, interior, close-ups, paperwork.
+//
+// Every car gets this automatically within a quarter of an hour of its photos
+// landing; this is the same sort on demand, for a car you want redone now. It
+// ASKS rather than writes (dry): the ordering comes back, the editor shows it,
+// and it only becomes the listing's order when you press Save — which stamps
+// the edit as yours and takes the car off the automatic sweep for good.
+//
+// Runs on the server (api/photo-sort.js) because it looks at the pictures with
+// Claude, and that key cannot ship inside the bundle.
+export async function autoSortPhotos(vin) {
+  const { data } = await supabase.auth.getSession()
+  const token = data?.session?.access_token
+  if (!token) throw new Error('Sign in again and retry')
+
+  const res = await fetch(`${API_BASE_URL}/api/photo-sort?vin=${encodeURIComponent(vin)}&dry=1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: '{}',
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body?.error || `Auto-sort failed (${res.status})`)
+
+  const car = body.results?.[0]
+  if (!car) throw new Error('That car is not on the marketplace')
+  if (car.error) throw new Error(car.error)
+  return { ordering: car.labels.map((l) => l.url), labels: car.labels }
 }

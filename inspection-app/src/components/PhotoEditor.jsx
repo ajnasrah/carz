@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
-import { X, Check, Star, ArrowUp, ArrowDown, Trash2, RotateCcw } from 'lucide-react'
-import { savePhotoEdits } from '../services/listingPhotos'
+import { X, Check, Star, ArrowUp, ArrowDown, Trash2, RotateCcw, Wand2 } from 'lucide-react'
+import { savePhotoEdits, autoSortPhotos } from '../services/listingPhotos'
 
 // Bulk photo editing for a listing: tick as many photos as you like, then remove
 // them, send them to the front, or bring hidden ones back — all in one save.
@@ -24,6 +24,7 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved }) {
   const [picked, setPicked] = useState(() => new Set())
   const [showHidden, setShowHidden] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [sorting, setSorting] = useState(false)
   const [error, setError] = useState('')
 
   const shown = useMemo(
@@ -69,6 +70,31 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved }) {
       ;[next[from], next[to]] = [next[to], next[from]]
       return next
     })
+  }
+
+  // Every car is sorted automatically already; this is for redoing one in front
+  // of you. It arranges the working copy and stops there — Save is still what
+  // commits it, so you can nudge the result first, and so a sort you don't like
+  // is undone by closing the screen.
+  async function autoSort() {
+    setSorting(true)
+    setError('')
+    try {
+      const { ordering } = await autoSortPhotos(vin)
+      const rank = new Map(ordering.map((url, i) => [url, i]))
+      setItems((list) =>
+        [...list].sort((a, b) => {
+          const ra = rank.has(a.url) ? rank.get(a.url) : Number.MAX_SAFE_INTEGER
+          const rb = rank.has(b.url) ? rank.get(b.url) : Number.MAX_SAFE_INTEGER
+          return ra - rb || a._i - b._i
+        }),
+      )
+      setPicked(new Set())
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setSorting(false)
+    }
   }
 
   async function save() {
@@ -129,6 +155,14 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved }) {
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500 text-slate-900 text-[11px] font-bold disabled:opacity-40"
         >
           <Star size={12} /> Send to front
+        </button>
+        <button
+          onClick={autoSort}
+          disabled={sorting || busy}
+          title="Front three-quarter first, then the walkaround, interior, close-ups"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-500 text-white text-[11px] font-bold disabled:opacity-40"
+        >
+          <Wand2 size={12} /> {sorting ? 'Sorting…' : 'Auto-sort'}
         </button>
         <button
           onClick={() => setHidden(picked, true)}
