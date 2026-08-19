@@ -55,6 +55,10 @@
     {
       "path": "/api/link-sources",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/db-backup",
+      "schedule": "0 8 * * *"
     }
   ]
 }
