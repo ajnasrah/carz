@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Auto Auction Scraper",
-  "version": "3.0",
+  "version": "3.2",
   "description": "Extract vehicle details, images, and damage info from Manheim, Edge, and ADESA",
   "permissions": [
     "activeTab",

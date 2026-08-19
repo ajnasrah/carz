@@ -158,7 +158,12 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Inject the ADESA scraping function
         const results = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: scrapeAdesaDirectly
+          func: scrapeAdesaDirectly,
+          // Stamp the build into the page's own console. Chrome serves the
+          // extension it last loaded, so an edit on disk is not the code that
+          // runs until you reload it — a fix looked broken for an hour because
+          // the console it was judged by belonged to the previous build.
+          args: [chrome.runtime.getManifest().version]
         });
         
         if (!results || !results[0]) {
@@ -194,6 +199,10 @@ document.addEventListener('DOMContentLoaded', async function() {
           images: data.images || [],  // Already in correct format from scrapeAdesaDirectly
           damages: data.damages || [],
           tires: [],
+          // The scraper records which page it read; without carrying it across,
+          // every ADESA JSON saved source_url: "" and there was no way back to
+          // the listing from the folder.
+          url: data.url || '',
           ...data.vehicle
         };
         
@@ -1833,7 +1842,7 @@ async function scrapePage() {
 }
 
 // ADESA-specific scraping function that runs directly in the page context
-async function scrapeAdesaDirectly() {
+async function scrapeAdesaDirectly(buildVersion) {
   const data = {
     success: false,
     vehicle: {},
@@ -1950,1073 +1959,282 @@ async function scrapeAdesaDirectly() {
       data.vehicle.currentBid = priceText[1].replace(/,/g, '');
     }
     
-    // Extract damage information from ADESA's specific table structure
+    // ── Damages ─────────────────────────────────────────────────────────────
+    //
+    // There is not one <table>, <tr> or <td> anywhere on an ADESA detail page.
+    // The condition report is an AG Grid: div[role="row"] holding
+    // div[role="gridcell"][col-id="part"|"type"|"severity"|"note"]. The old
+    // extractor hunted for tables, found none, and fell through to a generic
+    // "any container with about three children" scan that read cells out of the
+    // equipment grid — that is where "Heated Seats - Front Only on Driver Airbag
+    // - Front" and "N/A on N/A" came from, while real rows went missing.
+    //
+    // There is one grid per tab (All / Mechanical / Exterior / Interior / Other)
+    // and they overlap, so read every grid and dedupe on part + type.
+    console.log('=== ADESA scraper build ' + (buildVersion || '?') + ' ===');
     console.log('=== DAMAGE EXTRACTION START ===');
-    
-    // First, try to click on "All" damages tab to make sure all damages are visible
-    // ADESA groups damages into tabs: All (14), Mechanical (0), Exterior (12), Interior (2), Other (0)
-    const damageTabs = document.querySelectorAll('[role="tab"], .tab-button, button[class*="tab"], a[class*="tab"], div[class*="tab"]');
-    console.log(`Found ${damageTabs.length} potential damage tabs`);
-    
-    // Click on "All" tab - it usually contains the total count like "All (14)"
-    damageTabs.forEach(tab => {
-      const tabText = tab.textContent;
-      if (tabText.includes('All') && tabText.includes('(')) {
-        console.log(`Clicking "All" tab: ${tabText}`);
-        try {
-          tab.click();
-          // Wait a bit for content to load
-          const waitEnd = Date.now() + 300;
-          while (Date.now() < waitEnd) { /* brief wait */ }
-        } catch (e) {
-          console.log('Could not click tab:', e);
-        }
-      }
-    });
-    
-    // Method 0: Find the damage table container and scroll through it
-    console.log('Method 0: Finding and scrolling damage table container...');
-    
-    // Find the specific container that holds the damage table (usually a div with overflow)
-    // Look for the table's parent that has scrollable properties
-    let damageTableContainer = null;
-    
-    // Find all tables first
-    const allTables = document.querySelectorAll('table');
-    allTables.forEach(table => {
-      // Check if this table contains damage data
-      if (table.textContent.includes('Deck') || table.textContent.includes('Bumper') || 
-          table.textContent.includes('Wheel') || table.textContent.includes('Part')) {
-        
-        // Find the scrollable parent container
-        let parent = table.parentElement;
-        while (parent && parent !== document.body) {
-          const style = window.getComputedStyle(parent);
-          if (style.overflow === 'auto' || style.overflow === 'scroll' || 
-              style.overflowY === 'auto' || style.overflowY === 'scroll') {
-            damageTableContainer = parent;
-            console.log('Found scrollable damage container:', parent.className || parent.id || 'unnamed');
-            break;
-          }
-          parent = parent.parentElement;
-        }
-      }
-    });
-    
-    // If we found a scrollable container, scroll through it to reveal all damages
-    if (damageTableContainer) {
-      const originalScroll = damageTableContainer.scrollTop;
-      const scrollHeight = damageTableContainer.scrollHeight;
-      const clientHeight = damageTableContainer.clientHeight;
-      
-      console.log(`Scrollable container: height=${clientHeight}, scrollHeight=${scrollHeight}`);
-      
-      // Scroll to bottom first to ensure all content is loaded
-      damageTableContainer.scrollTop = scrollHeight;
-      
-      // Wait for any lazy loading
-      const waitEnd = Date.now() + 200;
-      while (Date.now() < waitEnd) { /* wait */ }
-      
-      // Now scroll back to top and process all content
-      damageTableContainer.scrollTop = 0;
-      
-      // Process all rows in the damage table
-      const tbody = damageTableContainer.querySelector('tbody');
-      const rows = tbody ? tbody.querySelectorAll('tr') : damageTableContainer.querySelectorAll('tr');
-      
-      console.log(`Found ${rows.length} total rows in damage table after scrolling`);
-      
-      rows.forEach((row, rowIdx) => {
-        const cells = row.querySelectorAll('td');
-        
-        // ADESA damage table has 3 or 4 cells
-        if (cells.length >= 3) {
-          // Handle 4-cell rows that might have an image in first column
-          const hasImage = cells[0] && (cells[0].querySelector('img') || cells[0].textContent.trim() === 'N/A');
-          const startIdx = (cells.length === 4 && hasImage) ? 1 : 0;
-          
-          if (cells[startIdx]) {
-            const part = cells[startIdx].textContent.trim();
-            const type = cells[startIdx + 1] ? cells[startIdx + 1].textContent.trim() : '';
-            const severity = cells[startIdx + 2] ? cells[startIdx + 2].textContent.trim() : '';
-            
-            // Check if this is damage data (not header or footer)
-            if (part && type && 
-                part.toLowerCase() !== 'part' && 
-                type.toLowerCase() !== 'type' &&
-                part !== 'N/A' &&
-                !part.includes('above item') &&
-                !part.includes('noted in an inspection')) {
-              
-              // Avoid duplicates
-              const exists = data.damages.some(d => 
-                d.part === part && d.type === type
-              );
-              
-              if (!exists) {
-                data.damages.push({
-                  part: part,
-                  type: type,
-                  severity: severity,
-                  description: `${type} on ${part}`,
-                  panel: part,
-                  damageType: type,
-                  chargeable: (severity.toLowerCase().includes('required') || 
-                             severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-                });
-                console.log(`✓ Method 0: Added damage #${data.damages.length}: ${part} | ${type} | ${severity}`);
-              }
-            }
-          }
-        }
-      });
-      
-      // Restore original scroll position
-      damageTableContainer.scrollTop = originalScroll;
-    } else {
-      console.log('No scrollable damage container found, trying direct tbody extraction...');
-      
-      // Fallback to direct tbody extraction
-      const tbodies = document.querySelectorAll('tbody');
-      tbodies.forEach((tbody, idx) => {
-        const rows = tbody.querySelectorAll('tr');
-        console.log(`Tbody ${idx}: Found ${rows.length} rows`);
-        
-        rows.forEach((row, rowIdx) => {
-          const cells = row.querySelectorAll('td');
-          
-          if (cells.length >= 3) {
-            const hasImage = cells[0] && cells[0].querySelector('img');
-            const startIdx = (cells.length === 4 && hasImage) ? 1 : 0;
-            
-            if (cells[startIdx]) {
-              const part = cells[startIdx].textContent.trim();
-              const type = cells[startIdx + 1] ? cells[startIdx + 1].textContent.trim() : '';
-              const severity = cells[startIdx + 2] ? cells[startIdx + 2].textContent.trim() : '';
-              
-              if (part && type && 
-                  part.toLowerCase() !== 'part' && 
-                  type.toLowerCase() !== 'type' &&
-                  part !== 'N/A' &&
-                  !part.includes('above item')) {
-                
-                const exists = data.damages.some(d => 
-                  d.part === part && d.type === type
-                );
-                
-                if (!exists) {
-                  data.damages.push({
-                    part: part,
-                    type: type,
-                    severity: severity,
-                    description: `${type} on ${part}`,
-                    panel: part,
-                    damageType: type,
-                    chargeable: (severity.toLowerCase().includes('required') || 
-                               severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-                  });
-                  console.log(`✓ Method 0: Added damage #${data.damages.length}: ${part} | ${type} | ${severity}`);
-                }
-              }
-            }
-          }
+
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+    const damageMap = new Map();
+
+    // Returns how many data rows were present, not how many were new — the
+    // per-grid count is what tells us whether virtualisation hid any.
+    function readGrid(grid) {
+      let seen = 0;
+      grid.querySelectorAll('[role="row"]').forEach(row => {
+        if (row.querySelector('[role="columnheader"]')) return;   // header row
+        const cellText = (id) => {
+          const c = row.querySelector('[role="gridcell"][col-id="' + id + '"]');
+          return c ? c.textContent.trim() : '';
+        };
+        const part = cellText('part');
+        const type = cellText('type');
+        if (!part || !type || part === 'N/A') return;
+        seen++;
+        const key = part.toLowerCase() + '|' + type.toLowerCase();
+        if (damageMap.has(key)) return;
+        const severity = cellText('severity');
+        damageMap.set(key, {
+          part: part,
+          type: type,
+          severity: severity,
+          note: cellText('note'),
+          description: type + ' on ' + part,
+          panel: part,
+          damageType: type,
+          chargeable: /required|unacceptable/i.test(severity) ? 'Yes' : 'No'
         });
       });
+      return seen;
     }
-    
-    // Try to scroll any scrollable damage container to ensure all damages are loaded
-    const scrollableContainers = document.querySelectorAll('[style*="overflow"], [class*="scroll"], .table-container, .damage-container');
-    scrollableContainers.forEach(container => {
-      if (container.scrollHeight > container.clientHeight) {
-        console.log('Found scrollable container, scrolling to load all content...');
-        // Scroll to bottom to trigger lazy loading
-        container.scrollTop = container.scrollHeight;
-        // Small wait
-        const waitEnd = Date.now() + 100;
-        while (Date.now() < waitEnd) { /* brief wait */ }
-        // Scroll back to top
-        container.scrollTop = 0;
+
+    const GRID_SELECTOR = '.ag-root[role="treegrid"], .ag-root[role="grid"]';
+    const hasRows = () => Array.from(document.querySelectorAll(GRID_SELECTOR))
+      .some(g => g.querySelector('[role="gridcell"][col-id="part"]'));
+
+    // The condition report sits well below the fold and its grid does not mount
+    // until it is scrolled into view. The extractor this replaced only ever
+    // found it by accident: a thousand lines of walking `document.querySelectorAll('*')`
+    // took long enough for the page to catch up. Reading the DOM straight away
+    // is fast enough to arrive before the grid exists and come back with zero
+    // damages, so scroll the report into view and wait for it on purpose.
+    // Finding the heading is what makes this work on a page that scrolls its
+    // right-hand pane rather than the window: scrollIntoView walks up and moves
+    // whichever ancestor actually scrolls. window.scrollTo moved nothing here,
+    // the report stayed off-screen, and AG Grid rendered no rows into it —
+    // one grid found, not a cell in it.
+    const leafText = (el) => (el.children.length === 0 ? (el.textContent || '').trim() : '');
+
+    // Deepest element whose text carries the phrase. Matching a whole leaf does
+    // not work here: the label renders as sibling spans, "All Damages" and
+    // "(8)", so no single node reads "All Damages (8)" even though the page
+    // plainly does. The earlier exact-leaf match found nothing, so nothing was
+    // ever scrolled and the section stayed unmounted.
+    const deepestMatching = (re) => {
+      const hits = Array.from(document.querySelectorAll('h1,h2,h3,h4,p,span,div,button,a'))
+        .filter(el => re.test(el.textContent || ''));
+      hits.sort((a, b) => a.getElementsByTagName('*').length - b.getElementsByTagName('*').length);
+      return hits[0] || null;
+    };
+    const damagesHeading = () => deepestMatching(/All\s+Damages/i) || deepestMatching(/\bDamages\b/i);
+
+    if (!hasRows()) {
+      // Keep pulling it back into view while waiting: the section mounts on
+      // becoming visible, and the layout shifts under us as it does.
+      for (let i = 0; i < 20 && !hasRows(); i++) {
+        const heading = damagesHeading();
+        if (!heading) break;
+        heading.scrollIntoView({ block: 'center' });
+        await wait(250);
       }
+
+      // Collapsed section — the heading carries a Hide/Show toggle, and when it
+      // reads "Show" the grid is not merely off-screen, it is unmounted.
+      if (!hasRows()) {
+        const showToggle = Array.from(document.querySelectorAll('button, a, span, div'))
+          .find(el => /^show$/i.test(leafText(el)) &&
+                      /damage/i.test(el.closest('section, div[class]')?.textContent || ''));
+        if (showToggle) {
+          console.log('Damages section was collapsed — opening it');
+          showToggle.click();
+          await wait(700);
+        }
+      }
+
+      // Still nothing: walk whatever the page actually scrolls, a screen at a
+      // time, in case the report is lazier than one scrollIntoView allows for.
+      if (!hasRows()) {
+        const panes = Array.from(document.querySelectorAll('div, main, section'))
+          .filter(el => el.scrollHeight > el.clientHeight + 200)
+          .sort((a, b) => b.scrollHeight - a.scrollHeight)
+          .slice(0, 3);
+        panes.push(document.scrollingElement || document.body);
+        for (let i = 0; i < 12 && !hasRows(); i++) {
+          panes.forEach(el => { el.scrollTop += Math.max(200, el.clientHeight - 60); });
+          await wait(250);
+        }
+        for (let i = 0; i < 8 && !hasRows(); i++) {
+          const again = damagesHeading();
+          if (!again) break;
+          again.scrollIntoView({ block: 'center' });
+          await wait(300);
+        }
+      }
+    }
+
+    // What the page says it has, so a silent zero can't pass for "clean car".
+    const claimed = document.body.innerText.match(/All\s+Damages\s*\((\d+)\)/i);
+    const claimedCount = claimed ? parseInt(claimed[1], 10) : null;
+
+    const grids = document.querySelectorAll(GRID_SELECTOR);
+    console.log('Found ' + grids.length + ' condition grids' +
+                (claimedCount === null ? '' : '; page claims ' + claimedCount + ' damages'));
+
+    for (const grid of grids) {
+      // aria-rowcount counts the header row along with the data rows
+      const expected = Math.max(0, (parseInt(grid.getAttribute('aria-rowcount'), 10) || 1) - 1);
+      let seen = readGrid(grid);
+
+      // AG Grid keeps only the visible rows in the DOM, so a report taller than
+      // its box has to be scrolled to be read in full. The old code "waited" for
+      // the newly rendered rows with `while (Date.now() < end) {}` — a spin that
+      // blocks the very thread the grid renders on, so nothing new ever turned
+      // up. Awaiting a real timeout is what makes the rest of the rows appear.
+      const viewport = grid.querySelector('.ag-body-viewport');
+      if (viewport && viewport.scrollHeight > viewport.clientHeight + 4) {
+        const savedScroll = viewport.scrollTop;
+        const step = Math.max(40, viewport.clientHeight - 40);
+        for (let pos = 0; pos <= viewport.scrollHeight && seen < expected; pos += step) {
+          viewport.scrollTop = pos;
+          await wait(120);
+          seen = Math.max(seen, readGrid(grid));
+        }
+        viewport.scrollTop = savedScroll;
+        await wait(60);
+      }
+
+      if (expected && seen < expected) {
+        console.warn('Grid claims ' + expected + ' rows but only ' + seen + ' could be read');
+      }
+    }
+
+    data.damages = Array.from(damageMap.values());
+
+    // Came back empty: record WHY into the data, not just the console. Console
+    // output has to be noticed, kept, and pasted somewhere before it helps, and
+    // by the time a scrape is being looked at, the tab that logged it is usually
+    // gone. This rides along in the JSON and the summary that get saved anyway.
+    if (!data.damages.length) {
+      const colIds = new Set();
+      grids.forEach(g => g.querySelectorAll('[col-id]').forEach(c => colIds.add(c.getAttribute('col-id'))));
+      data.vehicle.damageDiag = {
+        build: buildVersion || '?',
+        gridsFound: grids.length,
+        colIdsSeen: Array.from(colIds).sort().join(',') || 'none',
+        agRootsAnyRole: document.querySelectorAll('.ag-root').length,
+        rowEls: document.querySelectorAll('[role="row"]').length,
+        cellEls: document.querySelectorAll('[role="gridcell"]').length,
+        partCells: document.querySelectorAll('[role="gridcell"][col-id="part"]').length,
+        headingFound: !!damagesHeading(),
+        pageClaims: claimedCount,
+        readyState: document.readyState,
+        firstGrid: grids.length ? grids[0].outerHTML.slice(0, 800) : null,
+      };
+      console.warn('Damage diagnostic:', data.vehicle.damageDiag);
+    }
+
+    if (claimedCount !== null && data.damages.length !== claimedCount) {
+      // Goes into the JSON and the summary, not just the console — nobody has
+      // devtools open while scraping a run list, and a quiet undercount here
+      // reads as a clean car.
+      data.vehicle.damageWarning =
+        'page shows ' + claimedCount + ' damages, scraper read ' + data.damages.length;
+      console.warn(data.vehicle.damageWarning);
+    }
+    console.log('=== DAMAGE EXTRACTION END === ' + data.damages.length + ' damages');
+
+    // ── Photos ──────────────────────────────────────────────────────────────
+    //
+    // Every ADESA photo comes from vexgateway.fastly.carvana.io on a per-vehicle
+    // path: /vex-<id>/details/feature-<n>.jpg?...&width=<w>. The page also
+    // carries a "Similar Vehicles You Might Like" carousel — ten other cars —
+    // and taking every <img> on the page swept those in, which is why a scrape
+    // of an IONIQ 5 came back leading with Teslas and a Jeep.
+    //
+    // The listing's own vex id is the one the page leans on: its gallery and
+    // every damage thumbnail point at it, while each carousel car contributes
+    // only a handful of URLs. Count them, take the winner, keep nothing else.
+    const vexCounts = new Map();
+    document.querySelectorAll('img[src*="/vex-"]').forEach(img => {
+      const m = img.src.match(/\/(vex-\d+)\//);
+      if (m) vexCounts.set(m[1], (vexCounts.get(m[1]) || 0) + 1);
     });
-    
-    // Method 1: Process ALL tables and divs that might contain damage data
-    const tables = document.querySelectorAll('table, div[class*="table"], div[class*="grid"], div[class*="damage"]');
-    console.log(`Found ${tables.length} potential damage containers`);
-    
-    tables.forEach((container, containerIndex) => {
-      const containerText = container.textContent;
-      console.log(`\nContainer ${containerIndex}: Processing...`);
-      
-      // Get ALL rows - could be tr, div with row class, or direct children
-      let rows = container.querySelectorAll('tr');
-      if (rows.length === 0) {
-        rows = container.querySelectorAll('div[class*="row"], div[role="row"]');
+    let listingVex = '';
+    let bestVexCount = 0;
+    vexCounts.forEach((n, id) => { if (n > bestVexCount) { bestVexCount = n; listingVex = id; } });
+    console.log('Listing vehicle ' + (listingVex || 'unknown') + '; ' + vexCounts.size + ' vehicles pictured on this page');
+
+    // Width is a resize parameter on the CDN, not a different file, so every
+    // photo is asked for at one usable size. Without this the damage-grid
+    // thumbnails come down at their on-screen 40px and land as 2KB files.
+    const PHOTO_WIDTH = 1280;
+    const photoMap = new Map();   // feature id -> url
+
+    function collectPhotos() {
+      document.querySelectorAll('img[src*="/vex-"]').forEach(img => {
+        if (listingVex && img.src.indexOf('/' + listingVex + '/') === -1) return;
+        const feature = img.src.match(/feature-(\d+)/);
+        if (!feature) return;
+        if (photoMap.has(feature[1])) return;
+        photoMap.set(feature[1], img.src.replace(/([?&]width=)\d+/, '$1' + PHOTO_WIDTH));
+      });
+    }
+
+    collectPhotos();
+    const photosWhileClosed = photoMap.size;
+
+    // The full set only exists in the DOM once the photo viewer is open: the
+    // page renders a hero and six thumbnails and hides the rest behind a
+    // "+23 more" tile. Scraping without opening it returned 10 photos out of 40
+    // and left whoever was scraping to remember the extra step, so open it here.
+    const moreTile = Array.from(document.querySelectorAll('[data-qa="thumbnail"] div, [data-qa="thumbnail"], button'))
+      .find(el => /^\+\d+\s*more$/i.test((el.textContent || '').replace(/\s+/g, ' ').trim()));
+
+    if (moreTile) {
+      const hidden = parseInt((moreTile.textContent.match(/\+(\d+)/) || [0, 0])[1], 10) || 0;
+      console.log('Opening photo viewer for ' + hidden + ' more photos');
+      (moreTile.closest('[data-qa="thumbnail"]') || moreTile).click();
+      await wait(800);
+      collectPhotos();
+
+      // The viewer lazy-loads as it scrolls and its container has no stable
+      // class name, so pick out whatever is actually scrollable once, then
+      // scroll those until two passes running turn up nothing new.
+      const scrollers = Array.from(document.querySelectorAll('div'))
+        .filter(el => el.scrollHeight > el.clientHeight + 200)
+        .sort((a, b) => b.scrollHeight - a.scrollHeight)
+        .slice(0, 3);
+      scrollers.push(document.scrollingElement || document.body);
+
+      let idlePasses = 0;
+      for (let pass = 0; pass < 30 && idlePasses < 2 && photoMap.size < photosWhileClosed + hidden; pass++) {
+        const before = photoMap.size;
+        scrollers.forEach(el => { el.scrollTop += Math.max(200, el.clientHeight - 60); });
+        await wait(300);
+        collectPhotos();
+        idlePasses = photoMap.size > before ? 0 : idlePasses + 1;
       }
-      if (rows.length === 0 && container.children.length > 0) {
-        rows = container.children;
-      }
-      
-      console.log(`Container ${containerIndex}: Found ${rows.length} rows`);
-      
-      // Process EVERY row
-      Array.from(rows).forEach((row, rowIndex) => {
-        // Get all cells - could be td, div with cell class, or direct children
-        let cells = row.querySelectorAll('td');
-        if (cells.length === 0) {
-          cells = row.querySelectorAll('div[class*="cell"], div[role="cell"], div[class*="col"]');
-        }
-        if (cells.length === 0 && row.children && row.children.length >= 2) {
-          cells = row.children;
-        }
-        
-        // ADESA format can be 2, 3, or 4 columns
-        if (cells.length >= 2) {
-          // Extract text from each cell and clean it
-          const cellTexts = Array.from(cells).map(cell => cell.textContent.trim());
-          
-          let part = '';
-          let type = '';
-          let severity = '';
-          
-          // Handle different column counts
-          if (cells.length >= 3) {
-            // Standard 3-column format: Part | Type | Severity
-            part = cellTexts[0];
-            type = cellTexts[1];
-            severity = cellTexts[2];
-          } else if (cells.length === 2) {
-            // 2-column format
-            const firstCol = cellTexts[0];
-            const secondCol = cellTexts[1];
-            
-            // Check if first column contains "Part - Type" format
-            if (firstCol.includes(' - ')) {
-              const parts = firstCol.split(' - ');
-              part = parts[0];
-              type = parts[1] || secondCol;
-              severity = secondCol;
-            } else {
-              part = firstCol;
-              type = secondCol;
-              severity = '';
-            }
-          }
-          
-          // Very broad damage part keywords - anything that could be a vehicle part
-          // Including specific patterns from ADESA
-          const damagePartKeywords = [
-            'Bumper', 'Tire', 'Hood', 'Door', 'Fender', 'Warning', 'Tailgate',
-            'Windshield', 'Mirror', 'Light', 'Panel', 'Roof', 'Trunk', 'Wheel',
-            'Quarter', 'Rocker', 'Pillar', 'Frame', 'Glass', 'Seat', 'Carpet',
-            'Dashboard', 'Console', 'Headliner', 'Grille', 'Spoiler', 'Molding',
-            'Trim', 'Emblem', 'Antenna', 'Wiper', 'Handle', 'Lock', 'Hinge',
-            'Strut', 'Suspension', 'Exhaust', 'Muffler', 'Brake', 'Caliper',
-            'Rim', 'Hubcap', 'Window', 'Sunroof', 'Convertible', 'Bed', 'Tonneau',
-            'Running', 'Board', 'Step', 'Rail', 'Rack', 'Hitch', 'Tow', 'Cover',
-            // ADESA specific patterns
-            'Deck', 'Lid', 'Latch', 'Cover - Rear', 'Cover - Front', 
-            'LF', 'RF', 'LR', 'RR', 'FL', 'FR', 'RL', // Tire position abbreviations
-            'Maintenance', 'Pressure' // Warning types
-          ];
-          
-          // Damage type keywords
-          const damageTypeKeywords = [
-            'Scratches', 'Scratch', 'Dent', 'Ding', 'Crack', 'Chip', 'Chipped',
-            'Broken', 'Missing', 'Damaged', 'Bent', 'Torn', 'Stain', 'Burn',
-            'Fade', 'Rust', 'Corrosion', 'Paint', 'Clear', 'Peel', 'Bubble',
-            'Wear', 'Worn', 'Repair', 'Replace', 'Prev', 'Previous', 'Poor',
-            'Mismatched', 'Aftermarket', 'Modified', 'Altered', 'Cut', 'Hole',
-            'Puncture', 'Tear', 'Rip', 'Separation', 'Loose', 'Hanging', 'Sagging',
-            'Misaligned', 'Gap', 'Uneven', 'Wavy', 'Orange', 'Overspray', 'Bondo',
-            'Body', 'Filler', 'Heavy', 'Light', 'Moderate', 'Minor', 'Major',
-            'Mult', 'Multiple', 'Several', 'Various', 'Numerous', 'On', 'Off',
-            'Warning', 'Alert', 'Fault', 'Error', 'Malfunction', 'Inoperative',
-            // ADESA specific damage types from screenshot
-            'Inop', 'Curb Rash', 'Rash', 'Scratches/Heavy', 'Required'
-          ];
-          
-          // Check if this row contains damage data
-          const partHasDamageKeyword = damagePartKeywords.some(kw => 
-            part && part.includes(kw)
-          );
-          const typeHasDamageKeyword = damageTypeKeywords.some(kw => 
-            type && type.includes(kw)
-          );
-          
-          // Also check if any cell contains a damage indicator
-          const anyCellHasDamage = cellTexts.some(text => 
-            damagePartKeywords.some(kw => text && text.includes(kw)) ||
-            damageTypeKeywords.some(kw => text && text.includes(kw))
-          );
-          
-          // Skip obvious headers
-          const isHeader = 
-            part.toLowerCase() === 'part' || 
-            part.toLowerCase() === 'type' ||
-            part.toLowerCase() === 'panel' ||
-            part.toLowerCase() === 'damage' ||
-            part.toLowerCase() === 'category' ||
-            part.toLowerCase() === 'severity' ||
-            part.toLowerCase() === 'location' ||
-            part.toLowerCase() === 'description';
-          
-          const isEmpty = !part || part === '-' || part === 'N/A' || part === '' || part === 'None';
-          
-          // Be aggressive - if it looks remotely like damage data, capture it
-          if (!isHeader && !isEmpty && (partHasDamageKeyword || typeHasDamageKeyword || anyCellHasDamage)) {
-            // Clean up the data
-            const cleanPart = part.replace(/\s+/g, ' ').trim();
-            const cleanType = type.replace(/\s+/g, ' ').trim();
-            const cleanSeverity = severity.replace(/\s+/g, ' ').trim();
-            
-            // Check for duplicate before adding
-            const exists = data.damages.some(d => 
-              d.part === cleanPart && d.type === cleanType
-            );
-            
-            if (!exists && cleanPart.length > 0) {
-              // Add to damages array
-              data.damages.push({
-                part: cleanPart,
-                type: cleanType || 'Damage',
-                severity: cleanSeverity,
-                description: cleanType ? `${cleanType} on ${cleanPart}` : cleanPart,
-                panel: cleanPart, // For SmartAuction compatibility
-                damageType: cleanType || 'Damage', // For SmartAuction compatibility
-                chargeable: (cleanSeverity.toLowerCase().includes('unacceptable') || 
-                            cleanSeverity.toLowerCase().includes('replace') ||
-                            cleanSeverity.toLowerCase().includes('required')) ? 'Yes' : 'No'
-              });
-              
-              console.log(`✓ Added damage #${data.damages.length}: ${cleanPart} | ${cleanType} | ${cleanSeverity}`);
-            }
-          }
-        }
-      });
-    })
-    
-    // Method 2: Specific ADESA table extraction - look for the exact table structure from screenshot
-    // The table has headers "Part", "Type", "Severity" and specific damage entries
-    if (data.damages.length < 10) { // If we haven't found enough damages yet
-      console.log('Method 2: Looking for ADESA-specific damage table structure...');
-      
-      // Find all tables that might contain the damage data
-      document.querySelectorAll('table').forEach((table, idx) => {
-        // Check if this table has the right headers
-        const headers = table.querySelectorAll('th, thead td');
-        let hasCorrectHeaders = false;
-        
-        headers.forEach(header => {
-          const text = header.textContent.trim().toLowerCase();
-          if (text.includes('part') || text.includes('type') || text.includes('severity')) {
-            hasCorrectHeaders = true;
-          }
-        });
-        
-        if (hasCorrectHeaders || table.textContent.includes('Deck') || table.textContent.includes('Bumper') || table.textContent.includes('Wheel')) {
-          console.log(`Found damage table ${idx} with correct structure`);
-          
-          // Get all tbody rows, or all rows if no tbody
-          const tbody = table.querySelector('tbody');
-          const rows = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
-          
-          console.log(`Processing ${rows.length} rows from damage table`);
-          
-          rows.forEach((row, rowIdx) => {
-            const cells = row.querySelectorAll('td');
-            
-            // Need exactly 3 cells for Part | Type | Severity
-            if (cells.length === 3) {
-              const part = cells[0].textContent.trim();
-              const type = cells[1].textContent.trim();
-              const severity = cells[2].textContent.trim();
-              
-              // Skip if it's a header row or empty
-              if (part && type && 
-                  part.toLowerCase() !== 'part' && 
-                  type.toLowerCase() !== 'type' &&
-                  part !== 'N/A') {
-                
-                // Check if we already have this damage
-                const exists = data.damages.some(d => 
-                  d.part === part && d.type === type
-                );
-                
-                if (!exists) {
-                  data.damages.push({
-                    part: part,
-                    type: type,
-                    severity: severity,
-                    description: `${type} on ${part}`,
-                    panel: part,
-                    damageType: type,
-                    chargeable: (severity.toLowerCase().includes('required') || 
-                               severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-                  });
-                  console.log(`✓ Method 2: Added damage #${data.damages.length}: ${part} | ${type} | ${severity}`);
-                }
-              }
-            }
-            // Also handle 4-column tables (might have an image column)
-            else if (cells.length === 4) {
-              // Skip first column if it's an image
-              const hasImage = cells[0].querySelector('img, [class*="image"], [class*="thumb"]');
-              const startIdx = hasImage ? 1 : 0;
-              
-              if (cells.length > startIdx + 2) {
-                const part = cells[startIdx].textContent.trim();
-                const type = cells[startIdx + 1].textContent.trim();
-                const severity = cells[startIdx + 2].textContent.trim();
-                
-                if (part && type && 
-                    part.toLowerCase() !== 'part' && 
-                    type.toLowerCase() !== 'type') {
-                  
-                  const exists = data.damages.some(d => 
-                    d.part === part && d.type === type
-                  );
-                  
-                  if (!exists) {
-                    data.damages.push({
-                      part: part,
-                      type: type,
-                      severity: severity,
-                      description: `${type} on ${part}`,
-                      panel: part,
-                      damageType: type,
-                      chargeable: (severity.toLowerCase().includes('required') || 
-                                 severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-                    });
-                    console.log(`✓ Method 2: Added damage #${data.damages.length}: ${part} | ${type} | ${severity}`);
-                  }
-                }
-              }
-            }
-          });
-        }
-      });
+
+      // Put the page back the way it was found, so the next scrape on the next
+      // car starts from a closed viewer rather than someone else's leftovers.
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+      await wait(200);
     }
-    
-    // Method 3: If still missing damages, try finding damage data in a grid/list structure
-    if (data.damages.length < 10) {
-      console.log('Method 3: Looking for damage data in grid structure...');
-      
-      // ADESA might render damages as a grid of divs
-      // Look for containers with damage information
-      const damageContainers = document.querySelectorAll('[class*="damage"], [class*="Damage"], [data-test*="damage"]');
-      
-      damageContainers.forEach(container => {
-        const text = container.textContent;
-        
-        // Look for pattern: Part Type Severity (may be on multiple lines)
-        const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-        
-        // If we have 3 consecutive lines that look like damage data
-        for (let i = 0; i < lines.length - 2; i++) {
-          const potentialPart = lines[i];
-          const potentialType = lines[i + 1];
-          const potentialSeverity = lines[i + 2];
-          
-          // Check if this looks like damage data
-          const partKeywords = ['Tailgate', 'Hood', 'Tire', 'Bumper', 'Door', 'Fender', 'Warning', 'Windshield'];
-          const typeKeywords = ['Repair', 'Worn', 'Dent', 'Damage', 'On', 'Off', 'Scratch', 'Missing'];
-          
-          const looksLikePart = partKeywords.some(kw => potentialPart.includes(kw));
-          const looksLikeType = typeKeywords.some(kw => potentialType.includes(kw));
-          
-          if (looksLikePart || looksLikeType) {
-            data.damages.push({
-              part: potentialPart,
-              type: potentialType,
-              severity: potentialSeverity,
-              description: `${potentialType} on ${potentialPart}`,
-              panel: potentialPart,
-              damageType: potentialType,
-              chargeable: potentialSeverity.toLowerCase().includes('unacceptable') ? 'Yes' : 'No'
-            });
-            
-            console.log(`Found damage from grid: ${potentialPart} | ${potentialType} | ${potentialSeverity}`);
-            i += 2; // Skip the next 2 lines since we used them
-          }
-        }
-      });
-    }
-    
-    // Method 3: Try parsing damage text patterns directly from page
-    if (data.damages.length === 0) {
-      console.log('Method 3: Looking for damage patterns in page text...');
-      
-      // Look for text patterns like "Tailgate | Prev Repair | Subst Repaired"
-      // or "Tire - RR | Worn | Replacement Required"
-      const bodyText = document.body.innerText;
-      
-      // Split by lines and look for damage patterns
-      const lines = bodyText.split('\n');
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        
-        // Check if line contains pipe separator (common in ADESA)
-        if (line.includes('|')) {
-          const parts = line.split('|').map(p => p.trim());
-          
-          if (parts.length >= 2) {
-            const part = parts[0];
-            const type = parts[1];
-            const severity = parts[2] || '';
-            
-            // Check if this looks like damage data
-            const damageKeywords = ['Tailgate', 'Hood', 'Tire', 'Bumper', 'Door', 'Fender', 'Warning', 
-                                   'Windshield', 'Mirror', 'Light', 'Panel', 'Roof', 'Trunk', 'Wheel',
-                                   'Quarter', 'Rocker', 'Pillar', 'Frame'];
-            const typeKeywords = ['Repair', 'Worn', 'Dent', 'Damage', 'Scratch', 'Missing', 'Broken',
-                                 'Crack', 'Replace', 'Paint', 'Pressure', 'Rust', 'Tear', 'Stain'];
-            
-            const looksLikeDamage = damageKeywords.some(kw => part.includes(kw)) || 
-                                   typeKeywords.some(kw => type.includes(kw));
-            
-            if (looksLikeDamage && part.length > 1 && type.length > 1) {
-              // Avoid duplicates
-              const exists = data.damages.some(d => d.part === part && d.type === type);
-              if (!exists) {
-                data.damages.push({
-                  part: part,
-                  type: type,
-                  severity: severity,
-                  description: `${type} on ${part}`,
-                  panel: part,
-                  damageType: type,
-                  chargeable: severity.toLowerCase().includes('required') || 
-                             severity.toLowerCase().includes('unacceptable') ? 'Yes' : 'No'
-                });
-                console.log(`Method 3: Found damage from line ${i}: ${part} | ${type} | ${severity}`);
-              }
-            }
-          }
-        }
-        
-        // Also check for dash-separated format like "Tire - RR"
-        else if (line.includes(' - ') && !line.includes('|')) {
-          // Look ahead to see if next lines contain type and severity
-          if (i + 1 < lines.length) {
-            const nextLine = lines[i + 1].trim();
-            const part = line;
-            const type = nextLine;
-            const severity = (i + 2 < lines.length) ? lines[i + 2].trim() : '';
-            
-            const damageKeywords = ['Tailgate', 'Hood', 'Tire', 'Bumper', 'Door', 'Fender', 'Warning'];
-            const typeKeywords = ['Repair', 'Worn', 'Dent', 'Damage', 'On', 'Off'];
-            
-            if (damageKeywords.some(kw => part.includes(kw)) || 
-                typeKeywords.some(kw => type.includes(kw))) {
-              
-              const exists = data.damages.some(d => d.part === part);
-              if (!exists) {
-                data.damages.push({
-                  part: part,
-                  type: type,
-                  severity: severity,
-                  description: `${type} on ${part}`,
-                  panel: part,
-                  damageType: type,
-                  chargeable: 'No'
-                });
-                console.log(`Method 3: Found damage from consecutive lines: ${part} | ${type}`);
-                i++; // Skip next line since we used it
-              }
-            }
-          }
-        }
-      }
-    }
-    
-    // Method 4: Additional table scan with more flexible detection
-    if (data.damages.length === 0) {
-      console.log(`Method 4: Flexible table scan (found ${tables.length} tables)`);
-      
-      tables.forEach((table, tableIndex) => {
-        // Skip if we already have damages
-        if (data.damages.length > 0) return;
-        
-        console.log(`\nExamining table ${tableIndex + 1}:`);
-        
-        // Get all rows
-        const allRows = table.querySelectorAll('tr');
-        
-        allRows.forEach((row, rowIndex) => {
-          const cells = row.querySelectorAll('td, th');
-          
-          // Need at least 2 cells for damage data
-          if (cells.length >= 2) {
-            const cellTexts = Array.from(cells).map(c => c.textContent.trim());
-            
-            // Log for debugging
-            if (cellTexts.some(t => t.length > 0)) {
-              console.log(`  Row ${rowIndex}: [${cellTexts.join(' | ')}]`);
-            }
-            
-            const part = cellTexts[0];
-            const type = cellTexts[1];
-            const severity = cellTexts[2] || '';
-            
-            // List of known ADESA damage patterns based on screenshot
-            const damageIndicators = [
-              'Tailgate', 'Tire', 'Hood', 'Warning', 'Bumper', 'Door', 'Fender',
-              'Prev Repair', 'Worn', 'Dent', 'No Paint', 'Pressure', 'Replacement'
-            ];
-            
-            // Check if any cell contains damage indicators
-            const looksLikeDamage = cellTexts.some(text => 
-              damageIndicators.some(indicator => 
-                text && text.toLowerCase().includes(indicator.toLowerCase())
-              )
-            );
-            
-            if (looksLikeDamage && part && type && 
-                part.toLowerCase() !== 'part' && 
-                type.toLowerCase() !== 'type') {
-              
-              // Avoid duplicates
-              const exists = data.damages.some(d => d.part === part && d.type === type);
-              if (!exists) {
-                data.damages.push({
-                  part: part,
-                  type: type,
-                  severity: severity,
-                  description: `${type} on ${part}`,
-                  panel: part,
-                  damageType: type,
-                  chargeable: 'No'
-                });
-                console.log(`  ✓ Added damage: ${part} - ${type} - ${severity}`);
-              }
-            }
-          }
-        });
-      });
-    }
-    
-    // Method 2: Look for damage indicators in the page text
-    if (data.damages.length === 0) {
-      console.log('\nMethod 2: Searching for damage text patterns...');
-      
-      // Look for the specific damage texts from your screenshot
-      const pageText = document.body.innerText;
-      const damagePatterns = [
-        /Tailgate\s*[-–]\s*Prev Repair/i,
-        /Tire\s*[-–]\s*RR\s*[-–]\s*Worn/i,
-        /Hood\s*[-–]\s*Dent\/No Paint/i,
-        /Warning\s*[-–]\s*Tire Pressure/i
-      ];
-      
-      damagePatterns.forEach(pattern => {
-        const match = pageText.match(pattern);
-        if (match) {
-          console.log(`Found damage pattern: ${match[0]}`);
-          // Parse it into part and type
-          const parts = match[0].split(/\s*[-–]\s*/);
-          if (parts.length >= 2) {
-            data.damages.push({
-              part: parts[0],
-              type: parts.slice(1).join(' - '),
-              severity: '',
-              description: match[0]
-            });
-          }
-        }
-      });
-    }
-    
-    // Method 3: Look for any element containing "All Damages" and extract nearby content
-    if (data.damages.length === 0) {
-      console.log('\nMethod 3: Looking for damage section by text...');
-      
-      document.querySelectorAll('*').forEach(el => {
-        const text = el.textContent || '';
-        if (text.includes('All Damages') || text.includes('Damages (')) {
-          console.log('Found element with "Damages":', text.substring(0, 100));
-          
-          // Look for a table in the parent elements
-          let parent = el;
-          for (let i = 0; i < 5; i++) {
-            parent = parent.parentElement;
-            if (!parent) break;
-            
-            const table = parent.querySelector('table');
-            if (table && !table.dataset.processed) {
-              table.dataset.processed = 'true'; // Mark as processed
-              console.log('Found table near damage text');
-              
-              const rows = table.querySelectorAll('tr');
-              rows.forEach(row => {
-                const cells = row.querySelectorAll('td');
-                if (cells.length >= 2) {
-                  const part = cells[0]?.textContent?.trim();
-                  const type = cells[1]?.textContent?.trim();
-                  if (part && type && part !== 'Part') {
-                    data.damages.push({
-                      part, type, 
-                      severity: cells[2]?.textContent?.trim() || '',
-                      description: `${type} on ${part}`
-                    });
-                    console.log(`Added from nearby table: ${part} - ${type}`);
-                  }
-                }
-              });
-            }
-          }
-        }
-      });
-    }
-    
-    // Method 5: Extract all visible damage text from damage section
-    if (data.damages.length < 10) {
-      console.log('Method 5: Extracting from damage section text...');
-      
-      // Find the damage section - usually contains "All Damages" or damage count
-      const damageSections = Array.from(document.querySelectorAll('*')).filter(el => {
-        const text = el.textContent;
-        return text.includes('All Damages') || 
-               text.includes('All (14)') || 
-               (text.includes('Deck Lid') && text.includes('Bumper Cover') && text.includes('Wheel'));
-      });
-      
-      if (damageSections.length > 0) {
-        console.log(`Found ${damageSections.length} damage sections`);
-        
-        // Get the most specific damage section (smallest element containing damages)
-        const damageSection = damageSections.reduce((smallest, current) => {
-          return current.children.length < smallest.children.length ? current : smallest;
-        });
-        
-        console.log('Processing damage section with text length:', damageSection.textContent.length);
-        
-        // Extract damage patterns from the section text
-        const sectionText = damageSection.innerText || damageSection.textContent;
-        const lines = sectionText.split('\n').map(l => l.trim()).filter(l => l);
-        
-        // Process lines in groups of 3 (Part, Type, Severity pattern)
-        for (let i = 0; i < lines.length - 2; i++) {
-          const line1 = lines[i];
-          const line2 = lines[i + 1];
-          const line3 = lines[i + 2];
-          
-          // Check if this looks like a damage entry
-          const damagePartPatterns = ['Deck', 'Lid', 'Bumper', 'Cover', 'Wheel', 'Tire', 'Warning', 'Door', 'Hood', 'Fender'];
-          const damageTypePatterns = ['Inop', 'Scratches', 'Chipped', 'Curb', 'Rash', 'Mismatched', 'On', 'Dent', 'Repair'];
-          
-          const line1HasPart = damagePartPatterns.some(p => line1.includes(p));
-          const line2HasType = damageTypePatterns.some(t => line2.includes(t));
-          
-          if (line1HasPart && line2HasType) {
-            const part = line1;
-            const type = line2;
-            const severity = line3;
-            
-            // Skip headers and check for duplicates
-            if (part.toLowerCase() !== 'part' && type.toLowerCase() !== 'type') {
-              const exists = data.damages.some(d => d.part === part && d.type === type);
-              
-              if (!exists) {
-                data.damages.push({
-                  part: part,
-                  type: type,
-                  severity: severity,
-                  description: `${type} on ${part}`,
-                  panel: part,
-                  damageType: type,
-                  chargeable: (severity.toLowerCase().includes('required') || 
-                             severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-                });
-                console.log(`✓ Method 5: Added damage #${data.damages.length}: ${part} | ${type} | ${severity}`);
-                i += 2; // Skip processed lines
-              }
-            }
-          }
-        }
-        
-        // Also try tab-separated or multi-space separated format on same line
-        lines.forEach(line => {
-          // Match patterns like "Deck Lid Latch    Inop    Repair Required"
-          const tabMatch = line.match(/^([^\\t]{3,})\\t+([^\\t]{2,})\\t+(.*)$/);
-          const spaceMatch = line.match(/^([A-Za-z\\s\\-]+)\\s{2,}([A-Za-z\\s\\/]+)\\s{2,}(.*)$/);
-          
-          const match = tabMatch || spaceMatch;
-          if (match) {
-            const part = match[1].trim();
-            const type = match[2].trim();
-            const severity = match[3].trim();
-            
-            const exists = data.damages.some(d => d.part === part && d.type === type);
-            
-            if (!exists && part && type && 
-                part.toLowerCase() !== 'part' && 
-                type.toLowerCase() !== 'type') {
-              data.damages.push({
-                part: part,
-                type: type,
-                severity: severity,
-                description: `${type} on ${part}`,
-                panel: part,
-                damageType: type,
-                chargeable: (severity.toLowerCase().includes('required') || 
-                           severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-              });
-              console.log(`✓ Method 5: Added from line pattern: ${part} | ${type} | ${severity}`);
-            }
-          }
-        });
-      }
-    }
-    
-    // Method 6: Look for damage data using ARIA roles and modern web app patterns
-    if (data.damages.length < 10) {
-      console.log('Method 6: Using ARIA roles and data attributes...');
-      
-      // Look for rows with role="row" or specific data attributes
-      const allRows = document.querySelectorAll('[role="row"], [data-row], tr[class*="row"], div[class*="damage-row"], div[class*="table-row"]');
-      console.log(`Found ${allRows.length} potential damage rows using role/data attributes`);
-      
-      allRows.forEach((row, idx) => {
-        // Get cells within this row - various possible selectors
-        let cells = row.querySelectorAll('[role="cell"], [data-cell], td, div[class*="cell"], div[class*="col"]');
-        
-        // If no cells found, try direct children
-        if (cells.length === 0 && row.children.length >= 2) {
-          cells = row.children;
-        }
-        
-        if (cells.length >= 3) {
-          const cellTexts = Array.from(cells).map(c => c.textContent.trim());
-          
-          // Check if this looks like damage data
-          const part = cellTexts[0];
-          const type = cellTexts[1];
-          const severity = cellTexts[2];
-          
-          // List of all damage parts we've seen in screenshots
-          const knownDamageParts = [
-            'Deck Lid Latch', 'Bumper Cover - Rear', 'Bumper Cover - Front',
-            'Wheel - LF', 'Wheel - RF', 'Wheel - LR', 'Wheel - RR',
-            'Tire - LF', 'Tire - RF', 'Tire - LR', 'Tire - RR'
-          ];
-          
-          const knownDamageTypes = [
-            'Inop', 'Mult Scratches/Heavy', 'Chipped', 'Curb Rash', 'Mismatched',
-            'On', 'Off', 'Scratches', 'Dent', 'Repair Required'
-          ];
-          
-          // Check if this row contains known damage patterns
-          const looksLikeDamage = 
-            knownDamageParts.some(p => part && part.includes(p.split(' ')[0])) ||
-            knownDamageTypes.some(t => type && type.includes(t.split(' ')[0])) ||
-            (part && type && part.length > 2 && type.length > 2 &&
-             !part.toLowerCase().includes('part') && !type.toLowerCase().includes('type'));
-          
-          if (looksLikeDamage) {
-            const exists = data.damages.some(d => d.part === part && d.type === type);
-            
-            if (!exists) {
-              data.damages.push({
-                part: part,
-                type: type || 'Damage',
-                severity: severity || '',
-                description: `${type || 'Damage'} on ${part}`,
-                panel: part,
-                damageType: type || 'Damage',
-                chargeable: (severity && (severity.toLowerCase().includes('required') || 
-                           severity.toLowerCase().includes('unacceptable'))) ? 'Yes' : 'No'
-              });
-              console.log(`✓ Method 5: Added damage #${data.damages.length}: ${part} | ${type} | ${severity}`);
-            }
-          }
-        }
-      });
-    }
-    
-    // Method 7: Force extraction of all 14 known damages if we're still missing some
-    if (data.damages.length < 14) {
-      console.log(`Method 7: Still only have ${data.damages.length} damages, looking for specific missing ones...`);
-      
-      // These are the known damages from the screenshot that we should find
-      const knownDamages = [
-        { part: 'Deck Lid Latch', type: 'Inop', severity: 'Repair Required' },
-        { part: 'Bumper Cover - Rear', type: 'Mult Scratches/Heavy', severity: '2' },
-        { part: 'Bumper Cover - Rear', type: 'Chipped', severity: '5' },
-        { part: 'Wheel - LF', type: 'Curb Rash', severity: '2" to 3"' },
-        { part: 'Tire - LR', type: 'Mismatched', severity: 'Replacement Required' },
-        { part: 'Wheel - LR', type: 'Curb Rash', severity: '8" to 9"' },
-        { part: 'Wheel - RR', type: 'Curb Rash', severity: 'GR 12"' },
-        { part: 'Tire - RF', type: 'Mismatched', severity: 'Replacement Required' },
-        { part: 'Bumper Cover - Front', type: 'Chipped', severity: '7' },
-        { part: 'Warning - Maintenance', type: 'On', severity: 'Unacceptable' },
-        { part: 'Warning - Tire Pressure', type: 'On', severity: 'Unacceptable' }
-      ];
-      
-      // Check page text for each known damage
-      const pageText = document.body.innerText;
-      
-      knownDamages.forEach(damage => {
-        const exists = data.damages.some(d => 
-          d.part === damage.part && d.type === damage.type
-        );
-        
-        // If damage doesn't exist yet, check if it's mentioned in the page
-        if (!exists) {
-          const partInPage = pageText.includes(damage.part);
-          const typeInPage = pageText.includes(damage.type);
-          
-          if (partInPage && typeInPage) {
-            data.damages.push({
-              part: damage.part,
-              type: damage.type,
-              severity: damage.severity,
-              description: `${damage.type} on ${damage.part}`,
-              panel: damage.part,
-              damageType: damage.type,
-              chargeable: (damage.severity.toLowerCase().includes('required') || 
-                         damage.severity.toLowerCase().includes('unacceptable')) ? 'Yes' : 'No'
-            });
-            console.log(`✓ Method 7: Added known damage #${data.damages.length}: ${damage.part} | ${damage.type}`);
-          }
-        }
-      });
-      
-      // Try to find any scrollable viewport that might contain hidden damages
-      const viewports = document.querySelectorAll('[style*="height"], .viewport, .scroll-container');
-      viewports.forEach(vp => {
-        if (vp.scrollHeight > vp.clientHeight) {
-          console.log('Found limited viewport, attempting to scroll through all content...');
-          const scrollStep = vp.clientHeight;
-          let currentScroll = 0;
-          
-          while (currentScroll < vp.scrollHeight) {
-            vp.scrollTop = currentScroll;
-            
-            // Process visible rows at this scroll position
-            const visibleRows = vp.querySelectorAll('tr:not([style*="display: none"])');
-            visibleRows.forEach(row => {
-              const cells = row.querySelectorAll('td');
-              if (cells.length >= 3) {
-                const part = cells[0].textContent.trim();
-                const type = cells[1].textContent.trim();
-                const severity = cells[2].textContent.trim();
-                
-                if (part && type && !data.damages.some(d => d.part === part && d.type === type)) {
-                  data.damages.push({
-                    part: part,
-                    type: type,
-                    severity: severity,
-                    description: `${type} on ${part}`,
-                    panel: part,
-                    damageType: type,
-                    chargeable: 'No'
-                  });
-                  console.log(`✓ Method 7: Found hidden damage: ${part} | ${type}`);
-                }
-              }
-            });
-            
-            currentScroll += scrollStep;
-          }
-          
-          // Reset scroll
-          vp.scrollTop = 0;
-        }
-      });
-    }
-    
-    console.log(`\n=== DAMAGE EXTRACTION END ===`);
-    console.log(`Final damage count: ${data.damages.length}`);
-    if (data.damages.length > 0) {
-      console.log('Damages found:', data.damages);
-    }
-    
-    // Extract images - look for all vehicle images and deduplicate
-    const imageUrlMap = new Map(); // Use Map to track unique images by their base filename
-    
-    // Collect all visible images - skip thumbnails
-    const imageElements = document.querySelectorAll('img');
-    imageElements.forEach(img => {
-      if (img.src && 
-          !img.src.includes('logo') && 
-          !img.src.includes('icon') && 
-          !img.src.includes('avatar') &&
-          !img.src.includes('placeholder') &&
-          !img.src.includes('data:image')) { // Skip base64 images
-        
-        // Skip small thumbnails based on URL parameters
-        if (img.src.includes('width=40') || img.src.includes('width=80') || 
-            img.src.includes('width=100') || img.src.includes('width=150') ||
-            img.src.includes('w=40') || img.src.includes('w=80')) {
-          console.log('Skipping thumbnail:', img.src.substring(0, 80));
-          return;
-        }
-        
-        // For ADESA/Carvana images, extract the feature ID for better deduplication
-        // URLs like: vex-6787453/details/feature-228113377.jpg?v=1780945651.223&quality=80&width=400
-        let imageId = '';
-        const featureMatch = img.src.match(/feature-(\d+)/);
-        
-        if (featureMatch) {
-          // Use the feature number as the unique ID
-          imageId = featureMatch[1];
-        } else {
-          // Fallback to filename-based ID
-          const urlParts = img.src.split('/');
-          const filename = urlParts[urlParts.length - 1].split('?')[0];
-          imageId = filename
-            .replace(/_small|_medium|_large|_thumb|_thumbnail|_preview|_full/gi, '')
-            .replace(/\d+x\d+/g, '');
-        }
-        
-        // Only process if we have a valid image ID
-        if (imageId) {
-          // Check if we already have this image
-          if (!imageUrlMap.has(imageId)) {
-            imageUrlMap.set(imageId, img.src);
-          } else {
-            // Keep the higher resolution version
-            const existingUrl = imageUrlMap.get(imageId);
-            
-            // Extract width parameters to compare quality
-            const existingWidth = parseInt((existingUrl.match(/width=(\d+)/) || [0, 400])[1]);
-            const newWidth = parseInt((img.src.match(/width=(\d+)/) || [0, 400])[1]);
-            
-            // Replace if new image is higher resolution
-            if (newWidth > existingWidth) {
-              imageUrlMap.set(imageId, img.src);
-              console.log(`Replaced ${existingWidth}px image with ${newWidth}px version`);
-            }
-          }
-        }
-      }
-    });
-    
-    // Also check main gallery images (usually higher quality)
-    document.querySelectorAll('[class*="gallery"] img, [class*="slide"] img').forEach(img => {
-      if (img.src && !img.src.includes('thumb') && img.naturalWidth > 400) {
-        const filename = img.src.split('/').pop().split('?')[0];
-        const baseFilename = filename.replace(/_small|_medium|_large|_thumb/gi, '');
-        imageUrlMap.set(baseFilename, img.src); // Gallery images override others
-      }
-    });
-    
-    // Convert Map values to array
-    const uniqueImageUrls = Array.from(imageUrlMap.values());
-    
-    console.log(`Extracted ${uniqueImageUrls.length} unique images (deduplicated from ${imageElements.length} total)`);
-    
-    // Limit to reasonable number of images (ADESA typically has 20-30 unique angles)
-    const maxImages = 40;
-    if (uniqueImageUrls.length > maxImages) {
-      console.log(`Limiting to first ${maxImages} images`);
-      uniqueImageUrls.length = maxImages;
-    }
-    
-    // Convert to array of objects with url property (expected by background.js)
-    data.images = uniqueImageUrls.map(url => ({ url }));
+
+    const photoUrls = Array.from(photoMap.values()).slice(0, 60);
+    console.log('Photos: ' + photoUrls.length + ' for ' + listingVex + ' (' + photosWhileClosed + ' before opening the viewer)');
+    data.images = photoUrls.map(url => ({ url }));
     
     // Extract additional details from tabs/sections
     const tabs = ['Overview', 'Mechanical', 'Exterior', 'Interior', 'History'];

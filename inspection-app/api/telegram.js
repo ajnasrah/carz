@@ -18,9 +18,17 @@ import {
   sendTelegramMessage, nearestVin, albumVin, settleParked,
   sweepParkedPhotos, rebindGuessedPhotos,
 } from './_lib/intake.js';
-import { readKeyTagVin } from './_lib/keytag.js';
+import { readKeyTag, resolveTagCar } from './_lib/keytag.js';
 
-export const config = { runtime: 'edge' };
+// NOT the edge runtime. This imports _lib/keytag.js, which uses the Anthropic
+// SDK to read a key tag out of a photo, and that SDK pulls in node:fs and
+// node:path — unavailable on Edge. Vercel refuses the whole deployment for it,
+// and reports the error against api/listing-og, which imports nothing at all, so
+// the message points at the wrong file entirely.
+//
+// The handler below is already written in the Web style (a Request in, a
+// Response out), which the Node runtime supports, so nothing else changes.
+export const config = { runtime: 'nodejs' };
 
 // Transport destinations only ("back pro", then a list of VINs). Photo binding
 // used to hang off this expiry too and lost 524 pictures to it; it now reads the
@@ -44,7 +52,42 @@ function admin() {
   });
 }
 
-export default async function handler(request) {
+// Vercel's Node runtime calls handlers with (req, res) — Express style — and
+// ignores a returned Response. The body of this webhook is written Web-style
+// (a Request in, a Response out), which is how it ran on Edge, so it is wrapped
+// rather than rewritten: same logic, adapted at the boundary.
+//
+// Returning a Response from a Node handler doesn't error, it just never sends
+// anything, so the symptom is a 504 timeout on GET and a 500 on POST rather
+// than a stack trace pointing at the cause.
+export default async function handler(req, res) {
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'carzinc.ai';
+  const url = `https://${host}${req.url || '/api/telegram'}`;
+
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(req.headers || {})) {
+    if (v == null) continue;
+    headers.set(k, Array.isArray(v) ? v.join(', ') : String(v));
+  }
+
+  // Vercel has already parsed a JSON body into req.body; handleWeb calls
+  // request.json(), so it has to be handed back a string to re-parse.
+  let body;
+  if (req.method && !['GET', 'HEAD'].includes(req.method)) {
+    body = typeof req.body === 'string' ? req.body
+      : req.body == null ? '' : JSON.stringify(req.body);
+  }
+
+  const out = await handleWeb(new Request(url, { method: req.method, headers, body }));
+  res.status(out.status);
+  out.headers.forEach((value, key) => {
+    // Content-Length would be wrong once Node re-encodes the body.
+    if (key.toLowerCase() !== 'content-length') res.setHeader(key, value);
+  });
+  res.send(await out.text());
+}
+
+async function handleWeb(request) {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST' } });
   }
@@ -231,6 +274,7 @@ async function processUpdate(update) {
   // separate bucket kept for backend reference ONLY (never shown on marketplace).
   let pendingFileId = null;
   let parkedSessionVin = null;
+  let tagRead = null;
   if (photoFileId) {
     // Evidence carried by the photo itself, best first: a VIN in its own
     // caption, then a VIN on a sibling of the same album. Both are facts.
@@ -241,8 +285,11 @@ async function processUpdate(update) {
     // per-photo — ten tags sent as one album are ten different cars, which is
     // exactly what the album and nearest-in-time rules below would get wrong.
     if (!vin6 && chat.station === 'wash_line') {
-      vin6 = await readKeyTagVin(photoFileId);
-      if (vin6) {
+      tagRead = await readKeyTag(photoFileId);
+      // Read by the model, confirmed by inventory — see resolveTagCar().
+      const car = tagRead ? await resolveTagCar(db, tagRead) : null;
+      if (car) {
+        vin6 = car.vin6;
         vinSource = 'keytag';
         await finishCar(db, vin6, FINISH_STATIONS.wash_line, eventIso);
       }
@@ -309,8 +356,13 @@ async function processUpdate(update) {
     // and the washer is standing right there — so ask now rather than let a
     // sweep discover it an hour later. The wording matters: "which car" is what
     // the reply handler at the top of this file listens for.
+    // Say what actually happened. "Couldn't read it" is misleading when the tag
+    // read fine and simply matched no car we own — that's the sender's cue that
+    // the number itself may be wrong, not the picture.
     const askedId = await sendTelegramMessage(chatId,
-      '❓ Which car is this? I couldn\'t read the VIN off that key tag.\n'
+      (tagRead?.raw
+        ? `❓ I read ${tagRead.raw} on that tag but couldn't match it to a car.\n`
+        : '❓ Which car is this? I couldn\'t read the key tag.\n')
       + 'Reply to this message with the last 6 and I\'ll finish it.',
       msg.message_id);
     // Remember which question is about which picture, and stamp asked_at so the

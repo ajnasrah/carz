@@ -213,6 +213,8 @@ async function downloadAllData(data) {
       inspectionType: data.inspectionType,
       announcements: data.announcements,
       damages: data.damages || [],
+      damage_warning: data.damageWarning || null,
+      damage_diagnostic: data.damageDiag || null,
       tires: data.tires || [],
       images: downloadedImages.map(img => img.filename),
       scraped_at: new Date().toISOString(),
@@ -267,6 +269,19 @@ function generateSummaryText(data, downloadedImages) {
   text += '\n' + '-'.repeat(60) + '\n';
   text += 'DAMAGES & ISSUES (' + damages.length + ' found)\n';
   text += '-'.repeat(60) + '\n\n';
+
+  // An undercount is worse than an error: an empty damage list reads as a clean
+  // car. If the scraper could see what the page claimed, say so right here.
+  if (data.damageWarning) {
+    text += '!! ' + data.damageWarning + ' — check the listing by hand\n\n';
+  }
+  if (data.damageDiag) {
+    text += 'WHY (diagnostic):\n';
+    Object.entries(data.damageDiag).forEach(([k, v]) => {
+      text += '  ' + k + ': ' + (v === null ? 'null' : String(v)) + '\n';
+    });
+    text += '\n';
+  }
 
   if (damages.length > 0) {
     damages.forEach((damage, i) => {
