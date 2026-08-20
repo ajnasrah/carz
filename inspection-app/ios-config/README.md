@@ -73,6 +73,63 @@ xcodebuild -exportArchive -archivePath /tmp/carzbuild/CarzIMS.xcarchive \
 The export step is not a formality — it re-signs for distribution. See the
 comment in `ExportOptions.plist`.
 
+### Uploading without opening Xcode
+
+`altool` still ships inside Xcode 26 and takes the App Store Connect API key, so
+the whole release is scriptable. Validate first — it catches a bad signature in
+seconds instead of after a full upload and a rejection email.
+
+```sh
+xcrun altool --validate-app -f /tmp/carzbuild/export/App.ipa -t ios \
+  --apiKey 6KZ339HF72 --apiIssuer 7e4857a7-6b59-4eb1-be95-1415657c8494
+
+xcrun altool --upload-app -f /tmp/carzbuild/export/App.ipa -t ios \
+  --apiKey 6KZ339HF72 --apiIssuer 7e4857a7-6b59-4eb1-be95-1415657c8494
+```
+
+`--apiKey` is the key ID, and altool finds the matching private key at
+`~/.appstoreconnect/private_keys/AuthKey_6KZ339HF72.p8`. **That .p8 is the
+credential and is deliberately not in this repo** — it exists only on the build
+machine, and Apple lets you download it exactly once. The key ID and issuer ID
+are just identifiers; they are useless without the file, which is why they are
+written down here rather than looked up under time pressure. (The issuer ID
+lives at App Store Connect → Users and Access → Integrations → App Store Connect
+API, above the key table.)
+
+Worth checking the .ipa before sending it, because App Store Connect's rejection
+for the common failure is unhelpful:
+
+```sh
+cd /tmp/carzbuild/export && unzip -qo App.ipa -d /tmp/ipacheck
+codesign -dvvv /tmp/ipacheck/Payload/App.app 2>&1 | grep Authority
+codesign -d --entitlements :- /tmp/ipacheck/Payload/App.app | grep get-task-allow
+```
+
+Wanted: `Apple Distribution: ...`, and `get-task-allow` **false**. If it says
+`Apple Development` or the entitlement is true, the export step was skipped and
+the upload will be rejected.
+
+### Confirming it actually arrived
+
+"UPLOAD SUCCEEDED" only means Apple accepted the bytes. The build does not exist
+for testers until processing finishes, and a build can fail processing silently
+after a clean upload — **build 9 was bumped in the project file and never
+appeared in App Store Connect at all**, which is exactly the state that looks
+like "TestFlight is broken" when it is really "no build was ever uploaded".
+
+Ask App Store Connect directly rather than refreshing the web UI:
+
+```
+GET /v1/apps?filter[bundleId]=com.carzinc.ims        -> app id
+GET /v1/builds?filter[app]=<id>&limit=6&sort=-version
+```
+
+with an ES256 JWT signed by the .p8 (`kid` = key id, `iss` = issuer id,
+`aud` = appstoreconnect-v1, 20 min max). Node needs
+`dsaEncoding: 'ieee-p1363'` or it emits a DER signature and every call 401s.
+Processing normally takes 5–15 minutes; `processingState` goes
+`PROCESSING` → `VALID`.
+
 Then the build processes in App Store Connect (usually 5–15 min, and it is not
 in TestFlight until that finishes) — testers get the update after that. **If
 nobody is being offered an update, it is almost always because no new build was
