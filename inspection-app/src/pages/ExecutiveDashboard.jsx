@@ -96,14 +96,13 @@ export default function ExecutiveDashboard({ embedded = false }) {
         trendsRes
       ] = await Promise.all([
         // Current inventory metrics
-        supabase
-          .from('inventory')
-          .select('stock_number, total_cost, days_on_lot, vendor, location_code, added_costs'),
+        // Cost is gated on sold-reports access, so it comes through the RPC
+        // that applies the check rather than off the table, whose cost columns
+        // are no longer granted to anybody.
+        supabase.rpc('inventory_costs'),
           
         // Sales performance
-        supabase
-          .from('sold')
-          .select('*')
+        supabase.rpc('sold_rows')
           .gte('sale_date', startDate.toISOString())
           .order('sale_date', { ascending: false }),
           

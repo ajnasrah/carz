@@ -60,7 +60,7 @@ export default function Dashboard() {
     async function load() {
       const [lotRes, costRes, locs, inspRes] = await Promise.all([
         supabase.from('vehicle_lot_status').select('stock_number, last_seen_at, days_on_lot'),
-        supabase.from('inventory').select('stock_number, total_cost, added_costs, location_code, days_on_lot'),
+        supabase.rpc('inventory_costs'),
         selectAll(() => supabase.from('vehicle_locations').select('stock_number, physical_location, location_updated_at')),
         supabase.from('inspections').select('id', { count: 'exact', head: true }).eq('status', 'in_progress'),
       ])

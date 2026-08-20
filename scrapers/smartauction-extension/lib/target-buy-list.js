@@ -20,6 +20,9 @@
 // Usage from popup.js init():  window.TargetBuyList.bindUI({ supabaseUrl, supabaseKey })
 
 (function () {
+  // See popup.js — cost and profit are gated, and the extension proves itself
+  // with a key because it has no sign-in.
+  const COST_KEY = 'czx_s2CXF2vUcS189WtVszHHu2i4qXLh';
   'use strict';
 
   let cfg = { supabaseUrl: '', supabaseKey: '' };
@@ -531,7 +534,9 @@
           Authorization: `Bearer ${cfg.supabaseKey}`,
           'Content-Type': 'application/json',
         },
-        body: '{}',
+        // Profit is masked without this — and a scorer reading every sale as
+        // zero profit would fail silently, marking the whole run list PASS.
+        body: JSON.stringify({ p_key: COST_KEY }),
       });
       if (!res.ok) throw new Error(`list_all_sold failed (${res.status})`);
       const batch = await res.json();

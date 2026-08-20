@@ -12,8 +12,9 @@ import { supabase, selectAll } from './supabase'
 export async function fetchSoldWithBuyers() {
   const all = await selectAll(() =>
     supabase
-      .from('sold')
-      .select('stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model, sale_date, buyer, vendor, first_name, last_name, total_cost, added_costs, sales_price, profit_on_sale, days_on_lot'),
+      // Through the RPC, not the table: `sold`'s cost columns are no longer
+      // granted to anyone, and this applies the sold-reports check per caller.
+      .rpc('sold_rows'),
   )
   return all.map((r) => ({
     ...r,
@@ -182,7 +183,7 @@ export async function fetchSoldRecent(days) {
   const chunks = []
   for (let i = 0; i < stocks.length; i += CHUNK) chunks.push(stocks.slice(i, i + CHUNK))
   const results = await Promise.all(
-    chunks.map((c) => supabase.from('sold').select('stock_number, added_costs').in('stock_number', c)),
+    chunks.map((c) => supabase.rpc('sold_rows').select('stock_number, added_costs').in('stock_number', c)),
   )
   for (const { data, error } of results) {
     if (error) continue // recon money is a nice-to-have; never fail the whole box over it

@@ -224,9 +224,9 @@ async function findInventory(cleaned, vinQ) {
 }
 
 async function withCost(vehicle) {
+  // Cost is masked unless the caller may see it — the RPC decides, not us.
   const { data: costRows } = await supabase
-    .from('inventory')
-    .select('total_cost, added_costs, buyer, vendor, location_code')
+    .rpc('inventory_costs')
     .eq('stock_number', vehicle.stock_number)
     .limit(1)
   return { vehicle, cost: costRows?.[0] || {} }

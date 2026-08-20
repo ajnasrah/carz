@@ -2918,7 +2918,14 @@
   //
   // Errors are classified because "TypeError: Failed to fetch" tells you nothing
   // about which of three very different problems you have.
-  async function sbRpcAll(name, { pageSize = 1000, maxPages = 50 } = {}) {
+  // Cost and profit are masked for anyone who cannot prove they may see them —
+  // sold-reports access in the app, or this key out here, because the extension
+  // has no sign-in to check. Without it list_all_inventory and list_all_sold
+  // still answer, they just come back with the money blanked, which would show
+  // up as every car costing nothing rather than as an error.
+  const COST_KEY = 'czx_s2CXF2vUcS189WtVszHHu2i4qXLh';
+
+  async function sbRpcAll(name, { pageSize = 1000, maxPages = 50, body = {} } = {}) {
     const rows = [];
     for (let page = 0; page < maxPages; page++) {
       const offset = page * pageSize;
@@ -2932,7 +2939,7 @@
             Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({}),
+          body: JSON.stringify(body),
           signal: AbortSignal.timeout(30000),
         });
       } catch (e) {
@@ -2962,7 +2969,7 @@
     const result = document.getElementById('supabaseInvResult');
     if (!silent && badge) badge.textContent = 'Syncing...';
     try {
-      const rows = await sbRpcAll('list_all_inventory');
+      const rows = await sbRpcAll('list_all_inventory', { body: { p_key: COST_KEY } });
       if (!Array.isArray(rows) || !rows.length) {
         if (badge) { badge.textContent = 'Empty'; badge.className = 'scraper-badge'; }
         if (result && !silent) { result.textContent = 'Supabase returned 0 rows'; result.className = 'scraper-result err'; }
@@ -2998,7 +3005,7 @@
     const { silent = false } = opts;
     try {
       // Paged: the sold book is well past PostgREST's 1000-row ceiling.
-      const rows = await sbRpcAll('list_all_sold');
+      const rows = await sbRpcAll('list_all_sold', { body: { p_key: COST_KEY } });
       if (!Array.isArray(rows)) return;
       const mapped = rows.map(mapSupabaseSoldRow);
       soldData = mapped;

@@ -30,11 +30,20 @@ export async function fetchAuctionSold() {
   const byStock = {}
   for (let i = 0; i < stocks.length; i += 200) {
     const batch = stocks.slice(i, i + 200)
-    const { data: inv } = await supabase
-      .from('inventory')
-      .select('stock_number,vehicle_year,vehicle_make,vehicle_model,last_6_vin,total_cost,added_costs')
-      .in('stock_number', batch)
-    for (const row of inv || []) byStock[row.stock_number] = row
+    // Vehicle facts off the table; cost through the RPC, which masks it for
+    // anyone without sold-reports access.
+    const [{ data: inv }, { data: costs }] = await Promise.all([
+      supabase
+        .from('inventory')
+        .select('stock_number,vehicle_year,vehicle_make,vehicle_model,last_6_vin')
+        .in('stock_number', batch),
+      supabase.rpc('inventory_costs').in('stock_number', batch),
+    ])
+    const costByStock = new Map((costs || []).map((c) => [c.stock_number, c]))
+    for (const row of inv || []) {
+      const c = costByStock.get(row.stock_number)
+      byStock[row.stock_number] = { ...row, total_cost: c?.total_cost ?? null, added_costs: c?.added_costs ?? null }
+    }
   }
 
   return locs

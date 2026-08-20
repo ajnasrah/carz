@@ -30,8 +30,7 @@ export default function InventoryVsSold({ title = 'Inventory vs Sold' }) {
   useEffect(() => {
     let cancelled = false
     supabase
-      .from('inventory')
-      .select('stock_number, total_cost, added_costs, days_on_lot')
+      .rpc('inventory_costs')
       .then(({ data }) => {
         if (cancelled) return
         setInv(averages(data || [], (c) => ({
