@@ -926,23 +926,29 @@
       if (tireCondition) html += `<span class="lookup-label">Tires:</span> ${tireCondition}<br>`;
       if (notes) html += `<span class="lookup-label">Notes:</span> ${notes}<br>`;
       if (data.photo_count > 0) {
-        html += `<span class="lookup-label">Photos:</span> ${data.photo_count} in folder `;
-        html += `<button id="openPhotoFolder" class="btn btn-small" style="background:#1976d2;margin:0;padding:3px 8px;font-size:10px;">Open Folder</button> `;
-        html += `<button id="loadPhotosBtn" class="btn btn-small" style="background:#388e3c;margin:0;padding:3px 8px;font-size:10px;">Load Photos</button>`;
+        html += `<span class="lookup-label">Photos:</span> ${data.photo_count} on this car `;
+        html += `<button id="openPhotoFolder" class="btn btn-small" style="background:#1976d2;margin:0;padding:3px 8px;font-size:10px;">Download</button> `;
+        html += `<button id="loadPhotosBtn" class="btn btn-small" style="background:#388e3c;margin:0;padding:3px 8px;font-size:10px;">Load into wizard</button>`;
+        // Both buttons report HERE. Load photos writes its progress into the
+        // Photos step, which is a different step of the wizard and hidden while
+        // you are standing on this one — so pressing it looked like nothing
+        // happened while it quietly filled the step behind you.
+        html += `<div id="intakePhotoNote" style="font-size:10px;color:#666;margin-top:3px;"></div>`;
       }
 
       msgLookupResult.innerHTML = html;
       msgLookupResult.className = 'msg-lookup-result visible';
 
       // Bind the open folder button
+      const note = document.getElementById('intakePhotoNote');
       const openBtn = document.getElementById('openPhotoFolder');
       if (openBtn) {
-        openBtn.addEventListener('click', () => openPhotoFolder(vin6));
+        openBtn.addEventListener('click', () => openPhotoFolder(vin6, note));
       }
       // Bind the load photos button (just loads, no AI)
       const loadBtn = document.getElementById('loadPhotosBtn');
       if (loadBtn) {
-        loadBtn.addEventListener('click', () => autoLoadPhotosFromFolder(vin6));
+        loadBtn.addEventListener('click', () => autoLoadPhotosFromFolder(vin6, note));
       }
 
       saveSession();
@@ -954,11 +960,22 @@
     }
   }
 
-  async function openPhotoFolder(vin6) {
+  // Was: POST /open-folder/<vin6> to the local Python server, asking it to open
+  // a Finder window. That server is gone — the extension is serverless now and
+  // the shim implements /queue, /vehicle and /status and nothing else — so this
+  // 404'd into an empty catch and the button had done nothing for months.
+  //
+  // Download is what the folder was for anyway: SmartAuction's Add Photos picker
+  // uploads a folder in filename order, and downloadCarPhotos writes
+  // Downloads/SA Photos/<vin6>/001.jpg… in the car's sorted order.
+  async function openPhotoFolder(vin6, note) {
+    const say = (t, c) => { if (note) { note.textContent = t; note.style.color = c || '#666'; } };
+    say('Downloading…');
     try {
-      await serverFetch(`${SCRAPER_URL}/open-folder/${vin6}`, { method: 'POST' });
-    } catch {
-      // Server not running — ignore
+      const n = await downloadCarPhotos(vin6);
+      say(n ? `${n} photo${n === 1 ? '' : 's'} → Downloads/SA Photos/${vin6}/` : 'Nothing to download', n ? '#2e7d32' : '#c62828');
+    } catch (e) {
+      say(`Download failed: ${e.message || e}`, '#c62828');
     }
   }
 
@@ -1820,18 +1837,23 @@
     }
   };
 
-  async function autoLoadPhotosFromFolder(vin6) {
+  // `note` is the line under the button you actually pressed. photoStatus lives
+  // in the Photos step, which is hidden while you are on the intake step — so
+  // reporting only there is what made this look broken.
+  async function autoLoadPhotosFromFolder(vin6, note) {
+    const say = (t, c) => { if (note) { note.textContent = t; note.style.color = c || '#666'; } };
     const photoStatus = document.getElementById('autoPhotoStatus');
-    if (!photoStatus) return;
+    say(`Loading photos for ${vin6}…`);
+    if (!photoStatus) { say('Photos step is missing from this build', '#c62828'); return; }
     photoStatus.textContent = `Loading photos for ${vin6}...`;
     photoStatus.className = 'field-status';
     try {
       // First get count only (fast)
       const infoRes = await serverFetch(`${SCRAPER_URL}/vehicle/${vin6}`);
-      if (!infoRes.ok) { photoStatus.textContent = 'No photos found'; return; }
+      if (!infoRes.ok) { photoStatus.textContent = 'No photos found'; say('No photos found', '#c62828'); return; }
       const info = await infoRes.json();
       const total = info.photo_count || 0;
-      if (total === 0) { photoStatus.textContent = 'No photos in folder'; return; }
+      if (total === 0) { photoStatus.textContent = 'No photos on this car'; say('No photos on this car', '#c62828'); return; }
 
       // Load photos in small batches (5 at a time) so UI updates fast
       exteriorPhotos = [];
@@ -1845,13 +1867,16 @@
         }
         renderPreviews('exterior');
         photoStatus.textContent = `Loading photos... ${exteriorPhotos.length}/${total}`;
+        say(`Loading… ${exteriorPhotos.length}/${total}`);
       }
       persistPhotos();
       photoStatus.textContent = `${exteriorPhotos.length} photos loaded`;
       photoStatus.className = 'field-status ok';
+      say(`${exteriorPhotos.length} photos loaded — they are in the Photos step`, '#2e7d32');
     } catch (err) {
       photoStatus.textContent = `Photo error: ${err.message}`;
       photoStatus.className = 'field-status err';
+      say(`Photo error: ${err.message}`, '#c62828');
       console.error('autoLoadPhotosFromFolder error:', err);
     }
   }
@@ -3450,7 +3475,19 @@
         headers: { 'Content-Type': 'application/json', 'x-listing-secret': listingUploadSecret },
         // reset on the first chunk only — a re-scrape replaces the old set
         // instead of piling a second copy on top of it.
-        body: JSON.stringify({ vin, startIndex: i, reset: i === 0, photos }),
+        //
+        // `done` marks the LAST chunk, and only that one starts the photo sort
+        // on the website. Nothing on the server can tell which chunk is last,
+        // and sorting on every chunk means several sorts pulling the car's whole
+        // gallery back out of storage while this loop is still writing to it —
+        // which took the site down once already.
+        body: JSON.stringify({
+          vin,
+          startIndex: i,
+          reset: i === 0,
+          done: i + PHOTO_CHUNK >= exteriorPhotos.length,
+          photos,
+        }),
         signal: AbortSignal.timeout(60000),
       });
       if (!res.ok) {
