@@ -194,11 +194,21 @@ export default function Admin() {
       return
     }
     
-    const { error } = await supabase.from('profiles').delete().eq('id', user.id)
-    
+    // .select() so we can see WHAT was deleted, not just that nothing errored.
+    // RLS filters a delete rather than refusing it: a caller the database does
+    // not consider an admin (profiles_delete checks role = 'admin' — the
+    // by-phone fallback this screen uses on the client is not in that policy)
+    // deletes zero rows and gets back no error, so this reported success and
+    // the user stayed exactly where they were.
+    const { data: removed, error } = await supabase
+      .from('profiles').delete().eq('id', user.id).select('id')
+
     if (error) {
       setError('Failed to remove user: ' + error.message)
       setTimeout(() => setError(''), 3000)
+    } else if (!removed?.length) {
+      setError('Nothing was removed — your account may not have admin rights in the database')
+      setTimeout(() => setError(''), 5000)
     } else {
       setConfirmDelete(null)
       loadUsers()

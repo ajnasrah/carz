@@ -140,8 +140,16 @@ function ProtectedRoute({ children, requireSetup = true }) {
         return <Navigate to="/pending" replace />
       }
       // Approved buyers are marketplace-only — no internal pages.
+      //
+      // /marketplace, not /listings. Both are public car pages and only one of
+      // them can be bought from: /marketplace carries the photos, the price and
+      // the Buy it now button, while /listings is a bare read of the current
+      // SmartAuction active list with no way to reserve anything. A buyer who
+      // finished signing up without a car in mind was being dropped on the page
+      // that cannot sell — the end of the signup flow landing somewhere you
+      // can't buy is most of why the buy-it-now path felt broken.
       if (profile.account_type === 'buyer') {
-        return <Navigate to="/listings" replace />
+        return <Navigate to="/marketplace" replace />
       }
       // The body shop crew (techs + shop manager, no other role) sees the Body
       // Shop section and nothing else. Their home is the board, so a deep link
