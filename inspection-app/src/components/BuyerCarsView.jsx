@@ -270,10 +270,16 @@ export default function BuyerCarsView({ buyers: ranked, results, byVin }) {
       <div className="flex flex-wrap gap-2 pb-6">
         <Btn disabled={!chosen.length || busy} busy={busy} icon={Link2} label={link ? 'Link ready' : 'Create link'}
           onClick={() => makeLink().then((s) => s && say('Link created'))} />
-        {buyer.phone && (
-          <Btn disabled={!chosen.length || busy} icon={MessageSquare} label="Text" primary
-            onClick={() => withMessage((msg) => openExternal(smsUrl(buyer.phone, msg)))} />
-        )}
+        {/* Always available. It used to require a number on file, which meant the
+            buyers we sell the most to — Mt Moriah, City Auto, Jim Keras, every
+            dealer that comes from Frazer — had no Text button at all, because
+            Frazer records a name and no phone. Without a number this opens
+            Messages on a new draft with the link already written; you pick the
+            contact there. */}
+        <Btn disabled={!chosen.length || busy} icon={MessageSquare} primary
+          label={buyer.phone ? 'Text' : 'Text…'}
+          title={buyer.phone ? `Text ${buyer.phone}` : 'No number on file — opens Messages so you can pick the contact'}
+          onClick={() => withMessage((msg) => openExternal(smsUrl(buyer.phone, msg)))} />
         {buyer.email && (
           <Btn disabled={!chosen.length || busy} icon={Mail} label="Email"
             onClick={() => withMessage((msg) => openExternal(
@@ -293,10 +299,10 @@ export default function BuyerCarsView({ buyers: ranked, results, byVin }) {
   )
 }
 
-function Btn({ icon, label, onClick, disabled, primary, busy }) {
+function Btn({ icon, label, onClick, disabled, primary, busy, title }) {
   const Icon = icon
   return (
-    <button onClick={onClick} disabled={disabled}
+    <button onClick={onClick} disabled={disabled} title={title}
       className={`flex items-center gap-1.5 px-3 py-2 rounded text-xs font-medium disabled:opacity-40 ${
         primary ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
       {busy ? <Loader2 size={13} className="animate-spin" /> : <Icon size={13} />} {label}

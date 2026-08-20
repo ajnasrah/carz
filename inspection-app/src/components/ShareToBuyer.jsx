@@ -22,8 +22,12 @@ export default function ShareToBuyer({ cars, onClose }) {
 
   async function text() {
     const digits = phone.replace(/\D/g, '')
-    if (digits.length < 10) {
-      flash('Need a 10-digit number')
+    // An empty box means "I don't have his number" — send it anyway and let the
+    // salesman pick the contact in Messages, which is how most of these go out,
+    // since the dealers that come from Frazer have a name and no phone. A
+    // half-typed number is a different thing and still worth catching.
+    if (digits.length > 0 && digits.length < 10) {
+      flash('Need a 10-digit number, or leave it blank')
       return
     }
     await openExternal(smsUrl(digits, message))
@@ -63,7 +67,7 @@ export default function ShareToBuyer({ cars, onClose }) {
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           inputMode="tel"
-          placeholder="Their phone, to text it"
+          placeholder="Their phone — or leave blank and pick in Messages"
           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
         />
       </div>

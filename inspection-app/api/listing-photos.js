@@ -161,11 +161,19 @@ export default async function handler(request, context) {
   });
   if (rpcErr) return json({ error: `save failed: ${rpcErr.message}` }, 502);
 
-  // The car's pictures just changed, so its gallery order is stale. Fired here
-  // rather than waited for by the 15-minute sweep, so a car scraped and listed
-  // inside that window still reaches the marketplace in the house order.
-  // Fire-and-forget: an upload must never fail because sorting did.
-  sortCarPhotos(vin6, { waitUntil: context?.waitUntil?.bind(context) });
+  // Sort only when the caller says the upload is FINISHED.
+  //
+  // This fired on every chunk for about ten minutes and that was a mistake: a
+  // 40-photo condition report arrives as four chunks, so four sorts started
+  // while the upload was still running — each one asking Anthropic to fetch
+  // every photo of the car back out of the same storage bucket the extension
+  // was still writing to. Storage answers that with 429s (the reason CHUNK is
+  // 10 and the chunks run one at a time inside the sorter), and the whole site
+  // slows down behind it while the marketplace RPC runs three or four times over.
+  //
+  // The extension knows when it has sent the last chunk; nothing here does. So
+  // it says so, and one sort runs on the complete set.
+  if (body?.done) sortCarPhotos(vin6, { waitUntil: context?.waitUntil?.bind(context) });
 
   return json({ ok: true, vin6, uploaded: uploaded.length, total: Object.keys(map).length, outcome });
 }

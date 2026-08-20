@@ -19,7 +19,6 @@ import {
   sweepParkedPhotos, rebindGuessedPhotos,
 } from './_lib/intake.js';
 import { readKeyTag, resolveTagCar } from './_lib/keytag.js';
-import { sortCarPhotos } from './_lib/sortTrigger.js';
 
 // NOT the edge runtime. This imports _lib/keytag.js, which uses the Anthropic
 // SDK to read a key tag out of a photo, and that SDK pulls in node:fs and
@@ -346,16 +345,17 @@ async function processUpdate(update) {
     vin_source: vinSource, processed: true, error: null,
   }).eq('message_id', msgKey);
 
-  // A ready-to-sell photo just became part of a car's gallery, so its order is
-  // stale. Tell the sorter now instead of leaving it to the 15-minute sweep —
-  // this is the path that puts a freshly bought car on the marketplace, and it
-  // should not go up in whatever order the crew happened to shoot it in.
+  // Deliberately NOT sorting here.
   //
-  // Waits only long enough to dispatch (see sortTrigger): the webhook owes
-  // Telegram an answer in seconds, and the sort runs in its own function.
-  if (mediaPath && vin6 && (chat.station === 'ready' || chat.station === 'seller')) {
-    await sortCarPhotos(vin6);
-  }
+  // A worker fires forty photos at once, so this line runs forty times inside a
+  // few seconds — forty sorts, each pulling the car's whole gallery back out of
+  // storage while forty uploads are still going into it. That is how you turn a
+  // photo burst into a site-wide slowdown, and it is the same 429 pressure that
+  // forced the sorter to fetch ten at a time in the first place.
+  //
+  // The cron picks these up within 15 minutes, which is the right trade for an
+  // arrival pattern nothing tells us the end of. The SmartAuction path is
+  // different — the extension knows when its upload is finished and says so.
 
   // Closes the simultaneous-burst race. Workers fire the VIN text and every
   // photo at once, so each lands as a concurrent webhook with no ordering

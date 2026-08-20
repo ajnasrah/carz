@@ -29,9 +29,17 @@ export async function openWeb(url) {
   await Browser.open({ url, presentationStyle: 'popover' })
 }
 
-/** SMS deep link with a prefilled body, formatted per platform. */
+/**
+ * SMS deep link with a prefilled body, formatted per platform.
+ *
+ * `phone` is optional. Most of the dealers we sell to come from Frazer, which
+ * records a name and no number, so a share that required one was unavailable for
+ * exactly the buyers we sell the most cars to. With no number the link is
+ * `sms:&body=...`, which opens Messages on a new draft with the text already in
+ * it and the recipient field focused — the salesman picks the contact there.
+ */
 export function smsUrl(phone, body) {
-  const digits = String(phone).replace(/\D/g, '')
+  const digits = String(phone ?? '').replace(/\D/g, '')
   // iOS wants `&body=`, Android wants `?body=`. Getting this wrong drops the
   // message text silently — the SMS app opens with an empty draft.
   //
