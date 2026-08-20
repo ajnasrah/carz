@@ -86,72 +86,46 @@ async function fetchAll(table, columns, order) {
 export const fetchActiveCars = () =>
   fetchAll('sa_active_cars', 'vin,year,make,model,trim,odometer,color,segment,buy_now,opening_price,location,detail_url,uploaded_at')
 
-// The car universe, decided by the database rather than reassembled here.
+// Everything the Buyer Match page opens with, in ONE call.
 //
-// This used to merge marketplace_listings() with sa_active_cars in the client and
-// then drop any VIN that appeared in the sold history — and the API did the same
-// thing in its own slightly different copy. Both were wrong in the same way: a
-// car we sold and bought back is not sold, and seven of the cars on the lot had
-// been re-acquired since their last sale. buyer_match_cars() applies the real
-// test (last sale after last purchase) in one place.
+// It used to make eleven: seven to page the training set, plus a count, the
+// stats, the cars and the excluded list. Each paged call re-ran the whole union
+// and re-sorted it, they all raced each other for connections, and two of them
+// re-built the car list from marketplace_listings() independently — which alone
+// costs a second. The page took minutes to open.
+//
+// buyer_match_bootstrap() evaluates the union once and returns a JSON document.
+// Returning JSON is also what makes the row cap a non-issue: PostgREST truncates
+// at 1,000 ROWS, and this is one row.
+export async function fetchBuyerMatchBootstrap(demandDays = 60) {
+  const { data, error } = await supabase.rpc('buyer_match_bootstrap', { p_demand_days: demandDays })
+  if (error) throw error
+  if (!data) throw new Error('buyer_match_bootstrap returned nothing — staff access required')
+
+  const training = data.training || []
+  // The server counted the rows it meant to send. Training on a partial book is
+  // the failure this replaced, so it is checked rather than assumed.
+  if (Number(data.training_count) > 0 && training.length !== Number(data.training_count)) {
+    throw new Error(`training data truncated: ${training.length} of ${data.training_count} sales`)
+  }
+  const num = (x) => (x == null ? null : Number(x))
+  return {
+    training,
+    cars: (data.cars || []).map((c) => ({ ...c, buy_now: num(c.buy_now), opening_price: num(c.opening_price) })),
+    excluded: data.excluded || [],
+    demand: data.demand || [],
+    channels: data.channels || [],
+  }
+}
+
+// Just the car list. The bootstrap above is the fast path for opening the page;
+// this is for the two places that need the cars again on their own — a CSV
+// upload, and the fallback for a signed-in user who is not staff.
 export async function fetchSellableCars() {
   const { data, error } = await supabase.rpc('buyer_match_cars')
   if (error) throw error
-  return (data || []).map((c) => ({
-    ...c,
-    buy_now: c.buy_now == null ? null : Number(c.buy_now),
-    opening_price: c.opening_price == null ? null : Number(c.opening_price),
-  }))
-}
-
-// Why a car is not in the list. Shown on the page so "where did that one go" has
-// an answer that is not "read the SQL".
-export async function fetchExcludedCars() {
-  const { data, error } = await supabase.rpc('buyer_match_excluded')
-  if (error) return []
-  return data || []
-}
-
-// Training data for the engine: every channel we sell through, not just
-// SmartAuction. Staff-only at the database, and the caller falls back to the
-// SmartAuction-only table when the function is missing or the user is a buyer.
-//
-// MUST be paged. PostgREST caps an unbounded result at 1,000 rows and applies
-// that to RPCs too, and the union returns SmartAuction first — so a single
-// unpaged call came back with 1,000 rows that were 100% SmartAuction, no error,
-// and the page cheerfully reported "1,000 sales" against a real 6,188. The Range
-// header does not help either; PostgREST ignores it on an RPC POST. Paging is
-// therefore done with the function's own p_limit / p_offset arguments, which it
-// orders deterministically.
-const TRAINING_PAGE = 1000
-
-export async function fetchTrainingRows() {
-  const all = []
-  for (let offset = 0; ; offset += TRAINING_PAGE) {
-    const { data, error } = await supabase.rpc('buyer_training_rows', {
-      p_include_arbitration: false, p_limit: TRAINING_PAGE, p_offset: offset,
-    })
-    if (error) throw error
-    const rows = data || []
-    all.push(...rows)
-    if (rows.length < TRAINING_PAGE) break
-    // A function that ignored the arguments would loop for ever returning the
-    // same page; stop well before that becomes a hung browser tab.
-    if (offset > 200000) break
-  }
-
-  // Prove we got everything. Training on a truncated set is the failure this
-  // whole function exists to prevent, and it is invisible without a check.
-  const { data: expected, error: countErr } = await supabase.rpc('buyer_training_count', {
-    p_include_arbitration: false,
-  })
-  if (!countErr && Number(expected) > 0 && all.length < Number(expected)) {
-    throw new Error(
-      `training data truncated: got ${all.length} of ${expected} sales. ` +
-      'The engine would have trained on part of the book.',
-    )
-  }
-  return all
+  const num = (x) => (x == null ? null : Number(x))
+  return (data || []).map((c) => ({ ...c, buy_now: num(c.buy_now), opening_price: num(c.opening_price) }))
 }
 
 export const fetchSoldSales = () =>

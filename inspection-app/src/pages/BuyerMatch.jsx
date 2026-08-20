@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink } from 'lucide-react'
 import { recommendAll, recommendForBuyers } from '../services/buyerMatch'
 import {
-  parseCSV, mapActiveRow, mapSoldRow, fetchSoldSales,
-  fetchSellableCars, fetchExcludedCars, fetchTrainingRows, fetchDemandSignals, fetchTrainingStats,
+  parseCSV, mapActiveRow, mapSoldRow,
+  fetchBuyerMatchBootstrap, fetchSellableCars, fetchSoldSales as fetchSoldFallback,
   saveActive, saveSold, saveRecommendations,
 } from '../services/buyerMatchData'
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
@@ -48,23 +48,21 @@ export default function BuyerMatch() {
   async function load() {
     setLoading(true); setErr('')
     try {
-      // Training comes from buyer_training_rows(), which unions SmartAuction's
-      // named buyers with every other lane we sell through. It is staff-gated, so
-      // fall back to the SmartAuction-only table rather than showing nothing.
-      const [cars, training, dem, stats, gone] = await Promise.all([
-        fetchSellableCars(),
-        fetchTrainingRows().catch(async (e) => {
-          console.warn('buyer_training_rows unavailable, falling back to sa_sold_sales:', e?.message)
-          return fetchSoldSales()
-        }),
-        fetchDemandSignals(60),
-        fetchTrainingStats(),
-        fetchExcludedCars(),
-      ])
-      setActive(cars); setSold(training); setDemand(dem); setChannels(stats); setExcluded(gone)
+      // One call. See fetchBuyerMatchBootstrap — this used to be eleven, and the
+      // page took minutes to open because of it.
+      const b = await fetchBuyerMatchBootstrap(60)
+      setActive(b.cars); setSold(b.training); setDemand(b.demand)
+      setChannels(b.channels); setExcluded(b.excluded)
     } catch (e) {
-      // Tables may not exist yet — fall back to upload-only mode.
-      setErr(e.message?.includes('does not exist') ? '' : (e.message || String(e)))
+      // A signed-in buyer (not staff) gets no training data; fall back to the
+      // SmartAuction-only table rather than showing an empty page.
+      try {
+        const [cars, training] = await Promise.all([fetchSellableCars(), fetchSoldFallback()])
+        setActive(cars); setSold(training)
+        setErr('')
+      } catch {
+        setErr(e.message?.includes('does not exist') ? '' : (e.message || String(e)))
+      }
     } finally { setLoading(false) }
   }
 
