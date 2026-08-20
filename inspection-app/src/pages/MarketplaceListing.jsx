@@ -426,6 +426,13 @@ export default function MarketplaceListing() {
             edit={photoEdit}
             onClose={() => setEditingPhotos(false)}
             onSaved={setPhotoEdit}
+            // Photos added in the editor are already on the car, so the page
+            // behind it is out of date the moment they land. Same refetch the
+            // damage editor does.
+            onPhotosAdded={async () => {
+              const { data } = await supabase.rpc('marketplace_listing_detail', { listing_id: id })
+              if (data?.[0]) setCar(data[0])
+            }}
           />
         )}
 

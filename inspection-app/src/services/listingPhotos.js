@@ -65,6 +65,68 @@ export async function savePhotoEdits(vin, { hidden = [], ordering = [] }) {
   if (error) throw error
 }
 
+// Add photos to a car from the app.
+//
+// Goes through /api/listing-upload rather than writing to storage from here:
+// anon is RLS-blocked from writing, and widening that would let anything holding
+// the public bundle's key put pictures on any car. The endpoint checks the
+// session belongs to an admin and writes with the service key.
+//
+// Sent in batches because a Vercel function body caps around 4.5MB and phone
+// photos are 3-5MB each; `done` rides on the last batch so the photo sort runs
+// once, on the finished set. Files are downscaled first — a 12MP original is
+// four times the size of anything the marketplace displays.
+const UPLOAD_BATCH = 4
+const MAX_EDGE = 1600
+
+function shrink(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let { width: w, height: h } = img
+      if (w > MAX_EDGE || h > MAX_EDGE) {
+        const r = Math.min(MAX_EDGE / w, MAX_EDGE / h)
+        w = Math.round(w * r); h = Math.round(h * r)
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', 0.85).split(',')[1])
+    }
+    img.src = url
+  })
+}
+
+export async function uploadListingPhotos(vin, files, onProgress) {
+  const { data } = await supabase.auth.getSession()
+  const token = data?.session?.access_token
+  if (!token) throw new Error('Sign in again and retry')
+
+  const list = [...files].filter((f) => /^image\//.test(f.type))
+  if (!list.length) throw new Error('Those files are not images')
+
+  const urls = []
+  for (let i = 0; i < list.length; i += UPLOAD_BATCH) {
+    const batch = list.slice(i, i + UPLOAD_BATCH)
+    const photos = (await Promise.all(batch.map(shrink))).filter(Boolean)
+    if (!photos.length) continue
+
+    const res = await fetch(`${API_BASE_URL}/api/listing-upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ vin, photos, done: i + UPLOAD_BATCH >= list.length }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body?.error || `Upload failed (${res.status})`)
+    urls.push(...(body.urls || []))
+    onProgress?.(Math.min(i + batch.length, list.length), list.length)
+  }
+  return urls
+}
+
 // The house order for one car's photos — front three-quarter first, then the
 // rest of the walkaround, interior, close-ups, paperwork.
 //

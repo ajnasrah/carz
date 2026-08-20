@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
-import { X, Check, Star, ArrowUp, ArrowDown, Trash2, RotateCcw, Wand2 } from 'lucide-react'
-import { savePhotoEdits, autoSortPhotos } from '../services/listingPhotos'
+import { useState, useMemo, useRef } from 'react'
+import { X, Check, Star, ArrowUp, ArrowDown, Trash2, RotateCcw, Wand2, Upload } from 'lucide-react'
+import { savePhotoEdits, autoSortPhotos, uploadListingPhotos } from '../services/listingPhotos'
 
 // Bulk photo editing for a listing: tick as many photos as you like, then remove
 // them, send them to the front, or bring hidden ones back — all in one save.
@@ -8,7 +8,7 @@ import { savePhotoEdits, autoSortPhotos } from '../services/listingPhotos'
 // Nothing is deleted. Removing a photo hides it from the listing and it stays
 // available under "Show removed", because the photo itself belongs to the car
 // (Telegram, the inspection, SmartAuction) and other screens still show it.
-export default function PhotoEditor({ vin, photos, edit, onClose, onSaved }) {
+export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPhotosAdded }) {
   // Working copy: the full photo list in current order, each flagged hidden or not.
   const [items, setItems] = useState(() => {
     const hidden = new Set(edit?.hidden || [])
@@ -26,6 +26,40 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved }) {
   const [busy, setBusy] = useState(false)
   const [sorting, setSorting] = useState(false)
   const [error, setError] = useState('')
+  const [uploading, setUploading] = useState('')
+  const [dragging, setDragging] = useState(false)
+  const fileInput = useRef(null)
+
+  // Photos dropped or picked here go to the car, not to this screen: the upload
+  // writes them server-side and they are part of the listing whether or not you
+  // press Save. Save is still what commits the ORDER.
+  //
+  // They land at the end of the working list, which is where an unordered photo
+  // belongs — the sorter has not looked at them yet. It runs on the finished set
+  // the moment the upload reports done, so reopening this screen shows them in
+  // their proper slots.
+  async function addFiles(files) {
+    const list = [...(files || [])]
+    if (!list.length) return
+    setError('')
+    setUploading(`0/${list.length}`)
+    try {
+      const urls = await uploadListingPhotos(vin, list, (n, total) => setUploading(`${n}/${total}`))
+      if (urls.length) {
+        setItems((prev) => {
+          const have = new Set(prev.map((p) => p.url))
+          const fresh = urls.filter((u) => !have.has(u))
+            .map((url, i) => ({ url, label: 'Added', hidden: false, _i: prev.length + i }))
+          return [...prev, ...fresh]
+        })
+        onPhotosAdded?.()
+      }
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setUploading('')
+    }
+  }
 
   const shown = useMemo(
     () => items.filter((p) => showHidden || !p.hidden),
@@ -194,7 +228,34 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved }) {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-3"
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer?.files) }}
+      >
+        {/* Drop anywhere in this pane, or tap to pick — a phone's picker takes
+            the whole camera roll at once, which is the point. */}
+        <button
+          onClick={() => fileInput.current?.click()}
+          disabled={!!uploading}
+          className={`w-full mb-3 rounded-lg border-2 border-dashed px-3 py-4 text-center transition-colors ${
+            dragging ? 'border-emerald-400 bg-emerald-500/10' : 'border-slate-700 bg-slate-900/40'
+          } ${uploading ? 'opacity-60' : 'active:border-emerald-500'}`}
+        >
+          <Upload size={18} className="mx-auto mb-1 text-slate-400" />
+          <span className="block text-xs font-bold text-slate-200">
+            {uploading ? `Uploading ${uploading}…` : 'Add photos'}
+          </span>
+          <span className="block text-[10px] text-slate-500 mt-0.5">
+            {uploading ? 'keep this screen open' : 'drop a batch here, or tap to choose'}
+          </span>
+        </button>
+        <input
+          ref={fileInput} type="file" accept="image/*" multiple className="hidden"
+          onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
+        />
+
         {shown.length === 0 ? (
           <p className="text-center text-slate-500 py-12 text-sm">No photos on this car</p>
         ) : (
