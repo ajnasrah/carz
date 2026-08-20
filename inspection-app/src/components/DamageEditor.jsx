@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { X, Plus, Trash2, Wand2 } from 'lucide-react'
 import {
-  SA_DAMAGE_TYPES, SA_EXTERIOR_PANELS, SA_INTERIOR_PANELS,
+  SA_DAMAGE_TYPES, SA_EXTERIOR_PANELS, SA_INTERIOR_PANELS, KNOWN_PANELS,
   STANDARD_DAMAGES, readDamages, saveDamages, isInteriorPanel,
 } from '../services/listingDamages'
 
@@ -75,12 +75,26 @@ export default function DamageEditor({ vin, checklist, onClose, onSaved }) {
         {rows.map((r, i) => (
           <div key={i} className="rounded-lg bg-slate-900 border border-slate-800 p-2.5">
             <div className="flex gap-2">
+              {/* A panel the list doesn't know still has to show, and still has
+                  to survive a save. A <select> whose value matches no option
+                  renders as the placeholder — so this read as "Panel…" for
+                  anything typed as free text ("rear bumper") or scraped whole
+                  off a condition report ("Door - RF - Dent/Paint Dmg"), and the
+                  first Save would have written that placeholder's empty string
+                  back over the real panel. Carrying the value as its own option
+                  keeps it visible and keeps it intact until someone chooses
+                  a better one. */}
               <select
                 value={r.panel}
                 onChange={(e) => update(i, { panel: e.target.value })}
                 className="flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-sm text-white"
               >
                 <option value="">Panel…</option>
+                {r.panel && !KNOWN_PANELS.has(r.panel) && (
+                  <optgroup label="As received">
+                    <option value={r.panel}>{r.panel}</option>
+                  </optgroup>
+                )}
                 <optgroup label="Exterior">
                   {SA_EXTERIOR_PANELS.map((p) => <option key={p} value={p}>{p}</option>)}
                 </optgroup>

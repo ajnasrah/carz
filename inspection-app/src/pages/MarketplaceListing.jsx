@@ -396,12 +396,21 @@ export default function MarketplaceListing() {
         {/* Photo gallery */}
         <PhotoGallery photos={dedupedPhotos} />
 
-        {isAdmin && uniquePhotos.length > 0 && (
+        {/* Shown even at zero photos, which is exactly when it matters most: the
+            editor is now the way to ADD pictures, and hiding it behind "has
+            pictures" left the cars that need them worst with no way in. The
+            label follows the car — nothing to edit yet on an empty one. */}
+        {isAdmin && (
           <button
             onClick={() => setEditingPhotos(true)}
-            className="mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-slate-800 text-slate-200 text-xs font-bold active:bg-slate-700"
+            className={`mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold ${
+              uniquePhotos.length === 0
+                ? 'bg-emerald-500 text-slate-900 active:bg-emerald-600'
+                : 'bg-slate-800 text-slate-200 active:bg-slate-700'
+            }`}
           >
-            <ImageIcon size={14} /> Edit photos
+            <ImageIcon size={14} />
+            {uniquePhotos.length === 0 ? 'Add photos' : 'Edit photos'}
             {uniquePhotos.length !== dedupedPhotos.length &&
               ` · ${uniquePhotos.length - dedupedPhotos.length} removed`}
           </button>

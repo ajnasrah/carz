@@ -230,9 +230,18 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
 
       <div
         className="flex-1 overflow-y-auto px-4 py-3"
-        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        // Only react to FILES. Dragging a tile around inside the editor carries
+        // no files, and lighting up the drop zone for it made the whole pane
+        // feel like it was doing something else with your gesture.
+        onDragOver={(e) => {
+          if (!e.dataTransfer?.types?.includes('Files')) return
+          e.preventDefault(); setDragging(true)
+        }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer?.files) }}
+        onDrop={(e) => {
+          if (!e.dataTransfer?.files?.length) { setDragging(false); return }
+          e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files)
+        }}
       >
         {/* Drop anywhere in this pane, or tap to pick — a phone's picker takes
             the whole camera roll at once, which is the point. */}
@@ -270,8 +279,18 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
                     on ? 'border-emerald-500' : 'border-slate-800'
                   } ${p.hidden ? 'opacity-40' : ''}`}
                 >
-                  <button onClick={() => toggle(p.url)} className="block w-full aspect-[4/3] bg-slate-900">
-                    <img src={p.url} alt="" className="w-full h-full object-cover" />
+                  {/* draggable={false} matters: an <img> is draggable by
+                      default, so on a desktop the smallest movement while
+                      pressing starts a native image drag INSTEAD of a click —
+                      the photo just doesn't select and nothing says why. The
+                      drop zone above made that worse by highlighting on the
+                      same gesture. */}
+                  <button
+                    type="button"
+                    onClick={() => toggle(p.url)}
+                    className="block w-full aspect-[4/3] bg-slate-900 cursor-pointer"
+                  >
+                    <img src={p.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
                   </button>
 
                   <span
