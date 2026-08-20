@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal, Send } from 'lucide-react'
+import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal, Send, AlertTriangle } from 'lucide-react'
 import { logSearch, logFilter } from '../services/listingEvents'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
@@ -87,6 +87,13 @@ function firstPhoto(checklist, edit) {
 // every low-mile car too, so there was no way to ask for the 100–150k stuff on
 // its own. Multi-select like the rest, so 50–100k plus 150k+ is one question.
 // Upper bound is exclusive, so the bands don't overlap at the round numbers.
+// A car with no asking price, or with no photographs, cannot be sold from this
+// page — a buyer has nothing to decide on. Both halves matter, so it is an OR.
+// Module scope: these close over nothing, and defining them inside the component
+// made a new function on every render for the memos to chase.
+const photoCount = (c) => Object.keys((c.checklist || {}).photos || {}).length
+const isUnsellable = (c) => !c.buy_now || photoCount(c) === 0
+
 const MILE_BANDS = [
   { label: 'Under 50k', min: 0, max: 50000 },
   { label: '50k – 100k', min: 50000, max: 100000 },
@@ -160,6 +167,9 @@ export default function Marketplace() {
   // Admin controls follow the signed-in profile the app already loaded — no
   // extra round trip, and one shared definition of "admin" with every other page.
   const isAdmin = isAdminProfile(profile)
+  // Cars that aren't sellable yet: no price, or nothing to look at. Admin-only,
+  // because it is a work list rather than a way to shop.
+  const [needsWork, setNeedsWork] = useState(false)
   // Location history is an internal record — which shop, which transporter,
   // which auction. It is not part of what we sell, and the marketplace is
   // public, so it is staff-only wherever it appears.
@@ -233,8 +243,14 @@ export default function Marketplace() {
     setMileFilter([])
   }
 
+  const needsWorkCount = useMemo(
+    () => (isAdmin ? visible.filter(isUnsellable).length : 0),
+    [visible, isAdmin],
+  )
+
   const filtered = useMemo(() => {
     let result = visible
+    if (needsWork) result = result.filter(isUnsellable)
     if (makeFilter.length) result = result.filter((c) => makeFilter.includes(c.make))
     if (activeModels.length) result = result.filter((c) => activeModels.includes(c.model))
     if (yearFilter.length) result = result.filter((c) => yearFilter.includes(c.year))
@@ -265,7 +281,7 @@ export default function Marketplace() {
       })
     }
     return result
-  }, [visible, search, makeFilter, activeModels, yearFilter, mileFilter, sort])
+  }, [visible, needsWork, search, makeFilter, activeModels, yearFilter, mileFilter, sort])
 
   // Record what people are shopping for. This is the demand side of Buyer Match:
   // a dealer who filters to Silverado / 2019-2022 / under 100k three times in a
@@ -327,6 +343,24 @@ export default function Marketplace() {
               className="mt-1 text-xs font-semibold text-slate-400 underline active:text-slate-200"
             >
               {showRemoved ? 'Back to the marketplace' : `Removed cars (${hidden.size})`}
+            </button>
+          )}
+          {/* The work list. Sits with the other admin control rather than in the
+              filter drawer because it answers a question you ask on arrival —
+              what is not ready to sell — not one you refine a search with.
+              Hidden entirely at zero: nothing to chase is worth saying once, by
+              the button being gone. */}
+          {isAdmin && needsWorkCount > 0 && (
+            <button
+              onClick={() => setNeedsWork((v) => !v)}
+              className={`mt-2 mx-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${
+                needsWork
+                  ? 'bg-amber-500 text-slate-900'
+                  : 'bg-slate-800 text-amber-300 border border-amber-500/40'
+              }`}
+            >
+              <AlertTriangle size={13} />
+              {needsWork ? `Showing ${filtered.length} needing work` : `${needsWorkCount} missing price or photos`}
             </button>
           )}
         </div>

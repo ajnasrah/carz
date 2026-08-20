@@ -67,13 +67,28 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
   )
   const liveCount = items.filter((p) => !p.hidden).length
 
-  function toggle(url) {
+  // Shift-click takes everything between the last one and this one. Ticking 30
+  // of a 55-photo car one at a time is the kind of job people stop doing.
+  const lastPicked = useRef(null)
+
+  function toggle(url, range = false) {
     setPicked((s) => {
       const next = new Set(s)
+      if (range && lastPicked.current && lastPicked.current !== url) {
+        const list = shown.map((p) => p.url)
+        const a = list.indexOf(lastPicked.current)
+        const b = list.indexOf(url)
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a]
+          for (let k = lo; k <= hi; k++) next.add(list[k])
+          return next
+        }
+      }
       if (next.has(url)) next.delete(url)
       else next.add(url)
       return next
     })
+    lastPicked.current = url
   }
 
   function setHidden(urls, hidden) {
@@ -273,9 +288,20 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
               const on = picked.has(p.url)
               const isCover = !p.hidden && items.filter((x) => !x.hidden)[0]?.url === p.url
               return (
+                // The WHOLE tile toggles. It used to be only the image, while a
+                // label-and-arrows bar covered the bottom of every thumbnail and
+                // the tick badge covered a corner — so tapping quickly through a
+                // batch, a good share of the taps landed on dead pixels and only
+                // some photos ticked. That is what "can't select multiple" was.
                 <div
                   key={p.url}
-                  className={`relative rounded-lg overflow-hidden border-2 ${
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => toggle(p.url, e.shiftKey)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(p.url, e.shiftKey) }
+                  }}
+                  className={`relative rounded-lg overflow-hidden border-2 cursor-pointer select-none ${
                     on ? 'border-emerald-500' : 'border-slate-800'
                   } ${p.hidden ? 'opacity-40' : ''}`}
                 >
@@ -285,13 +311,9 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
                       the photo just doesn't select and nothing says why. The
                       drop zone above made that worse by highlighting on the
                       same gesture. */}
-                  <button
-                    type="button"
-                    onClick={() => toggle(p.url)}
-                    className="block w-full aspect-[4/3] bg-slate-900 cursor-pointer"
-                  >
+                  <div className="block w-full aspect-[4/3] bg-slate-900">
                     <img src={p.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />
-                  </button>
+                  </div>
 
                   <span
                     className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center border-2 ${
@@ -318,7 +340,7 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
                     </span>
                     <span className="flex gap-0.5">
                       <button
-                        onClick={() => nudge(p.url, -1)}
+                        onClick={(e) => { e.stopPropagation(); nudge(p.url, -1) }}
                         disabled={i === 0}
                         className="p-1 text-slate-200 disabled:opacity-30"
                         title="Move earlier"
@@ -326,7 +348,7 @@ export default function PhotoEditor({ vin, photos, edit, onClose, onSaved, onPho
                         <ArrowUp size={12} />
                       </button>
                       <button
-                        onClick={() => nudge(p.url, 1)}
+                        onClick={(e) => { e.stopPropagation(); nudge(p.url, 1) }}
                         disabled={i === shown.length - 1}
                         className="p-1 text-slate-200 disabled:opacity-30"
                         title="Move later"
