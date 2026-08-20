@@ -52,7 +52,9 @@ export default function Sold() {
     let from = 0
     while (true) {
       if (cancelledRef?.current) return []
-      const { data, error } = await supabase.from('sold').select(RETAIL_COLUMNS).range(from, from + PAGE - 1)
+      // sold_rows(), not `sold`: the table grants profit to nobody, and this
+      // masks it per caller instead of failing the query.
+      const { data, error } = await supabase.rpc('sold_rows').select(RETAIL_COLUMNS).range(from, from + PAGE - 1)
       if (error || !data) break
       all.push(...data)
       if (data.length < PAGE) break

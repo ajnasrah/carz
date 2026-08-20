@@ -126,10 +126,12 @@ export default function ExecutiveDashboard({ embedded = false }) {
         Promise.resolve({ data: [] }),
         
         // Sales trends for charts
+        // sold_clean, not `sold`: it types the text columns and masks cost and
+        // profit per caller. The raw table no longer grants either to anyone.
         supabase
-          .from('sold')
-          .select('sale_date, sales_price, total_cost, profit_on_sale, days_on_lot')
-          .gte('sale_date', new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString())
+          .from('sold_clean')
+          .select('sale_date, sales_price, total_cost, profit, days_on_lot')
+          .gte('sale_date', new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
           .order('sale_date', { ascending: true })
       ])
       
@@ -190,7 +192,7 @@ export default function ExecutiveDashboard({ embedded = false }) {
         const date = new Date(sale.sale_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         if (!acc[date]) acc[date] = { revenue: 0, profit: 0, units: 0 }
         acc[date].revenue += parseFloat(sale.sales_price || 0)
-        acc[date].profit += parseFloat(sale.profit_on_sale || 0)
+        acc[date].profit += parseFloat(sale.profit || 0)
         acc[date].units++
         return acc
       }, {})
