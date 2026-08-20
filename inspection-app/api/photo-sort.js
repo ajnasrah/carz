@@ -132,6 +132,22 @@ async function sortCar(car, { dry, model }) {
   const known = await cachedTags(car.photos)
   const fresh = car.photos.filter((u) => !known.has(u))
 
+  // Nothing new to look at and an ordering that already covers every photo:
+  // there is no work here, and saying so costs one read instead of a write.
+  // This is what makes it safe to fire this on every upload chunk and every
+  // photo that lands — most of those calls are about a car that was already
+  // sorted a second ago, and they now stop at this line.
+  if (!dry && !fresh.length) {
+    const r = await sb(`listing_photo_edits?vin=eq.${encodeURIComponent(car.vin)}&select=ordering,set_by`)
+    const [row] = r.ok ? await r.json().catch(() => []) : []
+    if (row?.set_by === 'ai') {
+      const seen = new Set(row.ordering || [])
+      if (car.photos.every((u) => seen.has(u))) {
+        return { vin: car.vin, stock: car.stock, car: car.car, photos: car.photos.length, result: 'unchanged' }
+      }
+    }
+  }
+
   let usage = { input_tokens: 0, output_tokens: 0 }
   if (fresh.length) {
     const out = await classifyPhotos(fresh, { apiKey: process.env.ANTHROPIC_API_KEY, model })

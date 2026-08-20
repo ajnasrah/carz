@@ -19,6 +19,7 @@ import {
   sweepParkedPhotos, rebindGuessedPhotos,
 } from './_lib/intake.js';
 import { readKeyTag, resolveTagCar } from './_lib/keytag.js';
+import { sortCarPhotos } from './_lib/sortTrigger.js';
 
 // NOT the edge runtime. This imports _lib/keytag.js, which uses the Anthropic
 // SDK to read a key tag out of a photo, and that SDK pulls in node:fs and
@@ -344,6 +345,17 @@ async function processUpdate(update) {
     pending_file_id: pendingFileId, session_vin_at_receipt: parkedSessionVin,
     vin_source: vinSource, processed: true, error: null,
   }).eq('message_id', msgKey);
+
+  // A ready-to-sell photo just became part of a car's gallery, so its order is
+  // stale. Tell the sorter now instead of leaving it to the 15-minute sweep —
+  // this is the path that puts a freshly bought car on the marketplace, and it
+  // should not go up in whatever order the crew happened to shoot it in.
+  //
+  // Waits only long enough to dispatch (see sortTrigger): the webhook owes
+  // Telegram an answer in seconds, and the sort runs in its own function.
+  if (mediaPath && vin6 && (chat.station === 'ready' || chat.station === 'seller')) {
+    await sortCarPhotos(vin6);
+  }
 
   // Closes the simultaneous-burst race. Workers fire the VIN text and every
   // photo at once, so each lands as a concurrent webhook with no ordering

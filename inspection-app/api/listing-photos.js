@@ -30,6 +30,7 @@
 // Env (Vercel): SUPABASE_URL, SUPABASE_SERVICE_KEY, LISTING_UPLOAD_SECRET
 
 import { createClient } from '@supabase/supabase-js';
+import { sortCarPhotos } from './_lib/sortTrigger.js';
 
 export const config = { runtime: 'edge' };
 
@@ -84,7 +85,7 @@ function sniff(bytes) {
   return null;
 }
 
-export default async function handler(request) {
+export default async function handler(request, context) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (request.method !== 'POST') return json({ error: 'POST only' }, 405);
 
@@ -159,6 +160,12 @@ export default async function handler(request) {
     p_vin: vinRaw, p_photos: map,
   });
   if (rpcErr) return json({ error: `save failed: ${rpcErr.message}` }, 502);
+
+  // The car's pictures just changed, so its gallery order is stale. Fired here
+  // rather than waited for by the 15-minute sweep, so a car scraped and listed
+  // inside that window still reaches the marketplace in the house order.
+  // Fire-and-forget: an upload must never fail because sorting did.
+  sortCarPhotos(vin6, { waitUntil: context?.waitUntil?.bind(context) });
 
   return json({ ok: true, vin6, uploaded: uploaded.length, total: Object.keys(map).length, outcome });
 }
