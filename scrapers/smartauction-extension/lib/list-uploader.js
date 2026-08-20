@@ -1722,6 +1722,46 @@
       config.log(`sa_active_cars refresh failed: ${e.message}`, 'warn');
     }
 
+    // Record what became of every listing in this report — including the removed
+    // and held ones, which are the cars we could not move. This is the daily
+    // upload path, so it is the one that has to do it; the Buyer Match "Full
+    // Report" button does the same thing for a manual upload.
+    try {
+      const mapO = window.BuyerMatchUploader && window.BuyerMatchUploader.mapOutcome;
+      const cls = window.BuyerMatchUploader && window.BuyerMatchUploader.classify;
+      if (mapO && cls) {
+        const seen = new Map();
+        for (const r of rows) {
+          const vin = String(r.VIN || '').trim();
+          if (!vin) continue;
+          const st = cls(r);
+          if (st === 'other') continue;
+          seen.set(`${vin}|${st}`, mapO(r, st));
+        }
+        const list = [...seen.values()];
+        let saved = 0;
+        for (let i = 0; i < list.length; i += 500) {
+          const batch = list.slice(i, i + 500);
+          const res = await fetch(
+            `${config.supabaseUrl}/rest/v1/sa_listing_outcomes?on_conflict=${encodeURIComponent('vin,observed_on,status')}`,
+            {
+              method: 'POST',
+              headers: {
+                apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
+                'Content-Type': 'application/json',
+                Prefer: 'resolution=merge-duplicates,return=minimal',
+              },
+              body: JSON.stringify(batch),
+            });
+          if (res.ok) saved += batch.length;
+          else config.log(`sa_listing_outcomes batch failed: ${(await res.text()).slice(0, 160)}`, 'warn');
+        }
+        config.log(`sa_listing_outcomes: ${saved} listing outcome(s) recorded`, 'ok');
+      }
+    } catch (e) {
+      config.log(`listing outcomes not saved: ${e.message}`, 'warn');
+    }
+
     // Accumulate sold buyers into sa_sold_sales (buyer-match training) and push
     // brand-new buyers to GoHighLevel — so ONE SmartAuction report also feeds the
     // buyer pipeline. Without this, sold buyers only landed via the separate Buyer

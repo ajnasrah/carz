@@ -1,15 +1,30 @@
-// SmartAuction Buyer-Match Engine
-// Ranks the top-N likely buyers for each active car, optimizing for "highest price likely"
-// among buyers who genuinely fit the car. Validated against 1,037 real sold rows.
+// Buyer-Match Engine
+// Ranks buyers for cars and cars for buyers, across every channel we sell
+// through — not just SmartAuction.
 //
-// Algorithm (see docs/BUYER_MATCH_SPEC.md):
-//   1. Build a profile per buyer from sold history (make/segment affinity, price & mileage
-//      bands, per-segment price premium with shrinkage, recency, frequency, geography).
-//   2. For each active car compute a Comparable Market Value (CMV) = blend of the car's own
-//      Buy Now price with the median sale price of comparable sold cars.
-//   3. Relevance gate: keep only buyers who plausibly buy this make/segment, price & mileage.
-//   4. predicted_price = CMV x buyer premium (display).  RANK by a confidence-weighted
-//      composite = premium x fit x support, so noisy 1-purchase buyers can't win on a tie.
+// WHAT CHANGED AND WHY (2026-08-20 rewrite)
+// The previous engine trained on sa_sold_sales alone (1,236 rows, 100%
+// SmartAuction) and scored with a hand-tuned blend of price fit, segment volume
+// and make affinity behind hard price/mileage gates. Backtested walk-forward over
+// the last 180 days of real sales it hit 30.2% at top-3 — against 33.5% for
+// "sort buyers by how many cars they bought in the last 90 days". It lost to a
+// GROUP BY. Three things were actually wrong, and none of them were the formula:
+//
+//   1. It could only see one channel. UAX, DAA, ADESA, Manheim, ACV, OpenLane,
+//      our Jackson store and every direct dealer sale were invisible — roughly
+//      five sixths of the business. Training now comes from buyer_training_rows(),
+//      which unions all of it: 6,088 sales, 654 buyers.
+//   2. It identified buyers by the raw name string while every other screen used
+//      phone -> email -> name, so one dealer group's nine rooftops were nine
+//      separate small buyers. Profiles are keyed on buyer_key now.
+//   3. The hard gates eliminated the buyer who actually bought the car in 24% of
+//      backtested sales. They are soft penalties now.
+//
+// Recency is the strongest single signal in the data, so it is weighted properly
+// (exponential decay on every count) rather than applied as a 0.85–1.00 nudge at
+// the end. And the score is computed as a full car x buyer matrix, so "the best
+// cars for this buyer" is its own ranking rather than a by-product of slicing
+// each car's list to three.
 
 // ---- helpers ---------------------------------------------------------------
 export const num = (x) => {
@@ -22,19 +37,34 @@ const median = (a) => {
   const m = Math.floor(v.length / 2);
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 };
+const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 export function segment(make, model) {
   const s = `${make ?? ''} ${model ?? ''}`.toLowerCase();
   const has = (arr) => arr.some((k) => s.includes(k));
-  if (has(['silverado','sierra','f-150','f150','f-250','f-350','ram 1500','ram 2500','tundra','tacoma','ranger','colorado','canyon','frontier','titan','ridgeline','gladiator','maverick','super duty','1500','2500','3500'])) return 'truck';
   if (has(['transit','express','promaster','sienna','odyssey','carnival','pacifica','caravan','sprinter'])) return 'van';
+  if (has(['silverado','sierra','f-150','f150','f-250','f-350','ram 1500','ram 2500','tundra','tacoma','ranger','colorado','canyon','frontier','titan','ridgeline','gladiator','maverick','super duty','1500','2500','3500'])) return 'truck';
   if (has(['tesla','model 3','mach-e','ev6','id.4','lyriq','mullen','ioniq','bolt','leaf'])) return 'ev';
   if (has(['tahoe','suburban','yukon','expedition','explorer','escape','equinox','traverse','blazer','pilot','highlander','4runner','rav4','cr-v','crv','rogue','pathfinder','murano','telluride','palisade','santa fe','sorento','wrangler','grand cherokee','cherokee','compass','renegade','bronco','edge','nautilus','cx-9','cx-5','outlander','ascent','atlas','tiguan','durango','acadia','enclave','escalade','navigator','q5','x5','gx','rx','kona','tucson','seltos','encore','trailblazer','envision','corsair','aviator'])) return 'suv';
   return 'car';
 }
 
-// US state centroids (lat, lng) for transport-distance estimates. Approximate is fine —
-// we only need relative proximity to turn into a transport-cost signal.
+// Stable buyer identity — phone, then email, then name. MUST mirror
+// buyer_training_rows() in SQL and buyerKey() in buyerTrends.js, or one dealer
+// becomes two buyers depending on which screen you are looking at.
+export function buyerKeyOf(r) {
+  if (r.buyer_key) return r.buyer_key;
+  const digits = String(r.buyer_phone || '').replace(/\D/g, '');
+  const ten = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  if (ten.length === 10) return `p:${ten}`;
+  const email = String(r.buyer_email || '').trim().toLowerCase();
+  if (email.includes('@') && email.length > 3) return `e:${email}`;
+  const name = String(r.buyer_name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return name ? `n:${name}` : null;
+}
+
+// US state centroids for a rough transport-distance signal. Approximate is fine —
+// only relative proximity matters.
 const STATE_CENTROIDS = {
   AL: [32.8, -86.8], AK: [64.0, -152.0], AZ: [34.3, -111.7], AR: [34.9, -92.4], CA: [37.2, -119.3],
   CO: [39.0, -105.5], CT: [41.6, -72.7], DE: [39.0, -75.5], FL: [28.6, -82.4], GA: [32.6, -83.4],
@@ -48,7 +78,6 @@ const STATE_CENTROIDS = {
   VA: [37.5, -78.9], WA: [47.4, -120.4], WV: [38.6, -80.6], WI: [44.6, -90.0], WY: [43.0, -107.6],
   DC: [38.9, -77.0],
 };
-// Extract a 2-letter state code from a location string like "Memphis, TN" or "TX".
 function parseState(loc) {
   if (!loc) return null;
   const m = String(loc).toUpperCase().match(/\b([A-Z]{2})\b(?!.*\b[A-Z]{2}\b)/);
@@ -63,7 +92,7 @@ function milesBetween(a, b) {
   return Math.round(2 * R * Math.asin(Math.sqrt(h)));
 }
 
-// Parse a sale date (ISO "YYYY-MM-DD" or "MM/DD/YYYY") to epoch-days. Null if unparseable.
+// Sale date (ISO or MM/DD/YYYY) to epoch-days. Null if unparseable.
 function dateNum(s) {
   if (!s) return null;
   const str = String(s);
@@ -75,8 +104,6 @@ function dateNum(s) {
   return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
 }
 
-// Price tier within a segment so an Escalade isn't priced like an Equinox.
-// Derived from the car's own value anchor relative to segment medians.
 function priceTier(price, segMedian) {
   if (!price || !segMedian) return 'mid';
   const r = price / segMedian;
@@ -85,237 +112,435 @@ function priceTier(price, segMedian) {
   return 'mid';
 }
 
+// ---- tunables --------------------------------------------------------------
+export const DEFAULT_CONFIG = {
+  // Days for a purchase's evidence to lose half its weight. Swept {60, 90, 120,
+  // 180, 270} x dollarWeight {0,1,2,3} walk-forward over the last 180 days:
+  // 60 is clearly best for the nameable call list (top-1 21.9% / top-3 34.5%,
+  // against 19.6% / 29.5% at 270) and within noise of the best on the combined
+  // ladder. Who is buying RIGHT NOW is the strongest signal in this data.
+  halfLife: 60,
+  // How hard the score chases the buyer who pays the most, over the buyer most
+  // likely to buy at all — the premium (typically 0.8–1.2) raised to this power.
+  // The owner's stated priority is top dollar first, and 1 is where that stops
+  // being free: at 2 the call list gains ~0.4pp at top-3 but the full ladder
+  // loses 1.8pp at top-1, and at 3 everything degrades sharply.
+  dollarWeight: 1,
+  // Shape of the soft penalties that replaced the old hard gates.
+  priceSigma: 0.55,    // lognormal width around what a buyer actually pays
+  odoSigma: 0.70,
+  odoFloor: 0.40,      // worst a mileage mismatch can cost, rather than exclusion
+  // Recent browsing (listing_events) counts for something, but never more than
+  // a real purchase history.
+  demandBoost: 0.35,
+  // Strength of the pull toward the market's own mix when a buyer has barely any
+  // history. Without it a customer who bought exactly one sedan reads as a pure
+  // sedan specialist and outranks a dealer who has bought forty — the classic
+  // small-sample lift problem, and it put a one-purchase retail walk-in second on
+  // the call list. Roughly "pretend we also saw this buyer make `shrink` average
+  // purchases".
+  shrink: 8,
+  // A car only appears in a buyer's list if he is among the top N buyers for it.
+  // Without a floor every buyer gets a full dozen cars and the list means
+  // nothing; at 25 it is still ~8x more generous than the old top-3.
+  maxBuyerRankForCar: 25,
+  spread: {
+    enabled: true,
+    perRepeat: 0.10,   // penalty per extra time a buyer is already someone's #1
+    maxPenalty: 0.45,
+  },
+  // Auction lanes (UAX, DAA, ADESA...) are one customer each until we can upload
+  // their buyer lists. They take enormous volume, so mixing them into the call
+  // list would bury every nameable buyer. They get their own list instead.
+  separateChannels: true,
+  topN: 3,             // buyers shown per car
+  topCars: 12,         // cars shown per buyer
+};
+
 // ---- profile building ------------------------------------------------------
-// sold: array of rows {make,model,year,odometer,sale_price,sale_date,buyer_name,buyer_email,buyer_phone,buyer_state}
-export function buildModel(sold) {
+// rows: buyer_training_rows() output, or raw sa_sold_sales rows (buyer_key is
+// derived when absent, so both shapes work).
+export function buildModel(sold, config = {}) {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
   const rows = sold.map((r) => ({
     ...r,
     _p: num(r.sale_price), _o: num(r.odometer), _y: num(r.year),
     _seg: r.segment || segment(r.make, r.model),
     _d: dateNum(r.sale_date),
-  }));
+    _key: buyerKeyOf(r),
+  })).filter((r) => r._key);
 
-  // global median sale price per segment (premium baseline + tier baseline)
+  const maxDate = Math.max(...rows.map((r) => r._d).filter((x) => x != null), 0);
+  // Every count in this model is recency-weighted: a sale from last week is worth
+  // a full unit, one from four months ago about half. This is the single change
+  // that made the biggest difference in backtesting.
+  const weightOf = (r) => (r._d == null ? 0.25 : Math.pow(0.5, (maxDate - r._d) / cfg.halfLife));
+
   const segMed = {};
   for (const seg of new Set(rows.map((r) => r._seg))) {
     segMed[seg] = median(rows.filter((r) => r._seg === seg).map((r) => r._p)) || 0;
   }
-  // newest sale date in the dataset = "now" reference for recency
-  const maxDate = Math.max(...rows.map((r) => r._d).filter((x) => x != null), 0);
-
-  // buyer profiles
-  const prof = new Map();
+  // A premium measured against the whole segment says "this buyer buys dearer
+  // cars", not "this buyer pays over the odds". Every high-volume dealer then
+  // pins to the 1.2 cap and predicted_price stops telling them apart — three
+  // different buyers came back with the identical figure on a $37k Genesis whose
+  // segment median is $15k. Bucketing by price tier compares like with like.
+  for (const r of rows) r._tier = priceTier(r._p, segMed[r._seg]);
+  const segTierMed = {};
   for (const r of rows) {
-    const b = (r.buyer_name || '').trim();
-    if (!b) continue;
-    if (!prof.has(b)) prof.set(b, { name: b, cars: [], makeCount: {}, segCount: {}, makeSegCount: {} });
-    const p = prof.get(b);
+    const k = `${r._seg}|${r._tier}`;
+    (segTierMed[k] ||= []).push(r._p);
+  }
+  for (const k of Object.keys(segTierMed)) segTierMed[k] = median(segTierMed[k]) || 0;
+
+  const prof = new Map();
+  let totalW = 0;
+  const segW = {}, makeW = {};
+  for (const r of rows) {
+    const w = weightOf(r);
+    totalW += w;
+    segW[r._seg] = (segW[r._seg] || 0) + w;
+    makeW[r.make] = (makeW[r.make] || 0) + w;
+
+    let p = prof.get(r._key);
+    if (!p) {
+      p = {
+        key: r._key, name: (r.buyer_name || '').trim(), cars: [],
+        w: 0, n: 0, segW: {}, makeW: {}, makeSegW: {},
+        channel_key: r.channel_key || 'smartauction',
+        channel_label: r.channel_label || null,
+        is_channel: r._key.startsWith('c:'),
+        email: null, phone: null, state: null, city: null,
+      };
+      prof.set(r._key, p);
+    }
     p.cars.push(r);
-    p.makeCount[r.make] = (p.makeCount[r.make] || 0) + 1;
-    p.segCount[r._seg] = (p.segCount[r._seg] || 0) + 1;
-    // bought THIS make IN THIS segment — the most specific "will they buy this car" signal
-    const ms = `${r.make}|${r._seg}`;
-    p.makeSegCount[ms] = (p.makeSegCount[ms] || 0) + 1;
-    p.email = r.buyer_email; p.phone = r.buyer_phone; p.state = r.buyer_state;
+    p.w += w; p.n += 1;
+    p.segW[r._seg] = (p.segW[r._seg] || 0) + w;
+    p.makeW[r.make] = (p.makeW[r.make] || 0) + w;
+    p.makeSegW[`${r.make}|${r._seg}`] = (p.makeSegW[`${r.make}|${r._seg}`] || 0) + w;
+    // Keep the newest non-empty contact details and the newest spelling of the name.
+    p.email = r.buyer_email || p.email;
+    p.phone = r.buyer_phone || p.phone;
+    p.state = r.buyer_state || p.state;
+    p.city = r.buyer_city || p.city;
+    if (r.buyer_name) p.name = String(r.buyer_name).trim();
   }
 
-  const SHRINK = 3;          // pull premium toward 1.0 until ~3 samples back it
+  const SHRINK = 3;
   const PREM_LO = 0.8, PREM_HI = 1.2;
-  const RECENCY_HALFLIFE = 120;  // days; a buyer this stale loses ~half their recency boost
   for (const p of prof.values()) {
-    p.n = p.cars.length;
     p.prices = p.cars.map((c) => c._p).filter((x) => x != null);
     p.odos = p.cars.map((c) => c._o).filter((x) => x != null);
     p.priceMed = median(p.prices);
     p.odoMed = median(p.odos);
-    // recency: days since this buyer's most recent purchase → multiplier in [0.85, 1.0]
-    const lastSale = Math.max(...p.cars.map((c) => c._d).filter((x) => x != null), 0);
-    const ageDays = lastSale ? Math.max(0, maxDate - lastSale) : 9999;
-    p.lastSale = lastSale;
-    p.recencyMult = 0.85 + 0.15 * Math.exp(-ageDays / RECENCY_HALFLIFE);
-    // overall average price this buyer actually paid
     p.avgPrice = p.prices.length ? p.prices.reduce((a, b) => a + b, 0) / p.prices.length : null;
-    // per-segment premium (how much above/below market this buyer pays), shrunk by sample size,
-    // plus the buyer's actual average price within each segment.
-    p.prem = {};
-    p.avgBySeg = {};
-    const segP = {};
-    for (const c of p.cars) if (c._p) (segP[c._seg] ||= []).push(c._p);
-    for (const [seg, ps] of Object.entries(segP)) {
-      const base = segMed[seg] || median(ps);
+    const lastSale = Math.max(...p.cars.map((c) => c._d).filter((x) => x != null), 0);
+    p.lastSale = lastSale || null;
+    p.daysSince = lastSale ? Math.max(0, maxDate - lastSale) : null;
+    p.share = totalW ? p.w / totalW : 0;
+    // Channels shown as one customer keep their label as the display name.
+    if (p.is_channel && !p.name) p.name = p.channel_label || p.key.slice(2);
+
+    p.prem = {}; p.premTier = {}; p.avgBySeg = {}; p.medBySeg = {}; p.medByTier = {};
+    const segP = {}, tierP = {};
+    for (const c of p.cars) {
+      if (c._p == null) continue;
+      (segP[c._seg] ||= []).push(c._p);
+      (tierP[`${c._seg}|${c._tier}`] ||= []).push(c._p);
+    }
+    const shrinkTo1 = (ps, base) => {
       const raw = base ? median(ps) / base : 1;
-      const ns = ps.length;
-      const shrunk = (ns * raw + SHRINK * 1.0) / (ns + SHRINK);
-      p.prem[seg] = Math.max(PREM_LO, Math.min(PREM_HI, shrunk));
+      return clamp((ps.length * raw + SHRINK * 1.0) / (ps.length + SHRINK), PREM_LO, PREM_HI);
+    };
+    for (const [seg, ps] of Object.entries(segP)) {
+      p.prem[seg] = shrinkTo1(ps, segMed[seg] || median(ps));
       p.avgBySeg[seg] = ps.reduce((a, b) => a + b, 0) / ps.length;
+      p.medBySeg[seg] = median(ps);
+    }
+    for (const [k, ps] of Object.entries(tierP)) {
+      p.premTier[k] = shrinkTo1(ps, segTierMed[k] || median(ps));
+      p.medByTier[k] = median(ps);
     }
   }
 
-  return { rows, profiles: [...prof.values()], segMed };
+  return {
+    rows, profiles: [...prof.values()], segMed, maxDate, totalW,
+    segTierMed,
+    segBase: Object.fromEntries(Object.entries(segW).map(([k, v]) => [k, totalW ? v / totalW : 0])),
+    makeBase: Object.fromEntries(Object.entries(makeW).map(([k, v]) => [k, totalW ? v / totalW : 0])),
+    cfg,
+  };
 }
 
-// Comparable Market Value: blend the car's own Buy Now with median of comparable sales.
+// Comparable Market Value: blend the car's own ask with the median of comparable
+// sales. SmartAuction leaves Buy Now empty and fills Opening Price, and the
+// marketplace RPC returns whichever it has as buy_now, so read all three.
 function cmv(car, model) {
   const { rows } = model;
   const seg = car.segment || segment(car.make, car.model);
-  // The ask. SmartAuction's export fills `Opening Price` and leaves `Buy Now`
-  // empty on every car we list, so reading buy_now alone left bn null for the
-  // whole active list — which silently disabled the price band below AND
-  // dropped the 60/40 anchor, pricing every car off comps alone. The
-  // marketplace already treats opening price as the ask (price_source
-  // 'smartauction'); this agrees with it.
   const y = num(car.year), o = num(car.odometer);
-  const bn = num(car.buy_now) ?? num(car.opening_price);
-  // Only comp against sales in a price band around Buy Now, so a $6.5k micro-EV is never
-  // comped against $30k Teslas that merely share the "ev" segment + year + mileage.
+  const bn = num(car.buy_now) ?? num(car.opening_price) ?? num(car.price);
   const inBand = (r) => !bn || (r._p >= bn * 0.5 && r._p <= bn * 2);
   const comp = (pred, minN) => {
     const c = rows.filter((r) => r._p && inBand(r) && pred(r)).map((r) => r._p);
     return c.length >= minN ? median(c) : null;
   };
-  // Strong comps (make/year/mileage-aware) refine Buy Now 60/40.
   const strong =
     comp((r) => r.make === car.make && r._seg === seg && r._y && Math.abs(r._y - y) <= 2 && r._o && Math.abs(r._o - o) <= 25000, 3) ||
     comp((r) => r._seg === seg && r._y && Math.abs(r._y - y) <= 2 && r._o && Math.abs(r._o - o) <= 30000, 4) ||
     comp((r) => r.make === car.make && r._seg === seg, 3);
   if (bn && strong) return 0.6 * bn + 0.4 * strong;
   if (strong) return strong;
-  // Weak comp (segment-only median, e.g. a $30k-Tesla-dominated "ev") is unreliable for an
-  // off-profile car — lean hard on Buy Now (80/20) so a $6.5k micro-EV isn't priced like a Tesla.
+  // A segment-only median is unreliable for an off-profile car (a $6.5k micro-EV
+  // against a Tesla-dominated "ev"), so lean hard on the ask.
   const weak = comp((r) => r._seg === seg, 1);
   if (bn && weak) return 0.8 * bn + 0.2 * weak;
   return bn || weak || null;
 }
 
-// ---- scoring one car -------------------------------------------------------
-export function recommendForCar(car, model) {
-  const { profiles, segMed } = model;
+// ---- scoring one car against every buyer -----------------------------------
+export function scoreCar(car, model, demand) {
+  const { profiles, segMed, segBase, makeBase, cfg } = model;
   const seg = car.segment || segment(car.make, car.model);
   const value = cmv(car, model);
   const codo = num(car.odometer);
   const tier = priceTier(value, segMed[seg]);
-  const carState = parseState(car.location);   // where the car sits (for transport distance)
+  const carState = parseState(car.location);
 
-  // Score all buyers. `relaxed` drops the make/segment gate (cold-start fallback).
-  const scorePass = (relaxed) => {
-    const out = [];
-    for (const p of profiles) {
-      const makeAff = (p.makeCount[car.make] || 0) / p.n;
-      const segAff = (p.segCount[seg] || 0) / p.n;
-      if (!relaxed && makeAff === 0 && segAff === 0) continue;   // never buys this make or segment
+  const out = [];
+  for (const p of profiles) {
+    // --- how much does this buyer buy, lately ---
+    // sqrt so a lane with 1,400 purchases does not simply outrank everyone on
+    // volume alone, while still counting for more than a one-car buyer.
+    const volume = Math.sqrt(p.w);
 
-      if (p.priceMed && value) {                                 // price band gate (always)
-        if (value < p.priceMed * 0.45 || value > p.priceMed * 1.9) continue;
-      }
-      if (!relaxed && p.odoMed && codo) {                        // mileage band gate
-        if (codo < p.odoMed * 0.4 || codo > p.odoMed * 1.8) continue;
-      }
+    // --- does he buy this body style / this make in this body style ---
+    // Lift, not share: "this buyer skews toward trucks compared with the market"
+    // survives the fact that most of what we sell is trucks and SUVs. Shrunk
+    // toward the market mix by `shrink` pseudo-purchases, so a thin history
+    // cannot manufacture a specialist.
+    const K = cfg.shrink;
+    const segRate = Math.max(segBase[seg] || 0.01, 0.01);
+    const segShare = ((p.segW[seg] || 0) + K * segRate) / (p.w + K);
+    const segLift = segShare / segRate;
+    const msRate = Math.max((makeBase[car.make] || 0) * segRate, 0.002);
+    const msShare = ((p.makeSegW[`${car.make}|${seg}`] || 0) + K * msRate) / (p.w + K);
+    const msLift = msShare / msRate;
 
-      const prem = p.prem[seg] ?? 1.0;
-      const predicted = value ? value * prem : null;
-      const buyerAvg = p.avgBySeg[seg] ?? p.avgPrice;   // what they actually pay for this kind of car
-
-      const makeN = p.makeCount[car.make] || 0;
-      const segN = p.segCount[seg] || 0;
-      const makeInSeg = p.makeSegCount[`${car.make}|${seg}`] || 0;  // bought THIS make IN THIS segment
-
-      // MATCH SCORE — how likely is THIS buyer to buy a car LIKE THIS? A weighted blend of
-      // real predictors, so a pick isn't decided by make alone:
-      //   • price fit (40%) — does the car's value sit where this buyer actually buys?
-      //   • segment volume (22%) — do they buy this body type, and how much?
-      //   • make-in-segment (28%) — have they bought THIS make IN THIS segment? (most specific)
-      //   • make anywhere (10%) — weak brand signal (a Ford-truck buyer ≠ Ford-SUV buyer)
-      const ln = (x, cap) => Math.log10(1 + x) / Math.log10(1 + cap);
-      const priceFit = buyerAvg && value
-        ? Math.exp(-0.5 * Math.pow((value - buyerAvg) / (0.6 * buyerAvg), 2))   // 1 at match, decays with gap
-        : 0.5;
-      const segVol = ln(segN, 40);
-      const makeSegVol = ln(makeInSeg, 12);
-      const makeVol = ln(makeN, 40);
-      let match = 0.40 * priceFit + 0.22 * segVol + 0.28 * makeSegVol + 0.10 * makeVol;
-      if (relaxed) match = 0.5 * priceFit + 0.1;                  // cold-start: price/mileage only
-      match = Math.max(0.02, match);
-
-      // Geography: closer buyer = cheaper transport = stronger lead. geoMult ∈ [0.90, 1.05].
-      const miles = carState && p.state ? milesBetween(carState, p.state.toUpperCase()) : null;
-      const geoMult = miles == null ? 1.0 : 1.05 - 0.15 * Math.min(1, miles / 1500);
-
-      // Final: predicted price (top-dollar lever) × how-good-a-match × recency × geography.
-      const score = (predicted ?? 0) * match * p.recencyMult * geoMult;
-
-      const geoStr = miles == null ? (p.state || '?') : `${p.state}, ~${miles}mi`;
-      const confidence = relaxed ? 'low'
-        : (makeInSeg >= 3 || (segN >= 8 && priceFit > 0.5)) ? 'high'
-        : (makeInSeg >= 1 || segN >= 3) ? 'medium' : 'low';
-      const fitPct = Math.round(priceFit * 100);
-      const reason = relaxed
-        ? `No ${car.make}/${seg} history — price & mileage match. ${p.n} total buys, ${geoStr}.`
-        : `${makeInSeg ? `Bought ${makeInSeg} ${car.make} ${seg}${makeInSeg > 1 ? 's' : ''}; ` : `Buys ${seg}s (${segN}); `}` +
-          `avg ${buyerAvg ? '$' + Math.round(buyerAvg).toLocaleString() : '?'} vs this ${value ? '$' + Math.round(value).toLocaleString() : '?'} (${fitPct}% price fit). ${p.n} buys, ${geoStr}.`;
-
-      out.push({
-        buyer_name: p.name, buyer_email: p.email, buyer_phone: p.phone, buyer_state: p.state,
-        predicted_price: predicted ? Math.round(predicted) : null, miles,
-        buyer_avg_price: buyerAvg ? Math.round(buyerAvg) : null,
-        buyer_seg_count: segN, make_in_seg: makeInSeg, price_fit: Math.round(priceFit * 100),
-        score, baseScore: score, confidence, reason, _aff: makeAff, _n: p.n,
-      });
+    // --- does the money line up ---
+    // Prefer what he pays for cars in THIS price bracket of THIS segment; fall
+    // back up the hierarchy when the bracket is thin.
+    const buyerAvg = p.medByTier[`${seg}|${tier}`] ?? p.medBySeg[seg] ?? p.avgBySeg[seg] ?? p.priceMed;
+    let priceFit = 0.5;
+    if (buyerAvg && value) {
+      const lr = Math.log(value / buyerAvg);
+      priceFit = Math.exp(-0.5 * (lr / cfg.priceSigma) ** 2);
     }
-    return out;
-  };
+    // Mileage used to be a hard gate that excluded the true buyer in a quarter of
+    // backtested sales. It is a penalty now, floored so it can never eliminate.
+    let odoFit = 1;
+    if (p.odoMed && codo) {
+      const lr = Math.log(codo / Math.max(p.odoMed, 1));
+      odoFit = cfg.odoFloor + (1 - cfg.odoFloor) * Math.exp(-0.5 * (lr / cfg.odoSigma) ** 2);
+    }
 
-  let cands = scorePass(false);
-  if (cands.length === 0) cands = scorePass(true);             // cold-start: relax make/segment gate
-  cands.sort((a, b) => b.score - a.score || (b.predicted_price ?? 0) - (a.predicted_price ?? 0));
+    // --- has he been looking at cars like this on the marketplace ---
+    const d = demand?.get(p.key);
+    const looked = d ? (d.byMake.get(String(car.make || '').toUpperCase()) || 0) + (d.bySegment.get(seg) || 0) : 0;
+    const demandMult = 1 + cfg.demandBoost * Math.min(1, looked / 3);
+
+    // --- transport ---
+    const miles = carState && p.state ? milesBetween(carState, String(p.state).toUpperCase()) : null;
+    const geoMult = miles == null ? 1.0 : 1.05 - 0.15 * Math.min(1, miles / 1500);
+
+    const prem = p.premTier[`${seg}|${tier}`] ?? p.prem[seg] ?? 1.0;
+    const predicted = value ? value * prem : null;
+
+    const likelihood = volume
+      * Math.pow(Math.max(segLift, 0.05), 0.7)
+      * Math.pow(Math.max(msLift, 0.05), 0.35)
+      * Math.max(priceFit, 0.02)
+      * odoFit * demandMult * geoMult;
+    // Top dollar first, then proven buyer — the owner's stated priority.
+    const score = likelihood * Math.pow(prem, cfg.dollarWeight);
+
+    const segN = p.cars.filter((c) => c._seg === seg).length;
+    const makeInSeg = p.cars.filter((c) => c._seg === seg && c.make === car.make).length;
+    const confidence = p.is_channel
+      ? (segN >= 20 ? 'high' : segN >= 5 ? 'medium' : 'low')
+      : (makeInSeg >= 3 || (segN >= 8 && priceFit > 0.5)) ? 'high'
+        : (makeInSeg >= 1 || segN >= 3) ? 'medium' : 'low';
+
+    const geoStr = miles == null ? (p.state || '—') : `${p.state}, ~${miles}mi`;
+    const fresh = p.daysSince == null ? 'no dated buys' : p.daysSince <= 45 ? 'buying now' : `last bought ${p.daysSince}d ago`;
+    const reason = p.is_channel
+      ? `${p.name} takes ${segN} ${seg}${segN === 1 ? '' : 's'} like this` +
+        `${makeInSeg ? ` (${makeInSeg} ${car.make})` : ''}; ` +
+        `typically ${buyerAvg ? '$' + Math.round(buyerAvg).toLocaleString() : '?'} vs this ${value ? '$' + Math.round(value).toLocaleString() : '?'}. ${fresh}.`
+      : `${makeInSeg ? `Bought ${makeInSeg} ${car.make} ${seg}${makeInSeg > 1 ? 's' : ''}; ` : `Buys ${seg}s (${segN}); `}` +
+        `avg ${buyerAvg ? '$' + Math.round(buyerAvg).toLocaleString() : '?'} vs this ${value ? '$' + Math.round(value).toLocaleString() : '?'} ` +
+        `(${Math.round(priceFit * 100)}% price fit)${looked ? `, looked at ${looked} like it` : ''}. ${p.n} buys, ${fresh}, ${geoStr}.`;
+
+    out.push({
+      buyer_key: p.key, buyer_name: p.name, buyer_email: p.email, buyer_phone: p.phone,
+      buyer_state: p.state, buyer_city: p.city,
+      channel_key: p.channel_key, channel_label: p.channel_label, is_channel: p.is_channel,
+      predicted_price: predicted ? Math.round(predicted) : null,
+      buyer_avg_price: buyerAvg ? Math.round(buyerAvg) : null,
+      buyer_seg_count: segN, make_in_seg: makeInSeg,
+      price_fit: Math.round(priceFit * 100), demand_views: looked,
+      total_buys: p.n, days_since: p.daysSince, miles,
+      score, baseScore: score, confidence, reason,
+    });
+  }
+  out.sort((a, b) => b.score - a.score || (b.predicted_price ?? 0) - (a.predicted_price ?? 0));
   return {
-    vin: car.vin, value: value ? Math.round(value) : null, segment: seg, tier,
-    candidates: cands,                                          // full list (spread pass re-ranks)
+    vin: car.vin, stock_number: car.stock_number ?? null,
+    value: value ? Math.round(value) : null, segment: seg, tier,
+    candidates: out,
   };
 }
 
-// Tunable knobs. Priority: top dollar -> proven buyer -> spread/fair-share.
-export const DEFAULT_CONFIG = {
-  trustK: 4,            // evidence half-saturation; higher = trust matters more vs price
-  trustFloor: 0.25,     // floor multiplier for low-evidence buyers (lower = price dominates more)
-  spread: {
-    enabled: true,
-    perRepeat: 0.10,    // score penalty per extra time a buyer is already someone's #1
-    maxPenalty: 0.45,   // cap so a great match can still repeat
-  },
-  topN: 3,
-};
+// Backwards-compatible name.
+export const recommendForCar = scoreCar;
 
-// ---- batch (with global spread / fair-share pass) --------------------------
-export function recommendAll(activeCars, soldRows, config = {}) {
-  const cfg = { ...DEFAULT_CONFIG, ...config, spread: { ...DEFAULT_CONFIG.spread, ...(config.spread || {}) } };
-  const model = buildModel(soldRows);
-
-  // Pass 1: score every car's candidates (price-primary, trust-discounted).
-  const scored = activeCars.map((car) => recommendForCar(car, model));
-
-  // Pass 2: SPREAD. Count provisional #1 picks, then penalize over-used buyers so the
-  // next-best (often also a strong-dollar buyer) can take #1 on some cars.
-  const finalize = (cars) =>
-    cars.map((c) => ({
-      vin: c.vin, value: c.value, segment: c.segment, tier: c.tier,
-      recommendations: c.candidates.slice(0, cfg.topN).map((x, i) => {
-        const { baseScore, ...rest } = x; void baseScore;
-        return { ...rest, rank: i + 1 };
-      }),
-    }));
-
-  if (!cfg.spread.enabled) return finalize(scored);
-
-  const firstCount = {};
-  for (const c of scored) if (c.candidates[0]) firstCount[c.candidates[0].buyer_name] = (firstCount[c.candidates[0].buyer_name] || 0) + 1;
-
-  for (const c of scored) {
-    for (const cand of c.candidates) {
-      const reps = (firstCount[cand.buyer_name] || 1) - 1;
-      const penalty = Math.min(cfg.spread.maxPenalty, reps * cfg.spread.perRepeat);
-      cand.score = cand.baseScore * (1 - penalty);
-    }
-    c.candidates.sort((a, b) => b.score - a.score || b.predicted_price - a.predicted_price);
+// Turn buyer_demand_signals() rows into a lookup the scorer can use.
+export function buildDemandIndex(signalRows = []) {
+  const m = new Map();
+  for (const r of signalRows) {
+    if (!r.buyer_key) continue;
+    let d = m.get(r.buyer_key);
+    if (!d) { d = { byMake: new Map(), bySegment: new Map() }; m.set(r.buyer_key, d); }
+    const views = Number(r.views) || 1;
+    const mk = String(r.make || '').toUpperCase();
+    if (mk) d.byMake.set(mk, (d.byMake.get(mk) || 0) + views);
+    if (r.segment) d.bySegment.set(r.segment, (d.bySegment.get(r.segment) || 0) + views);
   }
-  return finalize(scored);
+  return m;
+}
+
+// ---- the full matrix -------------------------------------------------------
+// Everything below reads this one structure, so "top buyers for a car" and "top
+// cars for a buyer" are two views of the same numbers rather than one derived
+// from the other's leftovers.
+export function scoreAll(activeCars, soldRows, config = {}, demandRows = []) {
+  const cfg = {
+    ...DEFAULT_CONFIG, ...config,
+    spread: { ...DEFAULT_CONFIG.spread, ...(config.spread || {}) },
+  };
+  const model = buildModel(soldRows, cfg);
+  const demand = buildDemandIndex(demandRows);
+  const scored = activeCars.map((car) => scoreCar(car, model, demand));
+
+  // SPREAD — count provisional #1 picks among nameable buyers and penalise
+  // repeats, so the second-best (often also a strong-dollar buyer) can take the
+  // top slot on some cars. Channels are exempt: a lane taking a hundred cars is
+  // a fact about the lane, not hogging.
+  if (cfg.spread.enabled) {
+    const firstCount = {};
+    for (const c of scored) {
+      const first = c.candidates.find((x) => !x.is_channel);
+      if (first) firstCount[first.buyer_key] = (firstCount[first.buyer_key] || 0) + 1;
+    }
+    for (const c of scored) {
+      for (const cand of c.candidates) {
+        if (cand.is_channel) { cand.score = cand.baseScore; continue; }
+        const reps = (firstCount[cand.buyer_key] || 1) - 1;
+        cand.score = cand.baseScore * (1 - Math.min(cfg.spread.maxPenalty, reps * cfg.spread.perRepeat));
+      }
+      c.candidates.sort((a, b) => b.score - a.score || (b.predicted_price ?? 0) - (a.predicted_price ?? 0));
+    }
+  }
+  return { model, cfg, cars: scored };
+}
+
+// Per-car view: the buyers to call about this car, and separately the lanes that
+// reliably take it.
+export function recommendAll(activeCars, soldRows, config = {}, demandRows = []) {
+  const { cfg, cars } = scoreAll(activeCars, soldRows, config, demandRows);
+  const rank = (list) => list.map((x, i) => {
+    const { baseScore, ...rest } = x; void baseScore;
+    return { ...rest, rank: i + 1 };
+  });
+  return cars.map((c) => {
+    const named = cfg.separateChannels ? c.candidates.filter((x) => !x.is_channel) : c.candidates;
+    const lanes = cfg.separateChannels ? c.candidates.filter((x) => x.is_channel) : [];
+    return {
+      vin: c.vin, stock_number: c.stock_number, value: c.value, segment: c.segment, tier: c.tier,
+      recommendations: rank(named.slice(0, cfg.topN)),
+      channels: rank(lanes.slice(0, 3)),
+      candidateCount: c.candidates.length,
+    };
+  });
+}
+
+// Per-buyer view: for EVERY buyer we know, the cars worth pitching him, ranked on
+// his own scores. This is the direction calls are made in, and it is computed
+// from the full matrix — a buyer who is a consistent fourth-best on eleven cars
+// used to appear nowhere at all.
+export function recommendForBuyers(activeCars, soldRows, config = {}, demandRows = []) {
+  const { cfg, cars, model } = scoreAll(activeCars, soldRows, config, demandRows);
+  const byVin = new Map(activeCars.map((c) => [c.vin, c]));
+  const buyers = new Map();
+
+  for (const c of cars) {
+    // Rank each kind of candidate on its own ladder. A lane takes hundreds of
+    // cars, so it heads almost every combined list — and "best fit" would then
+    // mean "beat UAX", which no dealer ever does and which is not the question
+    // anyway. A named buyer's position is among named buyers.
+    const ladder = new Map();
+    let namedSeen = 0, laneSeen = 0;
+    for (const cand of c.candidates) {
+      ladder.set(cand.buyer_key, cand.is_channel ? ++laneSeen : ++namedSeen);
+    }
+    c.candidates.forEach((cand) => {
+      const i = ladder.get(cand.buyer_key) - 1;
+      // Everyone scores against every car, so without a floor every buyer we have
+      // ever met comes back holding a full dozen cars and the list says nothing.
+      // Being in a car's top 25 is a real claim; being its 300th-best buyer is not.
+      if (i >= cfg.maxBuyerRankForCar) return;
+      let b = buyers.get(cand.buyer_key);
+      if (!b) {
+        b = {
+          buyer_key: cand.buyer_key, buyer_name: cand.buyer_name,
+          buyer_email: cand.buyer_email, buyer_phone: cand.buyer_phone,
+          buyer_state: cand.buyer_state, buyer_city: cand.buyer_city,
+          channel_key: cand.channel_key, channel_label: cand.channel_label,
+          is_channel: cand.is_channel, total_buys: cand.total_buys,
+          days_since: cand.days_since, cars: [],
+        };
+        buyers.set(cand.buyer_key, b);
+      }
+      b.cars.push({
+        ...(byVin.get(c.vin) || {}),
+        vin: c.vin, stock_number: c.stock_number, est_value: c.value,
+        segment: c.segment, tier: c.tier,
+        predicted_price: cand.predicted_price, score: cand.score,
+        confidence: cand.confidence, reason: cand.reason,
+        price_fit: cand.price_fit, demand_views: cand.demand_views,
+        car_rank: i + 1,                    // his position among buyers for this car
+      });
+    });
+  }
+
+  const out = [];
+  for (const b of buyers.values()) {
+    if (!b.cars.length) continue;
+    b.cars.sort((x, y) => y.score - x.score);
+    b.cars = b.cars.slice(0, cfg.topCars).map((c, i) => ({ ...c, rank: i + 1 }));
+    b.count = b.cars.length;
+    b.top_pick_count = b.cars.filter((c) => c.car_rank === 1).length;
+    b.total_predicted = b.cars.reduce((s, c) => s + (c.predicted_price || 0), 0);
+    b.best_score = b.cars[0]?.score ?? 0;
+    out.push(b);
+  }
+  // A buyer who is somebody's best shot at a car is worth calling before one who
+  // merely fits a lot of them; after that, the strongest single match beats a
+  // long weak list, so a thin-history buyer cannot climb on volume of near-misses.
+  out.sort((a, b) =>
+    b.top_pick_count - a.top_pick_count
+    || b.best_score - a.best_score
+    || b.count - a.count);
+  return { buyers: out, cars, model };
 }

@@ -80,6 +80,23 @@
     };
   }
 
+  // Every row of the report, whatever became of it. The removed and held ones are
+  // the cars we listed and could NOT move: the only negative examples we have,
+  // and the only source of days-to-sell on the selling side. They were classified
+  // and counted here for months and then dropped on the floor.
+  function mapOutcome(r, status) {
+    return {
+      vin: r.VIN, status,
+      year: int(r.Year), make: r.Make, model: r.Model, odometer: int(r.Odometer),
+      segment: segment(r.Make, r.Model),
+      opening_price: dec(r['Opening Price']), buy_now: dec(r['Buy Now']),
+      days_remaining: int(r['Days Remaining']),
+      removal_date: toIso(r['Removal Date']), removal_reason: r['Removal Reason'] || null,
+      hold_date: toIso(r['Hold Date']), hold_reason: r['Hold Reason'] || null,
+      location: r.Location || null,
+    };
+  }
+
   // Classify an InventoryResults row by lifecycle. The full report contains active,
   // sold, removed, and held cars in one file — status is derived from which columns
   // are filled (SmartAuction leaves the others blank).
@@ -107,6 +124,28 @@
     const seen = new Map();
     for (const r of rows) seen.set(r[key], r);   // later row wins (caller pre-sorts sold by date asc)
     return [...seen.values()];
+  }
+
+  // Same as upsert(), but for a table whose conflict key is more than one column
+  // and includes a server-defaulted one (observed_on). Dedupe is done on the
+  // columns we actually supply.
+  async function upsertMulti(table, rows, onConflict, dedupeKeys) {
+    const seen = new Map();
+    for (const r of rows) seen.set(dedupeKeys.map((k) => r[k]).join('|'), r);
+    const list = [...seen.values()];
+    let ok = 0;
+    for (let i = 0; i < list.length; i += 500) {
+      const batch = list.slice(i, i + 500);
+      const url = `${cfg.supabaseUrl}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: headers({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+        body: JSON.stringify(batch),
+      });
+      if (!res.ok) throw new Error(`${table}: ${res.status} ${await res.text()}`);
+      ok += batch.length;
+    }
+    return ok;
   }
 
   async function upsert(table, rows, onConflict) {
@@ -224,6 +263,7 @@
 
         const activeRows = [];
         const soldRows = [];   // full sold rows (buyer contacts) → sa_sold_sales training data
+        const outcomeRows = [];// every row, whatever became of it → sa_listing_outcomes
         const soldVins = [];
         const activeVins = [];
         const counts = { active: 0, sold: 0, removed: 0, hold: 0, other: 0 };
@@ -231,6 +271,7 @@
           const st = classify(r);
           counts[st] = (counts[st] || 0) + 1;
           const vin = String(r.VIN || '').trim();
+          if (vin && st !== 'other') outcomeRows.push(mapOutcome(r, st));
           if (st === 'active') {
             const m = mapActive(r);
             if (m.vin) { activeRows.push(m); activeVins.push(m.vin); }
@@ -254,6 +295,20 @@
         setStatus(id, `Adding ${soldRows.length} sold…`);
         const soldSaved = soldRows.length ? await upsert('sa_sold_sales', soldRows, 'vin') : 0;
 
+        // One snapshot per VIN per day per status: re-uploading the same report
+        // twice in an afternoon must not look like twice the evidence.
+        setStatus(id, `Recording ${outcomeRows.length} outcomes…`);
+        let outcomesSaved = 0;
+        try {
+          outcomesSaved = outcomeRows.length
+            ? await upsertMulti('sa_listing_outcomes', outcomeRows, 'vin,observed_on,status', ['vin', 'status'])
+            : 0;
+        } catch (e) {
+          // The outcome log is new and secondary; never let it cost us the sold
+          // rows that were already saved above.
+          log(`  outcomes not saved: ${e.message}`, 'err');
+        }
+
         setStatus(id, 'Marking sold…');
         const soldMarked = uniqSoldVins.length ? await rpc('marketplace_mark_sold', { p_vins: uniqSoldVins }) : 0;
         const reactivated = uniqActiveVins.length ? await rpc('marketplace_unmark_sold', { p_vins: uniqActiveVins }) : 0;
@@ -266,6 +321,7 @@
         log(`Full report: ${uniqActive.length} active priced · ${soldSaved} sold rows saved · ${soldMarked} sold hidden · ${reactivated} relisted`, 'ok');
         log(`  ${gh}`, gh.startsWith('GHL sync failed') ? 'err' : 'ok');  // ← new-buyer confirmation: "GHL: N new lead(s) pushed of M"
         log(`  rows — active ${counts.active}, sold ${counts.sold}, removed ${counts.removed}, hold ${counts.hold}, other ${counts.other}`, 'ok');
+        log(`  ${outcomesSaved} listing outcome(s) recorded (removed + hold are the cars that did not sell)`, 'ok');
       } catch (e) {
         setStatus(id, '✗ failed', 'error');
         log(`Full report failed: ${e.message}`, 'err');
@@ -280,5 +336,5 @@
     if (rp) rp.addEventListener('change', (e) => handleReport(e.target.files && e.target.files[0]));
   }
 
-  window.BuyerMatchUploader = { bindUI, parseCSV, mapActive, mapSold, segment, classify };
+  window.BuyerMatchUploader = { bindUI, parseCSV, mapActive, mapSold, mapOutcome, segment, classify };
 })();

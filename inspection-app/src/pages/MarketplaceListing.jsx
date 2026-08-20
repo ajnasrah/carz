@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
+import { logListingView, logReserve } from '../services/listingEvents'
 import { ArrowLeft, ChevronLeft, ChevronRight, Copy, Check, Image as ImageIcon, Wrench } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
@@ -201,9 +202,16 @@ export default function MarketplaceListing() {
       setAllIds((listRes.data || []).map((r) => r.id))
       const vin = detail?.full_vin || detail?.vin
       if (vin) setPhotoEdit(await fetchPhotoEdit(vin))
+      // Opening a listing is the strongest anonymous demand signal we get: it is
+      // a specific car, not a category. Buyer Match reads these back through
+      // buyer_demand_signals() for anyone we can put a name to.
+      logListingView(detail, routerLocation.state?.fromShare ? 'share_list' : 'marketplace')
       setLoading(false)
     }
     load()
+    // routerLocation.state is read once, on arrival; re-running on navigation
+    // state changes would double-log the same view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
   const currentIdx = allIds.indexOf(id)
@@ -235,6 +243,8 @@ export default function MarketplaceListing() {
     setReserveMsg('')
     try {
       await reserveCar(car.stock_number, billingLocationId)
+      // The hardest demand signal there is — someone put their name on a car.
+      logReserve(car)
       setLocationChoices(null)
       setConfirming(false)
       try { sessionStorage.removeItem('reserveAfterSignup') } catch { /* private mode */ }

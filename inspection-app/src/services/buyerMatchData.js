@@ -85,8 +85,80 @@ async function fetchAll(table, columns, order) {
 
 export const fetchActiveCars = () =>
   fetchAll('sa_active_cars', 'vin,year,make,model,trim,odometer,color,segment,buy_now,opening_price,location,detail_url,uploaded_at')
+
+// The car universe. sa_active_cars is only what the last SmartAuction CSV held —
+// 33 cars against 58 on the marketplace, so 25 cars we own could never be matched
+// to a buyer. marketplace_listings() is the real book: everything we are trying
+// to sell, whether or not it happens to be listed on SmartAuction today. The
+// SmartAuction snapshot is merged in for the fields it alone carries (trim,
+// physical location, the SA detail link).
+export async function fetchSellableCars() {
+  const [listings, sa] = await Promise.all([
+    supabase.rpc('marketplace_listings'),
+    fetchActiveCars().catch(() => []),
+  ])
+  if (listings.error) throw listings.error
+  const saByVin = new Map(sa.map((c) => [(c.vin || '').toUpperCase(), c]))
+  const seen = new Set()
+  const out = []
+  for (const l of listings.data || []) {
+    const vin = String(l.full_vin || l.vin || '').toUpperCase()
+    if (!vin || seen.has(vin)) continue
+    seen.add(vin)
+    const extra = saByVin.get(vin) || {}
+    out.push({
+      vin,
+      stock_number: l.stock_number || null,
+      // marketplace_listings() returns everything as text.
+      year: int(l.year), make: l.make, model: l.model,
+      trim: extra.trim || null,
+      odometer: int(l.mileage) ?? extra.odometer ?? null,
+      color: l.vehicle_color || extra.color || null,
+      segment: extra.segment || segment(l.make, l.model),
+      buy_now: dec(l.buy_now) ?? extra.buy_now ?? null,
+      opening_price: extra.opening_price ?? null,
+      location: extra.location || null,
+      detail_url: l.sa_url || extra.detail_url || null,
+      price_source: l.price_source || null,
+      on_smartauction: saByVin.has(vin),
+    })
+  }
+  // A car listed on SmartAuction but not yet stocked in Frazer has no marketplace
+  // row; it is still ours to sell.
+  for (const c of sa) {
+    const vin = (c.vin || '').toUpperCase()
+    if (!vin || seen.has(vin)) continue
+    seen.add(vin)
+    out.push({ ...c, vin, stock_number: null, on_smartauction: true })
+  }
+  return out
+}
+
+// Training data for the engine: every channel we sell through, not just
+// SmartAuction. Staff-only at the database, and the caller falls back to the
+// SmartAuction-only table when the function is missing or the user is a buyer.
+export async function fetchTrainingRows() {
+  const { data, error } = await supabase.rpc('buyer_training_rows')
+  if (error) throw error
+  return data || []
+}
+
 export const fetchSoldSales = () =>
   fetchAll('sa_sold_sales', 'vin,year,make,model,odometer,segment,sale_date,sale_price,buyer_name,buyer_email,buyer_phone,buyer_state', 'sale_date')
+
+// What each known buyer has been browsing. Empty (not fatal) before the events
+// table has anything in it, or for a user who may not read it.
+export async function fetchDemandSignals(days = 60) {
+  const { data, error } = await supabase.rpc('buyer_demand_signals', { p_days: days })
+  if (error) return []
+  return data || []
+}
+
+export async function fetchTrainingStats() {
+  const { data, error } = await supabase.rpc('buyer_training_stats')
+  if (error) return []
+  return data || []
+}
 
 // Dedupe by a key — PostgREST upsert can't touch the same conflict key twice in one command,
 // and a single SmartAuction export can list the same VIN more than once.
@@ -123,18 +195,48 @@ export async function saveActive(rows) {
   return valid.length
 }
 
-// Persist computed recommendations (cache). Optional — the page also computes live.
+// Persist computed recommendations.
+//
+// Two destinations, on purpose. sa_recommendations is the live cache — current
+// picks, replaced each run — and recommendation_history is the append-only
+// record, one row per (car, buyer, day), which is the only thing that can ever
+// answer "were last month's picks any good". recommendation_scorecard() reads it.
+//
+// This used to be called behind `.catch(() => {})` in three places, so it had
+// been failing silently for months and sa_recommendations held zero rows. It
+// throws now, and the caller reports it.
 export async function saveRecommendations(results) {
-  await supabase.from('sa_recommendations').delete().neq('active_vin', '')
   const rows = results.flatMap((res) =>
-    res.recommendations.map((rec) => ({
-      active_vin: res.vin, rank: rec.rank, buyer_name: rec.buyer_name,
+    [...res.recommendations, ...(res.channels || [])].map((rec) => ({
+      active_vin: res.vin, stock_number: res.stock_number ?? null,
+      rank: rec.rank, buyer_key: rec.buyer_key, buyer_name: rec.buyer_name,
       buyer_email: rec.buyer_email, buyer_phone: rec.buyer_phone, buyer_state: rec.buyer_state,
-      predicted_price: rec.predicted_price, score: rec.score, confidence: rec.confidence, reason: rec.reason,
+      channel_key: rec.channel_key,
+      predicted_price: rec.predicted_price, score: rec.score,
+      confidence: rec.confidence, reason: rec.reason,
     }))
   )
+  if (!rows.length) return 0
+
+  // The history first: it is the part that cannot be recomputed later.
+  const { error: histErr } = await supabase.rpc('save_recommendations', {
+    p_rows: rows.map((r) => ({
+      vin: r.active_vin, stock_number: r.stock_number, rank: r.rank,
+      buyer_key: r.buyer_key, buyer_name: r.buyer_name, channel_key: r.channel_key,
+      predicted_price: r.predicted_price, score: r.score, confidence: r.confidence,
+    })),
+  })
+  if (histErr) throw new Error(`recommendation history: ${histErr.message}`)
+
+  await supabase.from('sa_recommendations').delete().neq('active_vin', '')
   for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await supabase.from('sa_recommendations').upsert(rows.slice(i, i + 500))
+    // (active_vin, rank) is unique, and a car has a rank-1 named buyer AND a
+    // rank-1 lane, so the two lists cannot share the cache table's key space.
+    const batch = rows.slice(i, i + 500)
+      .filter((r) => r.buyer_key && !String(r.buyer_key).startsWith('c:'))
+    if (!batch.length) continue
+    const { error } = await supabase.from('sa_recommendations')
+      .upsert(batch, { onConflict: 'active_vin,rank' })
     if (error) throw error
   }
   return rows.length

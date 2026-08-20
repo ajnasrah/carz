@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal, Send } from 'lucide-react'
+import { logSearch, logFilter } from '../services/listingEvents'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isAdminProfile } from '../services/adminSetup'
@@ -265,6 +266,32 @@ export default function Marketplace() {
     }
     return result
   }, [visible, search, makeFilter, activeModels, yearFilter, mileFilter, sort])
+
+  // Record what people are shopping for. This is the demand side of Buyer Match:
+  // a dealer who filters to Silverado / 2019-2022 / under 100k three times in a
+  // week is telling us what to bid on and that he will take the call, and until
+  // now every keystroke of it was thrown away.
+  //
+  // Searches are logged on a pause in typing, not per keystroke, so "silverado"
+  // is one event rather than nine prefixes of one.
+  const searchTimer = useRef(null)
+  useEffect(() => {
+    if (loading) return
+    clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => logSearch(search, filtered.length), 800)
+    return () => clearTimeout(searchTimer.current)
+  }, [search, filtered.length, loading])
+
+  useEffect(() => {
+    if (loading) return
+    logFilter(
+      { make: makeFilter, model: activeModels, year: yearFilter, mileage: mileFilter, sort },
+      filtered.length,
+    )
+    // `filtered.length` is deliberately not a dependency: it changes when the
+    // search text changes too, and that would log a filter event for a search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [makeFilter, activeModels, yearFilter, mileFilter, sort, loading])
 
   // Every car currently on screen is ticked — what flips the Select all button
   // to Deselect all. Scoped to `filtered` on purpose: with a filter on, "all"

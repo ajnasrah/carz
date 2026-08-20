@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react'
 import { Search, Check, Copy, Link2, MessageSquare, Mail, Loader2, ChevronLeft, Hash } from 'lucide-react'
 import { createBuyerShareList } from '../services/buyerLists'
+// One definition of buyer identity for the whole app. This file used to carry a
+// near-copy that dropped the p:/e:/n: prefix and the leading-1 phone rule, so the
+// same dealer could key two different ways depending on the screen.
+import { buyerKeyOf } from '../services/buyerMatch'
 import { buildBuyerListMessage, buyerListUrl } from '../services/marketplaceShare'
 import { dealerLine, DEALER } from '../config/dealer'
 import { copyText } from '../native/clipboard'
@@ -16,17 +20,18 @@ const CONF = {
   low: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
 }
 
-// phone -> email -> name, same as the GHL edge function and BuyerAnalytics, so
-// one store typed two ways doesn't split into two buyers.
-const buyerKeyOf = (r) =>
-  (r.buyer_phone && String(r.buyer_phone).replace(/\D/g, ''))
-  || (r.buyer_email && String(r.buyer_email).toLowerCase())
-  || (r.buyer_name || '').trim().toLowerCase()
 
 // Buyer Match answers "who buys THIS car". This is the same data read the other
 // way round — "what do we have for THIS buyer" — which is the direction you
 // actually make calls in.
-export default function BuyerCarsView({ results, byVin }) {
+//
+// It used to build that by inverting each car's top-3, which meant a buyer had to
+// win a podium place on some car to exist here at all: 38 of 383 buyers, and a
+// steady fourth-best on eleven cars showed up nowhere. `buyers` is now ranked
+// over the full car x buyer matrix by the engine, so everyone we know is
+// reachable. `results` is still accepted so the component works if only the
+// per-car view is available.
+export default function BuyerCarsView({ buyers: ranked, results, byVin }) {
   const [query, setQuery] = useState('')
   const [openBuyer, setOpenBuyer] = useState(null)
   const [picked, setPicked] = useState(() => new Set())
@@ -36,21 +41,33 @@ export default function BuyerCarsView({ results, byVin }) {
   const [flash, setFlash] = useState('')
   const [err, setErr] = useState('')
 
-  // Invert car -> top-3 buyers into buyer -> every car he's shortlisted for.
   const buyers = useMemo(() => {
+    if (ranked?.length) {
+      return ranked
+        // Lanes (UAX, DAA, ADESA) are one customer each and there is nobody to
+        // text a list to, so they do not belong in a contact picker.
+        .filter((b) => !b.is_channel)
+        .filter((b) => !topOnly || b.top_pick_count > 0)
+        .map((b) => ({
+          key: b.buyer_key, name: b.buyer_name, email: b.buyer_email, phone: b.buyer_phone,
+          state: b.buyer_state, total_buys: b.total_buys, days_since: b.days_since,
+          top_pick_count: b.top_pick_count,
+          cars: topOnly ? b.cars.filter((c) => c.car_rank === 1) : b.cars,
+          total: b.total_predicted,
+        }))
+        .filter((b) => b.cars.length)
+    }
+
+    // Fallback: invert the per-car lists.
     const map = new Map()
-    for (const r of results) {
+    for (const r of results || []) {
       for (const rec of r.recommendations) {
         if (topOnly && rec.rank !== 1) continue
-        const key = buyerKeyOf(rec)
+        const key = rec.buyer_key || buyerKeyOf(rec)
         if (!map.has(key)) {
           map.set(key, {
-            key,
-            name: rec.buyer_name,
-            email: rec.buyer_email || null,
-            phone: rec.buyer_phone || null,
-            state: rec.buyer_state || null,
-            cars: [],
+            key, name: rec.buyer_name, email: rec.buyer_email || null,
+            phone: rec.buyer_phone || null, state: rec.buyer_state || null, cars: [],
           })
         }
         const car = byVin.get(r.vin)
@@ -63,7 +80,7 @@ export default function BuyerCarsView({ results, byVin }) {
       b.total = b.cars.reduce((s, c) => s + (c.predicted_price || 0), 0)
     }
     return [...map.values()].sort((a, b) => b.cars.length - a.cars.length || b.total - a.total)
-  }, [results, byVin, topOnly])
+  }, [ranked, results, byVin, topOnly])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -153,7 +170,15 @@ export default function BuyerCarsView({ results, byVin }) {
                   </div>
                   <div className="text-right shrink-0">
                     <div className="text-emerald-400 font-bold">{b.cars.length}</div>
-                    <div className="text-[10px] text-slate-500">{money(b.total)} total</div>
+                    <div className="text-[10px] text-slate-500">
+                      {b.top_pick_count ? `${b.top_pick_count} best fit · ` : ''}{money(b.total)}
+                    </div>
+                    {b.total_buys != null && (
+                      <div className="text-[10px] text-slate-500">
+                        {b.total_buys} bought
+                        {b.days_since != null && ` · ${b.days_since}d ago`}
+                      </div>
+                    )}
                   </div>
                 </div>
               </button>

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink } from 'lucide-react'
-import { recommendAll } from '../services/buyerMatch'
+import { recommendAll, recommendForBuyers } from '../services/buyerMatch'
 import {
-  parseCSV, mapActiveRow, mapSoldRow, fetchActiveCars, fetchSoldSales,
+  parseCSV, mapActiveRow, mapSoldRow, fetchSoldSales,
+  fetchSellableCars, fetchTrainingRows, fetchDemandSignals, fetchTrainingStats,
   saveActive, saveSold, saveRecommendations,
 } from '../services/buyerMatchData'
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
@@ -24,8 +25,10 @@ const CONF = {
 
 export default function BuyerMatch() {
   const navigate = useNavigate()
-  const [active, setActive] = useState([])
-  const [sold, setSold] = useState([])
+  const [active, setActive] = useState([])      // every car we are trying to sell
+  const [sold, setSold] = useState([])          // training rows, all channels
+  const [demand, setDemand] = useState([])      // recent browsing, by known buyer
+  const [channels, setChannels] = useState([])  // what we are learning from
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
@@ -44,8 +47,19 @@ export default function BuyerMatch() {
   async function load() {
     setLoading(true); setErr('')
     try {
-      const [a, s] = await Promise.all([fetchActiveCars(), fetchSoldSales()])
-      setActive(a); setSold(s)
+      // Training comes from buyer_training_rows(), which unions SmartAuction's
+      // named buyers with every other lane we sell through. It is staff-gated, so
+      // fall back to the SmartAuction-only table rather than showing nothing.
+      const [cars, training, dem, stats] = await Promise.all([
+        fetchSellableCars(),
+        fetchTrainingRows().catch(async (e) => {
+          console.warn('buyer_training_rows unavailable, falling back to sa_sold_sales:', e?.message)
+          return fetchSoldSales()
+        }),
+        fetchDemandSignals(60),
+        fetchTrainingStats(),
+      ])
+      setActive(cars); setSold(training); setDemand(dem); setChannels(stats)
     } catch (e) {
       // Tables may not exist yet — fall back to upload-only mode.
       setErr(e.message?.includes('does not exist') ? '' : (e.message || String(e)))
@@ -60,10 +74,14 @@ export default function BuyerMatch() {
       const raw = parseCSV(text)
       let nextActive = active, nextSold = sold
       if (kind === 'active') {
-        nextActive = raw.map(mapActiveRow).filter((r) => r.vin)
-        setActive(nextActive)
+        const rows = raw.map(mapActiveRow).filter((r) => r.vin)
         setBusy('Saving active list…')
-        await saveActive(nextActive).catch(() => {})  // best-effort persist
+        await saveActive(rows)
+        // The car list is the marketplace plus this snapshot, so re-read it
+        // rather than replacing it with the SmartAuction subset.
+        setBusy('Reloading cars…')
+        nextActive = await fetchSellableCars()
+        setActive(nextActive)
       } else {
         const rows = raw.map(mapSoldRow).filter((r) => r.vin && r.buyer_name)
         // merge into current sold (dedupe by VIN, newest wins)
@@ -72,15 +90,22 @@ export default function BuyerMatch() {
         nextSold = [...byVin.values()]
         setSold(nextSold)
         setBusy('Saving sold history…')
-        await saveSold(rows).catch(() => {})
+        await saveSold(rows)
         // New sold rows carry buyer contacts → push any never-contacted buyers to GHL.
         setBusy('Syncing new leads to GHL…')
         const r = await triggerGhlSync()
         setGhl(r.ok ? `GHL: ${r.pushed} new lead${r.pushed === 1 ? '' : 's'} pushed${r.failed ? `, ${r.failed} failed` : ''}` : `GHL sync failed: ${r.error}`)
       }
-      // Cache the computed picks so they're queryable (extension / future marketplace surface).
+      // Record the picks. This is both the cache the extension reads and the
+      // history recommendation_scorecard() grades us against later, so a failure
+      // here is reported rather than swallowed — it silently held zero rows for
+      // months precisely because it was not.
       if (nextActive.length && nextSold.length) {
-        await saveRecommendations(recommendAll(nextActive, nextSold, { spread: { enabled: spread } })).catch(() => {})
+        setBusy('Saving recommendations…')
+        const n = await saveRecommendations(
+          recommendAll(nextActive, nextSold, { spread: { enabled: spread } }, demand),
+        )
+        setGhl((g) => `${g ? g + ' · ' : ''}Saved ${n} recommendation${n === 1 ? '' : 's'}`)
       }
     } catch (e) { setErr(e.message || String(e)) }
     finally { setBusy('') }
@@ -108,6 +133,8 @@ export default function BuyerMatch() {
   // days after the last one. sa_sold_sales is the newer fact, and both are
   // already loaded here, so drop the overlap rather than recommend a car we no
   // longer own and, worse, send it to a buyer.
+  // Training rows are completed sales across every channel, so this now catches a
+  // car sold at UAX or off the Jackson lot, not only one sold on SmartAuction.
   const soldVins = useMemo(
     () => new Set(sold.map((r) => (r.vin || '').toUpperCase()).filter(Boolean)),
     [sold],
@@ -119,10 +146,22 @@ export default function BuyerMatch() {
 
   const results = useMemo(() => {
     if (!sellable.length || !sold.length) return []
-    return recommendAll(sellable, sold, { spread: { enabled: spread } })
-  }, [sellable, sold, spread])
+    return recommendAll(sellable, sold, { spread: { enabled: spread } }, demand)
+  }, [sellable, sold, spread, demand])
+
+  // The buyer-first view is its own ranking over the full car x buyer matrix, not
+  // an inversion of each car's top three. Slicing first was why only 38 of 383
+  // buyers ever appeared on a screen.
+  const buyerView = useMemo(() => {
+    if (!sellable.length || !sold.length) return { buyers: [] }
+    return recommendForBuyers(sellable, sold, { spread: { enabled: spread } }, demand)
+  }, [sellable, sold, spread, demand])
 
   const byVin = useMemo(() => new Map(sellable.map((c) => [c.vin, c])), [sellable])
+  const buyerCount = useMemo(
+    () => new Set(sold.map((r) => r.buyer_key || r.buyer_name).filter(Boolean)).size,
+    [sold],
+  )
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -152,9 +191,15 @@ export default function BuyerMatch() {
 
   // How old the active snapshot is. A four-day-old list is the reason sold cars
   // appear at all, so it belongs on screen rather than in a comment.
-  const listUploaded = active.length && active[0].uploaded_at
-    ? new Date(active[0].uploaded_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    : null
+  // Cars come from the marketplace now, so only the SmartAuction rows carry an
+  // upload stamp — and that stamp is still worth showing, because a stale SA
+  // snapshot is what makes an already-sold car linger.
+  const listUploaded = (() => {
+    const stamps = active.map((c) => c.uploaded_at).filter(Boolean).sort()
+    return stamps.length
+      ? new Date(stamps[stamps.length - 1]).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : null
+  })()
 
   const needData = !active.length || !sold.length
 
@@ -177,8 +222,9 @@ export default function BuyerMatch() {
           </h1>
           <p className="text-xs text-slate-400">
             {sellable.length} sellable{active.length !== sellable.length && ` (${active.length - sellable.length} sold)`}
-            {' · '}{sold.length.toLocaleString()} sold (training)
-            {listUploaded && <> · list {listUploaded}</>}
+            {' · '}{sold.length.toLocaleString()} sales · {buyerCount.toLocaleString()} buyers
+            {channels.length > 0 && <> · {channels.length} channels</>}
+            {listUploaded && <> · SA list {listUploaded}</>}
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -204,6 +250,25 @@ export default function BuyerMatch() {
       {busy && <div className="mb-3 p-2 rounded bg-emerald-500/15 text-emerald-300 text-sm">{busy}</div>}
       {ghl && <div className="mb-3 p-2 rounded bg-sky-500/15 text-sky-300 text-sm border border-sky-500/30">{ghl}</div>}
 
+      {/* What the model is actually learning from. The engine trained on
+          SmartAuction alone for months without that being visible anywhere. */}
+      {channels.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {channels.map((c) => (
+            <span
+              key={c.channel_key}
+              title={`${Number(c.sales).toLocaleString()} sales · ${c.buyers} ${Number(c.buyers) === 1 ? 'customer' : 'customers'} · avg $${Number(c.avg_price || 0).toLocaleString()} · through ${c.last_sale}`}
+              className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                c.per_buyer_data
+                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                  : 'bg-slate-700/40 text-slate-300 border-slate-600'}`}
+            >
+              {c.channel_label} {Number(c.sales).toLocaleString()}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Upload zone */}
       <div className="grid grid-cols-2 gap-2 mb-3">
         <UploadBox label="Active list" sub="InventoryResults.csv" onPick={(f) => onFile('active', f)} done={active.length > 0} />
@@ -228,7 +293,7 @@ export default function BuyerMatch() {
             recommendations, grouped by buyer instead of by car.
           </p>
         ) : (
-          <BuyerCarsView results={results} byVin={byVin} />
+          <BuyerCarsView buyers={buyerView.buyers} results={results} byVin={byVin} />
         )
       ) : view === 'buyers' ? (
         sold.length ? (
@@ -297,6 +362,31 @@ export default function BuyerMatch() {
                     <div className="border-t border-slate-700 divide-y divide-slate-700/60">
                       {res.recommendations.length === 0 && (
                         <p className="text-xs text-slate-500 p-3">No buyer history matches this car yet (cold start).</p>
+                      )}
+                      {/* The lanes. UAX, DAA, ADESA and the rest sell to buyers we
+                          never see, so each is one customer — and between them they
+                          take most of our volume. They belong on the same card as
+                          the dealers to call, but not mixed into that list, or a
+                          lane with 1,400 purchases would be everyone's top three. */}
+                      {res.channels?.length > 0 && (
+                        <div className="p-3 bg-slate-900/40">
+                          <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1.5">
+                            Lanes that take this car
+                          </p>
+                          <div className="space-y-1.5">
+                            {res.channels.map((ch) => (
+                              <div key={ch.buyer_key} className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-slate-300 truncate">
+                                  {ch.buyer_name}
+                                  <span className="text-slate-500"> · {ch.buyer_seg_count} {res.segment}s</span>
+                                </span>
+                                <span className="text-xs text-slate-400 shrink-0">
+                                  typical {money(ch.buyer_avg_price)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                       {res.recommendations.map((rec) => {
                         const { subject, body } = outreach(car, rec)

@@ -1,24 +1,31 @@
 // Read API: every car we'd recommend to a given buyer.
 //
-// Buyer Match runs one direction in the app — for THIS car, the three likeliest
+// Buyer Match runs one direction in the app — for THIS car, the likeliest
 // buyers. This is the inverse, which is the direction you sell in: for THIS
 // buyer, every active car that fits him, ranked.
 //
-// It recomputes rather than reading sa_recommendations, because that cache table
-// is empty in practice (nothing has ever successfully written it) and because the
-// numbers move every time a sold report lands. The input is ~40 active cars
-// against ~1,200 sold rows, so a full recompute is a few milliseconds.
+// It recomputes rather than reading the cache, because the numbers move every
+// time a sold report lands and the whole job is a few milliseconds.
+//
+// Two things changed on 2026-08-20. Training is buyer_training_rows(), which
+// covers every channel we sell through (~6,100 sales, ~650 buyers) rather than
+// SmartAuction alone (1,236 / 383). And the per-buyer list is ranked over the
+// full car x buyer matrix instead of being assembled from each car's top three,
+// which is why `rank` used to cap out at 3 no matter what you asked for.
 //
 //   GET /api/buyer-recommendations?key=...                → every buyer + counts
 //   GET /api/buyer-recommendations?key=...&buyer=rusty    → that buyer's cars
-//   GET /api/buyer-recommendations?key=...&buyer=x&rank=1 → only where he's top pick
-//   &spread=0   turn off the fair-share pass (raw top-dollar ranking)
+//   GET /api/buyer-recommendations?key=...&buyer=x&best=1 → only where he's the best fit
+//   &spread=0     turn off the fair-share pass (raw top-dollar ranking)
+//   &cars=25      how many cars to return per buyer (default 12)
+//   &lanes=1      include UAX / DAA / ADESA and the other lanes, which are one
+//                 customer each and are hidden by default because you cannot call them
 //
 // Auth is a shared key, hashed in the api_keys table — this is an operator tool
 // meant to be curl-able, not a signed-in app screen.
 
 import { createClient } from '@supabase/supabase-js'
-import { recommendAll } from '../src/services/buyerMatch.js'
+import { recommendForBuyers } from '../src/services/buyerMatch.js'
 
 // PostgREST caps an unbounded select at 1000 rows, and sa_sold_sales passed that
 // months ago — paging is not optional here, it is the difference between training
@@ -40,14 +47,6 @@ async function sha256Hex(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
-
-// buyerKey mirrors the GHL edge function and BuyerAnalytics: phone, then email,
-// then name. Two salespeople at one store share a key; the same store typed two
-// different ways does not fragment into two buyers.
-const buyerKey = (r) =>
-  (r.buyer_phone && String(r.buyer_phone).replace(/\D/g, ''))
-  || (r.buyer_email && String(r.buyer_email).toLowerCase())
-  || (r.buyer_name || '').trim().toLowerCase()
 
 export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json')
@@ -74,81 +73,106 @@ export default async function handler(req, res) {
     .eq('name', 'buyer_recommendations').then(() => {}, () => {})
 
   try {
-    const [active, sold] = await Promise.all([
+    // The car list is the marketplace, not the SmartAuction snapshot: that
+    // snapshot held 33 of the 58 cars we are trying to sell, so 25 of them could
+    // never be offered to anyone.
+    const [listings, saActive, training] = await Promise.all([
+      db.rpc('marketplace_listings'),
       fetchAll(db, 'sa_active_cars', '*'),
-      fetchAll(db, 'sa_sold_sales', '*'),
+      db.rpc('buyer_training_rows'),
     ])
-    if (!active.length || !sold.length) {
-      return res.status(200).json({ active: active.length, sold: sold.length, buyers: 0, results: [] })
+    if (listings.error) throw new Error(`marketplace_listings: ${listings.error.message}`)
+    if (training.error) throw new Error(`buyer_training_rows: ${training.error.message}`)
+
+    const sold = training.data || []
+    const saByVin = new Map(saActive.map((c) => [(c.vin || '').toUpperCase(), c]))
+    const cars = new Map()
+    for (const l of listings.data || []) {
+      const vin = String(l.full_vin || l.vin || '').toUpperCase()
+      if (!vin || cars.has(vin)) continue
+      const x = saByVin.get(vin) || {}
+      cars.set(vin, {
+        vin, stock_number: l.stock_number || null,
+        year: parseInt(l.year, 10) || x.year || null,
+        make: l.make || x.make, model: l.model || x.model, trim: x.trim || null,
+        odometer: parseInt(String(l.mileage || '').replace(/[^0-9]/g, ''), 10) || x.odometer || null,
+        segment: x.segment || null,
+        buy_now: l.buy_now != null ? Number(String(l.buy_now).replace(/[^0-9.]/g, '')) : (x.buy_now ?? x.opening_price ?? null),
+        location: x.location || null,
+        detail_url: l.sa_url || x.detail_url || null,
+        on_smartauction: saByVin.has(vin),
+      })
+    }
+    for (const c of saActive) {
+      const vin = (c.vin || '').toUpperCase()
+      if (vin && !cars.has(vin)) cars.set(vin, { ...c, vin, on_smartauction: true })
     }
 
-    // sa_active_cars is a snapshot of the last SmartAuction upload, so cars sold
-    // since then are still in it. sa_sold_sales is the newer fact — drop the
-    // overlap so the API never recommends a car we no longer own.
+    if (!cars.size || !sold.length) {
+      return res.status(200).json({ active: cars.size, sold: sold.length, buyers: 0, results: [] })
+    }
+
+    // A completed sale in ANY channel means the car is gone, so a stale snapshot
+    // can no longer put a sold car in front of a buyer.
     const soldVins = new Set(sold.map((r) => (r.vin || '').toUpperCase()).filter(Boolean))
-    const sellable = active.filter((c) => !soldVins.has((c.vin || '').toUpperCase()))
+    const sellable = [...cars.values()].filter((c) => !soldVins.has(c.vin))
 
     const spread = req.query?.spread !== '0'
-    const results = recommendAll(sellable, sold, { spread: { enabled: spread } })
-    const byVin = new Map(sellable.map((c) => [c.vin, c]))
-    const maxRank = parseInt(req.query?.rank || '3', 10) || 3
+    const topCars = Math.max(1, Math.min(100, parseInt(req.query?.cars || '12', 10) || 12))
+    const showLanes = req.query?.lanes === '1'
+    const bestOnly = req.query?.best === '1'
 
-    // Invert: one entry per (buyer, car) pair, grouped by buyer.
+    const { buyers: ranked } = recommendForBuyers(
+      sellable, sold, { spread: { enabled: spread }, topCars },
+    )
     const buyers = new Map()
-    for (const r of results) {
-      for (const rec of r.recommendations) {
-        if (rec.rank > maxRank) continue
-        const key = buyerKey(rec)
-        if (!buyers.has(key)) {
-          buyers.set(key, {
-            buyer_key: key,
-            buyer_name: rec.buyer_name,
-            buyer_email: rec.buyer_email || null,
-            buyer_phone: rec.buyer_phone || null,
-            buyer_state: rec.buyer_state || null,
-            cars: [],
-          })
-        }
-        const car = byVin.get(r.vin) || {}
-        buyers.get(key).cars.push({
-          vin: r.vin,
-          year: car.year, make: car.make, model: car.model, trim: car.trim || null,
-          odometer: car.odometer ?? null,
-          // SmartAuction leaves Buy Now empty and fills Opening Price; the ask is
-          // whichever we actually have.
-          buy_now: car.buy_now == null ? (car.opening_price == null ? null : Number(car.opening_price))
-                                       : Number(car.buy_now),
-          detail_url: car.detail_url || null,
-          segment: r.segment, tier: r.tier,
-          est_value: r.value == null ? null : Math.round(r.value),
-          predicted_price: rec.predicted_price == null ? null : Math.round(rec.predicted_price),
-          rank: rec.rank,
-          confidence: rec.confidence,
-          reason: rec.reason,
-        })
-      }
+    for (const b of ranked) {
+      if (b.is_channel && !showLanes) continue
+      const list = bestOnly ? b.cars.filter((c) => c.car_rank === 1) : b.cars
+      if (!list.length) continue
+      buyers.set(b.buyer_key, {
+        buyer_key: b.buyer_key,
+        buyer_name: b.buyer_name,
+        buyer_email: b.buyer_email || null,
+        buyer_phone: b.buyer_phone || null,
+        buyer_state: b.buyer_state || null,
+        channel: b.channel_label || b.channel_key || null,
+        is_lane: !!b.is_channel,
+        total_buys: b.total_buys ?? null,
+        days_since_last_buy: b.days_since ?? null,
+        best_fit_count: b.top_pick_count,
+        count: list.length,
+        total_predicted: list.reduce((s, c) => s + (c.predicted_price || 0), 0),
+        cars: list.map((c) => ({
+          vin: c.vin, stock_number: c.stock_number ?? null,
+          year: c.year, make: c.make, model: c.model, trim: c.trim ?? null,
+          odometer: c.odometer ?? null,
+          buy_now: c.buy_now ?? null,
+          detail_url: c.detail_url ?? null,
+          on_smartauction: c.on_smartauction ?? null,
+          segment: c.segment, tier: c.tier,
+          est_value: c.est_value == null ? null : Math.round(c.est_value),
+          predicted_price: c.predicted_price == null ? null : Math.round(c.predicted_price),
+          rank: c.rank,
+          buyer_rank_for_car: c.car_rank,
+          confidence: c.confidence,
+          reason: c.reason,
+        })),
+      })
     }
 
-    for (const b of buyers.values()) {
-      // Best fit first — that is the order you would pitch them in.
-      b.cars.sort((x, y) => x.rank - y.rank || (y.predicted_price || 0) - (x.predicted_price || 0))
-      b.count = b.cars.length
-      b.total_predicted = b.cars.reduce((s, c) => s + (c.predicted_price || 0), 0)
-    }
-
-    const q = (req.query?.buyer || '').trim().toLowerCase()
-    if (!q) {
+    if (!(req.query?.buyer || '').trim()) {
       // Roster view: who is worth calling, biggest book first.
       const list = [...buyers.values()]
         .map(({ cars, ...rest }) => { void cars; return rest })
-        .sort((a, b) => b.count - a.count || b.total_predicted - a.total_predicted)
       return res.status(200).json({
-        active: sellable.length, sold_out: active.length - sellable.length,
-        sold: sold.length, spread,
+        active: sellable.length, sold_out: cars.size - sellable.length,
+        sold: sold.length, spread, lanes: showLanes,
         buyers: list.length, results: list,
       })
     }
 
+    const q = (req.query?.buyer || '').trim().toLowerCase()
     const digits = q.replace(/\D/g, '')
     const hits = [...buyers.values()].filter(
       (b) => b.buyer_name.toLowerCase().includes(q)
