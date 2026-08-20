@@ -4,7 +4,7 @@ import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, Re
 import { recommendAll, recommendForBuyers } from '../services/buyerMatch'
 import {
   parseCSV, mapActiveRow, mapSoldRow, fetchSoldSales,
-  fetchSellableCars, fetchTrainingRows, fetchDemandSignals, fetchTrainingStats,
+  fetchSellableCars, fetchExcludedCars, fetchTrainingRows, fetchDemandSignals, fetchTrainingStats,
   saveActive, saveSold, saveRecommendations,
 } from '../services/buyerMatchData'
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
@@ -29,6 +29,7 @@ export default function BuyerMatch() {
   const [sold, setSold] = useState([])          // training rows, all channels
   const [demand, setDemand] = useState([])      // recent browsing, by known buyer
   const [channels, setChannels] = useState([])  // what we are learning from
+  const [excluded, setExcluded] = useState([])  // cars held back as already sold
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
@@ -50,7 +51,7 @@ export default function BuyerMatch() {
       // Training comes from buyer_training_rows(), which unions SmartAuction's
       // named buyers with every other lane we sell through. It is staff-gated, so
       // fall back to the SmartAuction-only table rather than showing nothing.
-      const [cars, training, dem, stats] = await Promise.all([
+      const [cars, training, dem, stats, gone] = await Promise.all([
         fetchSellableCars(),
         fetchTrainingRows().catch(async (e) => {
           console.warn('buyer_training_rows unavailable, falling back to sa_sold_sales:', e?.message)
@@ -58,8 +59,9 @@ export default function BuyerMatch() {
         }),
         fetchDemandSignals(60),
         fetchTrainingStats(),
+        fetchExcludedCars(),
       ])
-      setActive(cars); setSold(training); setDemand(dem); setChannels(stats)
+      setActive(cars); setSold(training); setDemand(dem); setChannels(stats); setExcluded(gone)
     } catch (e) {
       // Tables may not exist yet — fall back to upload-only mode.
       setErr(e.message?.includes('does not exist') ? '' : (e.message || String(e)))
@@ -133,16 +135,9 @@ export default function BuyerMatch() {
   // days after the last one. sa_sold_sales is the newer fact, and both are
   // already loaded here, so drop the overlap rather than recommend a car we no
   // longer own and, worse, send it to a buyer.
-  // Training rows are completed sales across every channel, so this now catches a
-  // car sold at UAX or off the Jackson lot, not only one sold on SmartAuction.
-  const soldVins = useMemo(
-    () => new Set(sold.map((r) => (r.vin || '').toUpperCase()).filter(Boolean)),
-    [sold],
-  )
-  const sellable = useMemo(
-    () => active.filter((c) => !soldVins.has((c.vin || '').toUpperCase())),
-    [active, soldVins],
-  )
+  // buyer_match_cars() has already excluded anything genuinely sold — including
+  // across channels, and correctly keeping the cars we sold and bought back.
+  const sellable = active
 
   const results = useMemo(() => {
     if (!sellable.length || !sold.length) return []
@@ -221,7 +216,7 @@ export default function BuyerMatch() {
             <Sparkles size={20} /> Buyer Match
           </h1>
           <p className="text-xs text-slate-400">
-            {sellable.length} sellable{active.length !== sellable.length && ` (${active.length - sellable.length} sold)`}
+            {sellable.length} sellable{excluded.length > 0 && ` (${excluded.length} sold)`}
             {' · '}{sold.length.toLocaleString()} sales · {buyerCount.toLocaleString()} buyers
             {channels.length > 0 && <> · {channels.length} channels</>}
             {listUploaded && <> · SA list {listUploaded}</>}
@@ -267,6 +262,22 @@ export default function BuyerMatch() {
             </span>
           ))}
         </div>
+      )}
+
+      {excluded.length > 0 && (
+        <details className="mb-3 text-xs">
+          <summary className="cursor-pointer text-slate-400 hover:text-slate-200">
+            {excluded.length} car{excluded.length === 1 ? '' : 's'} held back as already sold
+          </summary>
+          <ul className="mt-1.5 space-y-0.5 text-slate-500">
+            {excluded.map((c) => (
+              <li key={c.vin}>
+                {c.label} — sold {c.last_sold_on}{c.last_sold_via ? ` via ${c.last_sold_via}` : ''}
+                {c.purchased_on ? ` (last bought ${c.purchased_on})` : ' (never re-purchased)'}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {/* Upload zone */}

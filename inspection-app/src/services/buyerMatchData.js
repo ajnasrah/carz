@@ -86,61 +86,72 @@ async function fetchAll(table, columns, order) {
 export const fetchActiveCars = () =>
   fetchAll('sa_active_cars', 'vin,year,make,model,trim,odometer,color,segment,buy_now,opening_price,location,detail_url,uploaded_at')
 
-// The car universe. sa_active_cars is only what the last SmartAuction CSV held —
-// 33 cars against 58 on the marketplace, so 25 cars we own could never be matched
-// to a buyer. marketplace_listings() is the real book: everything we are trying
-// to sell, whether or not it happens to be listed on SmartAuction today. The
-// SmartAuction snapshot is merged in for the fields it alone carries (trim,
-// physical location, the SA detail link).
+// The car universe, decided by the database rather than reassembled here.
+//
+// This used to merge marketplace_listings() with sa_active_cars in the client and
+// then drop any VIN that appeared in the sold history — and the API did the same
+// thing in its own slightly different copy. Both were wrong in the same way: a
+// car we sold and bought back is not sold, and seven of the cars on the lot had
+// been re-acquired since their last sale. buyer_match_cars() applies the real
+// test (last sale after last purchase) in one place.
 export async function fetchSellableCars() {
-  const [listings, sa] = await Promise.all([
-    supabase.rpc('marketplace_listings'),
-    fetchActiveCars().catch(() => []),
-  ])
-  if (listings.error) throw listings.error
-  const saByVin = new Map(sa.map((c) => [(c.vin || '').toUpperCase(), c]))
-  const seen = new Set()
-  const out = []
-  for (const l of listings.data || []) {
-    const vin = String(l.full_vin || l.vin || '').toUpperCase()
-    if (!vin || seen.has(vin)) continue
-    seen.add(vin)
-    const extra = saByVin.get(vin) || {}
-    out.push({
-      vin,
-      stock_number: l.stock_number || null,
-      // marketplace_listings() returns everything as text.
-      year: int(l.year), make: l.make, model: l.model,
-      trim: extra.trim || null,
-      odometer: int(l.mileage) ?? extra.odometer ?? null,
-      color: l.vehicle_color || extra.color || null,
-      segment: extra.segment || segment(l.make, l.model),
-      buy_now: dec(l.buy_now) ?? extra.buy_now ?? null,
-      opening_price: extra.opening_price ?? null,
-      location: extra.location || null,
-      detail_url: l.sa_url || extra.detail_url || null,
-      price_source: l.price_source || null,
-      on_smartauction: saByVin.has(vin),
-    })
-  }
-  // A car listed on SmartAuction but not yet stocked in Frazer has no marketplace
-  // row; it is still ours to sell.
-  for (const c of sa) {
-    const vin = (c.vin || '').toUpperCase()
-    if (!vin || seen.has(vin)) continue
-    seen.add(vin)
-    out.push({ ...c, vin, stock_number: null, on_smartauction: true })
-  }
-  return out
+  const { data, error } = await supabase.rpc('buyer_match_cars')
+  if (error) throw error
+  return (data || []).map((c) => ({
+    ...c,
+    buy_now: c.buy_now == null ? null : Number(c.buy_now),
+    opening_price: c.opening_price == null ? null : Number(c.opening_price),
+  }))
+}
+
+// Why a car is not in the list. Shown on the page so "where did that one go" has
+// an answer that is not "read the SQL".
+export async function fetchExcludedCars() {
+  const { data, error } = await supabase.rpc('buyer_match_excluded')
+  if (error) return []
+  return data || []
 }
 
 // Training data for the engine: every channel we sell through, not just
 // SmartAuction. Staff-only at the database, and the caller falls back to the
 // SmartAuction-only table when the function is missing or the user is a buyer.
+//
+// MUST be paged. PostgREST caps an unbounded result at 1,000 rows and applies
+// that to RPCs too, and the union returns SmartAuction first — so a single
+// unpaged call came back with 1,000 rows that were 100% SmartAuction, no error,
+// and the page cheerfully reported "1,000 sales" against a real 6,188. The Range
+// header does not help either; PostgREST ignores it on an RPC POST. Paging is
+// therefore done with the function's own p_limit / p_offset arguments, which it
+// orders deterministically.
+const TRAINING_PAGE = 1000
+
 export async function fetchTrainingRows() {
-  const { data, error } = await supabase.rpc('buyer_training_rows')
-  if (error) throw error
-  return data || []
+  const all = []
+  for (let offset = 0; ; offset += TRAINING_PAGE) {
+    const { data, error } = await supabase.rpc('buyer_training_rows', {
+      p_include_arbitration: false, p_limit: TRAINING_PAGE, p_offset: offset,
+    })
+    if (error) throw error
+    const rows = data || []
+    all.push(...rows)
+    if (rows.length < TRAINING_PAGE) break
+    // A function that ignored the arguments would loop for ever returning the
+    // same page; stop well before that becomes a hung browser tab.
+    if (offset > 200000) break
+  }
+
+  // Prove we got everything. Training on a truncated set is the failure this
+  // whole function exists to prevent, and it is invisible without a check.
+  const { data: expected, error: countErr } = await supabase.rpc('buyer_training_count', {
+    p_include_arbitration: false,
+  })
+  if (!countErr && Number(expected) > 0 && all.length < Number(expected)) {
+    throw new Error(
+      `training data truncated: got ${all.length} of ${expected} sales. ` +
+      'The engine would have trained on part of the book.',
+    )
+  }
+  return all
 }
 
 export const fetchSoldSales = () =>
@@ -151,6 +162,12 @@ export const fetchSoldSales = () =>
 export async function fetchDemandSignals(days = 60) {
   const { data, error } = await supabase.rpc('buyer_demand_signals', { p_days: days })
   if (error) return []
+  // Same 1,000-row cap applies. This is one row per (buyer, make, model) over the
+  // window, so it is small today — say so rather than let it silently truncate
+  // once the marketplace has real traffic.
+  if ((data || []).length >= 1000) {
+    console.warn('buyer_demand_signals hit the 1,000-row cap; it needs paging like buyer_training_rows')
+  }
   return data || []
 }
 

@@ -27,18 +27,30 @@
 import { createClient } from '@supabase/supabase-js'
 import { recommendForBuyers } from '../src/services/buyerMatch.js'
 
-// PostgREST caps an unbounded select at 1000 rows, and sa_sold_sales passed that
-// months ago — paging is not optional here, it is the difference between training
-// on all the history and silently training on the newest 1000 rows.
+// PostgREST caps an unbounded result at 1,000 rows. Every read here goes through
+// a function now, but the cap applies to those too — see fetchTraining below.
 const PAGE = 1000
 
-async function fetchAll(db, table, columns) {
+// buyer_training_rows() must be paged for exactly the reason the table reads
+// above are: PostgREST stops at 1,000 rows, RPCs included, and the union returns
+// SmartAuction first — so an unpaged call silently trained this endpoint on one
+// channel out of fourteen. p_limit/p_offset are the function's own arguments
+// because the Range header is ignored on an RPC POST.
+async function fetchTraining(db) {
   const out = []
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await db.from(table).select(columns).range(from, from + PAGE - 1)
-    if (error) throw new Error(`${table}: ${error.message}`)
-    out.push(...data)
-    if (data.length < PAGE) break
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await db.rpc('buyer_training_rows', {
+      p_include_arbitration: false, p_limit: PAGE, p_offset: offset,
+    })
+    if (error) throw new Error(`buyer_training_rows: ${error.message}`)
+    const rows = data || []
+    out.push(...rows)
+    if (rows.length < PAGE) break
+    if (offset > 200000) break
+  }
+  const { data: expected } = await db.rpc('buyer_training_count', { p_include_arbitration: false })
+  if (Number(expected) > 0 && out.length < Number(expected)) {
+    throw new Error(`training data truncated: ${out.length} of ${expected} sales`)
   }
   return out
 }
@@ -73,49 +85,26 @@ export default async function handler(req, res) {
     .eq('name', 'buyer_recommendations').then(() => {}, () => {})
 
   try {
-    // The car list is the marketplace, not the SmartAuction snapshot: that
-    // snapshot held 33 of the 58 cars we are trying to sell, so 25 of them could
-    // never be offered to anyone.
-    const [listings, saActive, training] = await Promise.all([
-      db.rpc('marketplace_listings'),
-      fetchAll(db, 'sa_active_cars', '*'),
-      db.rpc('buyer_training_rows'),
+    // buyer_match_cars() is the single definition of what is still for sale:
+    // the marketplace plus the SmartAuction snapshot, minus anything whose last
+    // sale is more recent than its last purchase. This endpoint and the app used
+    // to each assemble that themselves, and both got re-purchased cars wrong.
+    const [carsRes, training] = await Promise.all([
+      db.rpc('buyer_match_cars'),
+      fetchTraining(db),
     ])
-    if (listings.error) throw new Error(`marketplace_listings: ${listings.error.message}`)
-    if (training.error) throw new Error(`buyer_training_rows: ${training.error.message}`)
+    if (carsRes.error) throw new Error(`buyer_match_cars: ${carsRes.error.message}`)
 
-    const sold = training.data || []
-    const saByVin = new Map(saActive.map((c) => [(c.vin || '').toUpperCase(), c]))
-    const cars = new Map()
-    for (const l of listings.data || []) {
-      const vin = String(l.full_vin || l.vin || '').toUpperCase()
-      if (!vin || cars.has(vin)) continue
-      const x = saByVin.get(vin) || {}
-      cars.set(vin, {
-        vin, stock_number: l.stock_number || null,
-        year: parseInt(l.year, 10) || x.year || null,
-        make: l.make || x.make, model: l.model || x.model, trim: x.trim || null,
-        odometer: parseInt(String(l.mileage || '').replace(/[^0-9]/g, ''), 10) || x.odometer || null,
-        segment: x.segment || null,
-        buy_now: l.buy_now != null ? Number(String(l.buy_now).replace(/[^0-9.]/g, '')) : (x.buy_now ?? x.opening_price ?? null),
-        location: x.location || null,
-        detail_url: l.sa_url || x.detail_url || null,
-        on_smartauction: saByVin.has(vin),
-      })
-    }
-    for (const c of saActive) {
-      const vin = (c.vin || '').toUpperCase()
-      if (vin && !cars.has(vin)) cars.set(vin, { ...c, vin, on_smartauction: true })
-    }
+    const sold = training
+    const sellable = (carsRes.data || []).map((c) => ({
+      ...c,
+      buy_now: c.buy_now == null ? null : Number(c.buy_now),
+      opening_price: c.opening_price == null ? null : Number(c.opening_price),
+    }))
 
-    if (!cars.size || !sold.length) {
-      return res.status(200).json({ active: cars.size, sold: sold.length, buyers: 0, results: [] })
+    if (!sellable.length || !sold.length) {
+      return res.status(200).json({ active: sellable.length, sold: sold.length, buyers: 0, results: [] })
     }
-
-    // A completed sale in ANY channel means the car is gone, so a stale snapshot
-    // can no longer put a sold car in front of a buyer.
-    const soldVins = new Set(sold.map((r) => (r.vin || '').toUpperCase()).filter(Boolean))
-    const sellable = [...cars.values()].filter((c) => !soldVins.has(c.vin))
 
     const spread = req.query?.spread !== '0'
     const topCars = Math.max(1, Math.min(100, parseInt(req.query?.cars || '12', 10) || 12))
@@ -166,7 +155,7 @@ export default async function handler(req, res) {
       const list = [...buyers.values()]
         .map(({ cars, ...rest }) => { void cars; return rest })
       return res.status(200).json({
-        active: sellable.length, sold_out: cars.size - sellable.length,
+        active: sellable.length,
         sold: sold.length, spread, lanes: showLanes,
         buyers: list.length, results: list,
       })
