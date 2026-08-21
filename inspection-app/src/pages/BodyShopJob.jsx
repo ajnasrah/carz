@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Trash2, Plus, Camera, ImagePlus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Trash2, Plus, Camera, ImagePlus, Copy, Check } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import useSwipe from '../hooks/useSwipe'
 import HistoryButton from '../components/HistoryButton'
@@ -19,7 +19,7 @@ import {
   techOptions, techValue,
   JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES, HOLD_STATUS,
   ageStyle, ownedStyle, jobAge, isOnHold,
-  vehicleLabel, isBodyShopManager, isBodyShopTech, canSeeShopMoney,
+  vehicleLabel, lastSix, isBodyShopManager, isBodyShopTech, canSeeShopMoney,
   CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
   isChargeApprover, isShopManager,
   proposeCharge, approveCharge, counterCharge, acceptCounter,
@@ -27,6 +27,7 @@ import {
 import {
   fetchVehiclePhotos, uploadVehiclePhoto, deleteVehiclePhoto, photoSourceLabel,
 } from '../services/vehiclePhotos'
+import { copyText } from '../native/clipboard'
 
 const money = (n) => (n == null ? '—' : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
 // " · Aug 5" — enough to place the move without a wall of timestamp.
@@ -159,6 +160,13 @@ export default function BodyShopJob() {
 
   const age = jobAge(job)
   const held = isOnHold(job)
+  const headerMeta = [
+    job.stock_number ? `#${job.stock_number}` : null,
+    job.vehicle_color || null,
+    job.mileage
+      ? `${Number(String(job.mileage).replace(/[^0-9]/g, '')).toLocaleString()} mi`
+      : null,
+  ].filter(Boolean)
 
   return (
     // Swipe left for the next car, right for the previous one — same order as
@@ -190,17 +198,19 @@ export default function BodyShopJob() {
           </div>
           <div className="min-w-0 flex-1">
             <h1 className="text-lg font-bold leading-tight truncate">{vehicleLabel(job)}</h1>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {job.stock_number ? `#${job.stock_number}` : `VIN …${job.vin6 || '??????'}`}
-              {job.vehicle_color ? ` · ${job.vehicle_color}` : ''}
-              {job.mileage ? ` · ${Number(String(job.mileage).replace(/[^0-9]/g, '')).toLocaleString()} mi` : ''}
-            </p>
+            {/* The stock number used to fall back to "VIN …xxxxxx" when the car
+                wasn't in inventory yet. VinRow below now always shows the six,
+                and the fresh-buy notice says the rest, so the fallback would be
+                saying the same thing a third time. Drop the line instead. */}
+            {headerMeta.length > 0 && (
+              <p className="text-[11px] text-slate-400 mt-0.5">{headerMeta.join(' · ')}</p>
+            )}
             {job.awaiting_inventory && (
               <p className="text-[10px] text-sky-300 mt-1">
                 🆕 Fresh buy — not in inventory yet. It links itself once Frazer has it.
               </p>
             )}
-            {job.vin && <p className="text-[10px] text-slate-600 font-mono mt-0.5 truncate">{job.vin}</p>}
+            <VinRow job={job} />
           </div>
         </div>
       </div>
@@ -645,6 +655,55 @@ function NotesEditor({ value, onSave }) {
       {dirty && (
         <button onClick={() => { onSave(draft.trim() || null); setDirty(false) }}
           className="btn-primary mt-2 !py-2 text-sm">Save note</button>
+      )}
+    </div>
+  )
+}
+
+// The VIN, tappable.
+//
+// Two things are worth taking off a car and neither could be had without
+// retyping it: the FULL VIN, which is what every other system wants pasted into
+// it — Carfax, the auction site, the parts counter on the phone — and the LAST
+// 6, which is what this shop actually calls the car and what goes back into the
+// Telegram group. Both are one tap.
+//
+// A fresh buy has only the six: the full VIN arrives with the car's inventory
+// row. Rather than show a dead button, it just isn't offered until there's
+// something behind it.
+function VinRow({ job }) {
+  const [copied, setCopied] = useState(null)
+  const last6 = lastSix(job)
+
+  async function copy(value, key) {
+    // copyText resolves false rather than throwing — don't flash a checkmark
+    // for a copy that didn't happen. That toast lying is worse than no toast.
+    if (!(await copyText(value))) return
+    setCopied(key)
+    setTimeout(() => setCopied(null), 1500)
+  }
+
+  if (!job.vin && !last6) return null
+
+  const chip = 'flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700'
+  const icon = (key) =>
+    copied === key ? <Check size={11} className="text-emerald-400 shrink-0" /> : <Copy size={11} className="text-slate-500 shrink-0" />
+
+  return (
+    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+      {job.vin && (
+        <button onClick={() => copy(job.vin, 'vin')} className={`${chip} min-w-0`}
+          aria-label="Copy the full VIN">
+          <span className="font-mono text-[10px] text-slate-400 truncate">{job.vin}</span>
+          {icon('vin')}
+        </button>
+      )}
+      {last6 && (
+        <button onClick={() => copy(last6, 'six')} className={chip}
+          aria-label="Copy the last 6 of the VIN">
+          <span className="font-mono text-[11px] text-slate-200 tracking-wider">…{last6}</span>
+          {icon('six')}
+        </button>
       )}
     </div>
   )

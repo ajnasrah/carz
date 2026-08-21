@@ -97,6 +97,16 @@ export function jobAge(job) {
   return { days: job?.days_in_shop ?? null, owned: false }
 }
 
+// The last 6 is what a car is CALLED around here — it's what gets posted in the
+// Telegram group, what's written on the key tag, and what someone standing in
+// front of the car reads off the windscreen. Every job has one. The full VIN
+// only exists once the car is in inventory, so a fresh buy has the six and
+// nothing else.
+export function lastSix(job) {
+  const six = job?.vin6 || (job?.vin ? String(job.vin).slice(-6) : '')
+  return six ? six.toUpperCase() : null
+}
+
 export function vehicleLabel(job) {
   const parts = [job?.vehicle_year, job?.vehicle_make, job?.vehicle_model].filter(Boolean)
   if (parts.length) return parts.join(' ')

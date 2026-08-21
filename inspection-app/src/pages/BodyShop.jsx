@@ -16,7 +16,7 @@ import { useAuth } from '../context/useAuth'
 import {
   fetchBoard, fetchRecentlyDone, createJobFromVin6,
   JOB_STATUSES, JOB_STATUS_STYLES, HOLD_STATUS,
-  ageStyle, ownedStyle, jobAge, isOnHold, vehicleLabel,
+  ageStyle, ownedStyle, jobAge, isOnHold, vehicleLabel, lastSix,
   isBodyShopManager, isBodyShopTech, canSeeShopMoney, isBodyShopOnly,
 } from '../services/bodyShop'
 
@@ -305,6 +305,18 @@ function JobCard({ job, onClick, showPrice = true }) {
   const status = isOnHold(job) ? HOLD_STATUS : JOB_STATUSES.find((s) => s.key === job.status)
   const partsOpen = (job.parts_needed || 0) + (job.parts_ordered || 0)
 
+  // The last 6 leads the second line: it's the name the car goes by in the
+  // Telegram group and on the key tag, so it's what someone holding a phone
+  // next to the car is matching against — the stock number is the office's
+  // name for it. vehicleLabel() already prints the six when it knows nothing
+  // else about the car, so a fresh buy doesn't say it twice.
+  const last6 = lastSix(job)
+  const showSix = last6 && !vehicleLabel(job).endsWith(last6)
+  const meta = [
+    job.stock_number ? `#${job.stock_number}` : 'Fresh buy — not in inventory yet',
+    job.vehicle_color || null,
+  ].filter(Boolean)
+
   return (
     <button onClick={onClick}
       className="w-full text-left bg-slate-800 rounded-xl p-3 border border-slate-700 active:bg-slate-700 flex gap-3">
@@ -324,8 +336,13 @@ function JobCard({ job, onClick, showPrice = true }) {
           <div className="min-w-0">
             <div className="font-semibold text-sm truncate">{vehicleLabel(job)}</div>
             <div className="text-[11px] text-slate-400 truncate">
-              {job.stock_number ? `#${job.stock_number}` : 'Fresh buy — not in inventory yet'}
-              {job.vehicle_color ? ` · ${job.vehicle_color}` : ''}
+              {showSix && (
+                <>
+                  <span className="font-mono text-slate-300">…{last6}</span>
+                  <span className="text-slate-600"> · </span>
+                </>
+              )}
+              {meta.join(' · ')}
             </div>
           </div>
           <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold ${JOB_STATUS_STYLES[job.status]}`}>
