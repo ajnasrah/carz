@@ -36,15 +36,34 @@ export default function VehicleAnalytics({ embedded = false }) {
   async function loadAllData() {
     setLoading(true);
     try {
-      const [soldRes, inventoryRes, inspectionRes, locationRes] = await Promise.all([
+      // Inventory takes two calls now. `select("*")` on the table is refused
+      // outright since the money columns were revoked, which emptied the whole
+      // inventory half of this page rather than just the cost on it —
+      // "Current Inventory" read 0 and "Inventory Value" $0. So: the
+      // descriptive columns off the table (make/model/year/mileage drive the
+      // filters), and the money through inventory_costs(), which hands it to
+      // admins and sold-reports users and nulls it for everyone else.
+      const [soldRes, inventoryRes, invCostRes, inspectionRes, locationRes] = await Promise.all([
         supabase.from("sold_clean").select("*").order("sale_date", { ascending: false }),
-        supabase.from("inventory").select("*"),
+        supabase
+          .from("inventory")
+          .select("stock_number, vehicle_year, vehicle_make, vehicle_model, vehicle_vin, mileage, days_on_lot"),
+        supabase.rpc("inventory_costs"),
         supabase.from("inspections").select("*"),
         selectAll(() => supabase.from("vehicle_locations").select("*"))
       ]);
 
+      if (invCostRes.error)
+        console.error("inventory_costs failed — inventory value will read $0:", invCostRes.error);
+
+      const costByStock = new Map(
+        (invCostRes.data || []).map((c) => [c.stock_number, c])
+      );
       const sold = soldRes.data || [];
-      const inventory = inventoryRes.data || [];
+      const inventory = (inventoryRes.data || []).map((v) => {
+        const c = costByStock.get(v.stock_number);
+        return { ...v, total_cost: c?.total_cost ?? null, added_costs: c?.added_costs ?? null };
+      });
       const inspections = inspectionRes.data || [];
       const locations = locationRes || [];
 

@@ -214,11 +214,15 @@ async function findInventory(cleaned, vinQ) {
   if (!error && vehicles && vehicles.length) return await withCost(vehicles[0])
 
   // Fallback to the plain inventory table (view may be missing the car).
-  let fb = supabase.from('inventory').select('*')
+  // Named columns, not `*`: the money columns are revoked, so a `select=*` is
+  // refused outright. Cost comes back through withCost() like every other path.
+  let fb = supabase
+    .from('inventory')
+    .select('stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model, vehicle_color, mileage, days_on_lot')
   if (vinQ.length === 17) fb = fb.eq('vehicle_vin', vinQ)
   else fb = fb.or(`last_6_vin.ilike.%${vinQ}%,vehicle_vin.ilike.%${vinQ}%`)
   const { data: rows } = await fb.limit(5)
-  if (rows && rows.length) return { vehicle: rows[0], cost: rows[0] }
+  if (rows && rows.length) return await withCost(rows[0])
 
   return null
 }

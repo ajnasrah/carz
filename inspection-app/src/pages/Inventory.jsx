@@ -171,11 +171,13 @@ export default function Inventory() {
     // (i.e. the lot-tracking-schema.sql migration hasn't been run).
     const [statusRes, costRes, secsRes, locRes] = await Promise.all([
       supabase.from("vehicle_lot_status").select("*"),
-      supabase
-        .from("inventory")
-        .select(
-          "stock_number, total_cost, added_costs, buyer, vendor, location_code",
-        ),
+      // Cost comes from inventory_costs(), never off the table. The money
+      // columns are revoked from the `authenticated` ROLE, and everyone shares
+      // that role — so selecting total_cost here failed for admins exactly as
+      // it did for everyone else, and the page drew $0 on every card. The RPC
+      // is the gate: it hands cost to admins and sold-reports users and nulls
+      // it for the rest. buyer/vendor/location_code ride along ungated.
+      supabase.rpc("inventory_costs"),
       supabase
         .from("lot_sections")
         .select("name")
@@ -191,10 +193,22 @@ export default function Inventory() {
         : Promise.resolve({ data: [], error: null })
     ]);
 
+    // Say so out loud. Cost failing silently is how it went missing for a day:
+    // every read of costRes falls back to [], which renders as $0 rather than
+    // as a problem.
+    if (costRes.error)
+      console.error("inventory_costs failed — cost will read $0:", costRes.error);
+
     let statusRows = statusRes.data;
     if (statusRes.error || statusRows == null) {
-      // View missing — query plain inventory table so the page still works
-      const fallback = await supabase.from("inventory").select("*");
+      // View missing — query plain inventory table so the page still works.
+      // Column by column, not `*`: with the cost columns revoked, a `select=*`
+      // is refused outright rather than quietly coming back without the money.
+      const fallback = await supabase
+        .from("inventory")
+        .select(
+          "stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model, vehicle_color, mileage, days_on_lot",
+        );
       statusRows = (fallback.data || []).map((r) => ({
         ...r,
         current_section: null,
