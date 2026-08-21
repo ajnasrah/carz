@@ -35,6 +35,17 @@ export const JOB_STATUSES = [
     hint: 'Finished — goes on the payout' },
 ]
 
+// On hold is NOT a stage, which is why it isn't in the array above — a car
+// parked here has left the pipeline. It's the junk lane: a rotted rocker, a hit
+// that isn't worth the panels, a car waiting on a decision nobody is making
+// this month. Off the stage tiles, out of the "in shop" count, and out of the
+// oldest-car figure, so the numbers that are supposed to shame the shop into
+// moving are about cars the shop can actually move.
+//
+// Never 'done': done is what puts a job on Jorge's payout.
+export const HOLD_STATUS = { key: 'on_hold', label: 'On Hold', emoji: '⛔',
+  hint: 'Junk / parked — not being worked' }
+
 export const JOB_STATUS_STYLES = {
   intake:        'bg-slate-700 text-slate-200',
   waiting_parts: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
@@ -42,6 +53,7 @@ export const JOB_STATUS_STYLES = {
   in_progress:   'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
   final_check:   'bg-violet-500/20 text-violet-300 border border-violet-500/40',
   done:          'bg-sky-500/20 text-sky-300 border border-sky-500/40',
+  on_hold:       'bg-red-500/20 text-red-300 border border-red-500/40',
 }
 
 export const PART_STATUSES = [
@@ -56,14 +68,33 @@ export const PART_STATUS_STYLES = {
   received: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
 }
 
-// Age escalation. The board is sorted oldest-first, and the day counter turns
-// from grey to red as a car sits, so nothing quietly rots at the bottom.
+// Age escalation for the SHOP's own clock — how long this car has been at
+// Jorge's. A fortnight in the shop is already bad; three weeks is red.
 export function ageStyle(days) {
   if (days == null) return 'text-slate-400'
   if (days >= 21) return 'text-red-400'
   if (days >= 14) return 'text-orange-400'
   if (days >= 7)  return 'text-yellow-400'
   return 'text-slate-300'
+}
+
+// Age escalation for how long we've OWNED the car, which is the board's
+// headline number and its sort. Different scale entirely: a month of ownership
+// is ordinary, two months is money burning. Matches the front-lot aging bands.
+export function ownedStyle(days) {
+  if (days == null) return 'text-slate-400'
+  if (days >= 60) return 'text-red-400'
+  if (days >= 45) return 'text-orange-400'
+  if (days >= 30) return 'text-yellow-400'
+  return 'text-slate-300'
+}
+
+// The number on the card. Days owned when we know it; for a fresh buy Frazer
+// has never seen there is no purchase date to subtract, so the shop's own clock
+// stands in — flagged, so nobody reads 3 days owned off a car we bought in May.
+export function jobAge(job) {
+  if (job?.days_owned != null) return { days: job.days_owned, owned: true }
+  return { days: job?.days_in_shop ?? null, owned: false }
 }
 
 export function vehicleLabel(job) {
@@ -77,8 +108,15 @@ export function vehicleLabel(job) {
 
 // ---------------------------------------------------------------- jobs
 
-// Oldest first — the whole point of the board. `selectAll` because this table
-// has no natural ceiling and PostgREST silently caps an unbounded select at 1000.
+// Longest-owned first — the whole point of the board. Not longest-in-the-shop:
+// what a car costs us runs from the day we bought it, so a car we've had since
+// June belongs at the top the morning it's dropped off, not at the bottom.
+//
+// Cars with no purchase date (fresh buys inventory hasn't seen) sort last —
+// they're genuinely age-unknown, and every one of them is days old, not months.
+// entered_at breaks ties, and the id after it so paging can't shuffle a tie
+// across page boundaries. `selectAll` because this table has no natural ceiling
+// and PostgREST silently caps an unbounded select at 1000.
 //
 // Housekeeping runs first: fresh-buy jobs whose car has since landed in Frazer
 // adopt their stock number, and untouched ones that never showed up after 7 days
@@ -93,7 +131,10 @@ export async function fetchBoard({ includeDone = false } = {}) {
   const rows = await selectAll(() => {
     let q = supabase.from('body_shop_board').select('*')
     if (!includeDone) q = q.neq('status', 'done')
-    return q.order('entered_at', { ascending: true })
+    return q
+      .order('days_owned', { ascending: false, nullsFirst: false })
+      .order('entered_at', { ascending: true })
+      .order('id', { ascending: true })
   })
   return rows
 }
@@ -124,8 +165,12 @@ export async function updateJob(id, patch) {
   return data
 }
 
-export async function setJobStatus(id, status) {
-  return updateJob(id, { status })
+// A held car is open, not finished — it keeps its photos, parts and price, and
+// it is skipped by the location trigger that closes a job when the car leaves
+// the shop, so pushing the junk round the back doesn't stamp it Done and put it
+// on the payout. Coming off hold sends it back to intake to be re-triaged.
+export function isOnHold(job) {
+  return job?.status === HOLD_STATUS.key
 }
 
 // A car goes to EITHER a real account (assigned_tech) or a roster name that has

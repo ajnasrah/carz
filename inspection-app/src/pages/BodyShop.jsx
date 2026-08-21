@@ -1,8 +1,13 @@
-// Body Shop board — every car in the shop, oldest first.
+// Body Shop board — every car in the shop, longest-owned first.
 //
 // Cars arrive here on their own: a worker posts the last 6 of the VIN in the
 // Telegram body shop group and the webhook opens the job. The manager prices it,
 // lists parts, and assigns a tech. Techs see only the cars assigned to them.
+//
+// The order is days OWNED, not days at the shop: a car we've had since June is
+// the expensive one whether it landed at Jorge's this morning or a fortnight
+// ago. Cars nobody is going to fix go in On Hold, off the pipeline and out of
+// the counts, so the numbers above the list are about work that can move.
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -10,7 +15,8 @@ import { ArrowLeft, Plus, Search, RefreshCw, X } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import {
   fetchBoard, fetchRecentlyDone, createJobFromVin6,
-  JOB_STATUSES, JOB_STATUS_STYLES, ageStyle, vehicleLabel,
+  JOB_STATUSES, JOB_STATUS_STYLES, HOLD_STATUS,
+  ageStyle, ownedStyle, jobAge, isOnHold, vehicleLabel,
   isBodyShopManager, isBodyShopTech, canSeeShopMoney, isBodyShopOnly,
 } from '../services/bodyShop'
 
@@ -24,7 +30,8 @@ export default function BodyShop() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('open')  // 'open' | status key | 'done'
+  // 'open' | a stage key | 'hold' | 'done'
+  const [statusFilter, setStatusFilter] = useState('open')
   const [adding, setAdding] = useState(false)
 
   const manager = isBodyShopManager(profile)
@@ -62,7 +69,13 @@ export default function BodyShop() {
   const visible = useMemo(() => {
     let rows = statusFilter === 'done' ? doneJobs : jobs
     if (techOnly && profile?.id) rows = rows.filter((j) => j.assigned_tech === profile.id)
-    if (statusFilter !== 'open' && statusFilter !== 'done') {
+    if (statusFilter === 'hold') {
+      rows = rows.filter(isOnHold)
+    } else if (statusFilter === 'open') {
+      // Held cars are open jobs — the query returns them — but they are not the
+      // shop's work list. They only show under their own tab.
+      rows = rows.filter((j) => !isOnHold(j))
+    } else if (statusFilter !== 'done') {
       rows = rows.filter((j) => j.status === statusFilter)
     }
     const q = search.trim().toLowerCase()
@@ -79,12 +92,15 @@ export default function BodyShop() {
     () => (techOnly && profile?.id ? jobs.filter((j) => j.assigned_tech === profile.id) : jobs),
     [jobs, techOnly, profile?.id])
 
+  // Every figure here is about cars the shop is actually expected to move, so
+  // held cars are excluded from all of them — including "oldest", which is the
+  // whole reason to park junk in the first place. Their own count is separate.
   const stats = useMemo(() => {
-    const open = scoped.filter((j) => j.status !== 'done')
+    const open = scoped.filter((j) => j.status !== 'done' && !isOnHold(j))
     const unpriced = open.filter((j) => j.price == null).length
-    const oldest = open.length ? Math.max(...open.map((j) => j.days_in_shop || 0)) : null
+    const oldest = open.length ? Math.max(...open.map((j) => jobAge(j).days || 0)) : null
     const pending = open.filter((j) => j.awaiting_inventory).length
-    return { count: open.length, unpriced, oldest, pending }
+    return { count: open.length, unpriced, oldest, pending, held: scoped.filter(isOnHold).length }
   }, [scoped])
 
   // How many cars are sitting in each stage right now. Every stage is counted,
@@ -114,7 +130,7 @@ export default function BodyShop() {
         <div className="flex-1 min-w-0">
           <h1 className="page-title mb-0">🎨 Body Shop</h1>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            {techOnly ? 'Your cars — oldest first' : 'Oldest first'}
+            {techOnly ? 'Your cars — longest owned first' : 'Longest owned first'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -162,8 +178,8 @@ export default function BodyShop() {
             💵 {stats.unpriced} no price
           </span>
         )}
-        <span className={ageStyle(stats.oldest)}>
-          ⏰ oldest {stats.oldest == null ? '—' : `${stats.oldest}d`}
+        <span className={ownedStyle(stats.oldest)}>
+          ⏰ oldest {stats.oldest == null ? '—' : `${stats.oldest}d owned`}
         </span>
       </div>
 
@@ -184,12 +200,16 @@ export default function BodyShop() {
         />
       </div>
 
-      {/* The stages live in the tally above; these two are the views that aren't
-          a stage. Done has no count on purpose — it's a capped slice of history,
-          not cars in the shop, so a number here would read as "50 finished". */}
+      {/* The stages live in the tally above; these three are the views that
+          aren't a stage. Done has no count on purpose — it's a capped slice of
+          history, not cars in the shop, so a number here would read as "50
+          finished". On Hold keeps its count: junk you can't see the size of is
+          junk that quietly becomes the lot. */}
       <div className="flex gap-1.5 mb-3">
         <FilterChip active={statusFilter === 'open'} onClick={() => setStatusFilter('open')}
           label="All Open" count={stats.count} />
+        <FilterChip active={statusFilter === 'hold'} onClick={() => setStatusFilter('hold')}
+          label={`${HOLD_STATUS.emoji} On Hold`} count={stats.held} tone="hold" />
         <FilterChip active={statusFilter === 'done'} onClick={() => setStatusFilter('done')} label="✅ Done" />
       </div>
 
@@ -203,9 +223,10 @@ export default function BodyShop() {
             {search ? 'Nothing matches that search.'
               : techOnly ? 'No cars assigned to you right now.'
               : statusFilter === 'done' ? 'Nothing finished yet.'
+              : statusFilter === 'hold' ? 'Nothing on hold — the whole board is work.'
               : 'No cars in the shop.'}
           </p>
-          {!search && !techOnly && statusFilter !== 'done' && (
+          {!search && !techOnly && statusFilter !== 'done' && statusFilter !== 'hold' && (
             <p className="text-slate-600 text-[11px] mt-2">
               Cars show up here when the shop posts a VIN in the Telegram group.
             </p>
@@ -260,11 +281,16 @@ function StageTile({ stage, count, active, onClick }) {
   )
 }
 
-function FilterChip({ active, onClick, label, count }) {
+function FilterChip({ active, onClick, label, count, tone }) {
+  // The hold chip goes red when it's holding something — it should read as a
+  // pile, not as another lane of the pipeline.
+  const idle = tone === 'hold' && count > 0
+    ? 'bg-red-500/10 text-red-300 border border-red-500/40'
+    : 'bg-slate-800 text-slate-300 border border-slate-700'
   return (
     <button onClick={onClick}
       className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap ${
-        active ? 'bg-emerald-500 text-slate-900' : 'bg-slate-800 text-slate-300 border border-slate-700'
+        active ? (tone === 'hold' ? 'bg-red-500 text-slate-900' : 'bg-emerald-500 text-slate-900') : idle
       }`}>
       {label}{count != null && count > 0 ? ` · ${count}` : ''}
     </button>
@@ -272,8 +298,11 @@ function FilterChip({ active, onClick, label, count }) {
 }
 
 function JobCard({ job, onClick, showPrice = true }) {
-  const days = job.days_in_shop
-  const status = JOB_STATUSES.find((s) => s.key === job.status)
+  // The headline is how long we've OWNED the car — the number the sort uses. A
+  // fresh buy has no purchase date to subtract, so it falls back to the shop's
+  // own clock and labels itself "in shop" so the two are never confused.
+  const age = jobAge(job)
+  const status = isOnHold(job) ? HOLD_STATUS : JOB_STATUSES.find((s) => s.key === job.status)
   const partsOpen = (job.parts_needed || 0) + (job.parts_ordered || 0)
 
   return (
@@ -281,8 +310,13 @@ function JobCard({ job, onClick, showPrice = true }) {
       className="w-full text-left bg-slate-800 rounded-xl p-3 border border-slate-700 active:bg-slate-700 flex gap-3">
       {/* Age — the first thing you see */}
       <div className="shrink-0 w-12 text-center">
-        <div className={`text-2xl font-bold leading-none ${ageStyle(days)}`}>{days ?? '—'}</div>
-        <div className="text-[9px] uppercase tracking-wide text-slate-500 mt-0.5">days</div>
+        <div className={`text-2xl font-bold leading-none ${
+          age.owned ? ownedStyle(age.days) : ageStyle(age.days)}`}>
+          {age.days ?? '—'}
+        </div>
+        <div className="text-[9px] uppercase tracking-wide text-slate-500 mt-0.5 leading-tight">
+          {age.owned ? 'days owned' : 'days in shop'}
+        </div>
       </div>
 
       <div className="min-w-0 flex-1">
@@ -308,6 +342,12 @@ function JobCard({ job, onClick, showPrice = true }) {
           <span className="text-slate-400 truncate">
             {job.tech_name ? `👤 ${job.tech_name}` : <span className="text-slate-500">Unassigned</span>}
           </span>
+          {/* The shop's own clock, kept alongside the ownership age — Jorge is
+              judged on this one, and on a held car it's the only honest read of
+              how long the junk has been in his way. */}
+          {age.owned && job.days_in_shop != null && (
+            <span className={ageStyle(job.days_in_shop)}>🎨 {job.days_in_shop}d in shop</span>
+          )}
           {partsOpen > 0 && (
             <span className="text-orange-300">
               📦 {job.parts_received || 0}/{job.parts_total} parts

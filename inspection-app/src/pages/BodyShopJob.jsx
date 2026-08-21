@@ -13,12 +13,13 @@ import HistoryButton from '../components/HistoryButton'
 import PhotoLightbox from '../components/PhotoLightbox'
 import BurstCamera from '../components/BurstCamera'
 import {
-  fetchJob, updateJob, setJobStatus, assignTech, deleteJob, fetchBoard,
+  fetchJob, updateJob, assignTech, deleteJob, fetchBoard,
   fetchParts, addPart, updatePart, deletePart,
   fetchTechs, fetchTechInvites, addTech, removeTechInvite, formatPhone,
   techOptions, techValue,
-  JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES,
-  ageStyle, vehicleLabel, isBodyShopManager, isBodyShopTech, canSeeShopMoney,
+  JOB_STATUSES, PART_STATUSES, PART_STATUS_STYLES, HOLD_STATUS,
+  ageStyle, ownedStyle, jobAge, isOnHold,
+  vehicleLabel, isBodyShopManager, isBodyShopTech, canSeeShopMoney,
   CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
   isChargeApprover, isShopManager,
   proposeCharge, approveCharge, counterCharge, acceptCounter,
@@ -139,6 +140,13 @@ export default function BodyShopJob() {
     }
   }
 
+  // Every status move goes through patch(), so the optimistic paint and the
+  // re-read for view-computed columns (held_at, days_in_shop) are the same one
+  // path the price and the notes already use.
+  function changeStatus(status) {
+    return patch({ status })
+  }
+
   if (loading) return <div className="page"><p className="text-slate-500 text-sm py-10 text-center">Loading…</p></div>
   if (!job) {
     return (
@@ -148,6 +156,9 @@ export default function BodyShopJob() {
       </div>
     )
   }
+
+  const age = jobAge(job)
+  const held = isOnHold(job)
 
   return (
     // Swipe left for the next car, right for the previous one — same order as
@@ -160,11 +171,22 @@ export default function BodyShopJob() {
       {/* Car header */}
       <div className="card mb-3">
         <div className="flex items-start gap-3">
-          <div className="shrink-0 text-center">
-            <div className={`text-3xl font-bold leading-none ${ageStyle(job.days_in_shop)}`}>
-              {job.days_in_shop ?? '—'}
+          {/* Days owned is the headline, same as the board — it's what the list
+              is ranked by, so the card you tapped has to show the same number
+              you tapped. The shop's own clock sits under it. */}
+          <div className="shrink-0 text-center w-14">
+            <div className={`text-3xl font-bold leading-none ${
+              age.owned ? ownedStyle(age.days) : ageStyle(age.days)}`}>
+              {age.days ?? '—'}
             </div>
-            <div className="text-[9px] uppercase tracking-wide text-slate-500 mt-0.5">days in shop</div>
+            <div className="text-[9px] uppercase tracking-wide text-slate-500 mt-0.5 leading-tight">
+              {age.owned ? 'days owned' : 'days in shop'}
+            </div>
+            {age.owned && job.days_in_shop != null && (
+              <div className={`text-[10px] mt-1 ${ageStyle(job.days_in_shop)}`}>
+                🎨 {job.days_in_shop}d here
+              </div>
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <h1 className="text-lg font-bold leading-tight truncate">{vehicleLabel(job)}</h1>
@@ -187,15 +209,18 @@ export default function BodyShopJob() {
 
       {/* Status — the stages in the order the car moves through them:
           intake → waiting parts → in progress → final check → done. Done is
-          full width because it's the end of the line, not another lane. */}
+          full width because it's the end of the line, not another lane.
+
+          On hold is drawn under the grid, not inside it, because it isn't a
+          stage: it takes the car off the pipeline. Red, and separate, so nobody
+          taps it on the way to Done. */}
       <Section title="Status">
         <div className="grid grid-cols-2 gap-2">
           {JOB_STATUSES.map((s) => {
             const active = job.status === s.key
             return (
               <button key={s.key}
-                onClick={() => !active && setJobStatus(id, s.key).then(() => fetchJob(id)).then(setJob)
-                  .catch((e) => setError(e.message || 'Could not change status'))}
+                onClick={() => !active && changeStatus(s.key)}
                 className={`rounded-lg p-3 text-left border ${s.key === 'done' ? 'col-span-2' : ''} ${
                   active
                     ? 'bg-emerald-500 text-slate-900 border-emerald-400 font-bold'
@@ -208,6 +233,28 @@ export default function BodyShopJob() {
             )
           })}
         </div>
+
+        {/* Coming off hold lands in intake, not back where it was: a car that
+            has been parked needs looking at again before it's a queue position. */}
+        <button
+          onClick={() => changeStatus(held ? 'intake' : HOLD_STATUS.key)}
+          className={`w-full mt-2 rounded-lg p-3 text-left border ${
+            held
+              ? 'bg-red-500 text-slate-900 border-red-400 font-bold'
+              : 'bg-slate-800 border-slate-700 text-red-300 active:bg-slate-700'
+          }`}>
+          <div className="flex items-center gap-2">
+            <span className="text-base leading-none">{HOLD_STATUS.emoji}</span>
+            <span className="text-sm font-semibold">
+              {held ? 'On Hold — tap to put back in Intake' : 'Put On Hold'}
+            </span>
+          </div>
+          <div className={`text-[10px] mt-0.5 ${held ? 'text-slate-800' : 'text-slate-500'}`}>
+            {held
+              ? `Parked${when(job.held_at)} — off the board's counts and its oldest-car figure`
+              : HOLD_STATUS.hint}
+          </div>
+        </button>
       </Section>
 
       {/* Charge — negotiated, not just typed. Manager and owners only. */}
