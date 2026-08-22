@@ -4,8 +4,23 @@
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero. Without
          it the native webview letterboxes the notch area instead of letting the
-         app paint under it, and the bottom nav sits on the home indicator. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+         app paint under it, and the bottom nav sits on the home indicator.
+
+         NO maximum-scale / user-scalable=no here, on purpose. iOS Safari has
+         ignored those since iOS 10, so on the iPhone they never did anything —
+         but Chrome on Android ENFORCES them, which left Android users looking at
+         a UI they could not pinch to enlarge and could not pinch back to fit if
+         the page ever ended up zoomed. Same page, and only one platform was
+         punished by it.
+
+         The only thing the lock was really buying was stopping iOS zooming in
+         when you tap an input, and that is a font-size problem, not a zoom
+         problem: Safari zooms when the focused field is under 16px, so the
+         base input rule in index.css pins them at 16px instead.
+
+         The native shell puts the lock back at boot (see native/shell.js) —
+         inside the app a stray pinch has no address bar to pinch back from. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f172a" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />

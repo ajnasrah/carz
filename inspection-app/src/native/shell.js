@@ -21,6 +21,18 @@ export async function initNativeShell({ onDeepLink, onBack } = {}) {
 
   await SplashScreen.hide().catch(() => {})
 
+  // Put the zoom lock back, native only. index.html ships an unlocked viewport
+  // so Chrome on Android can pinch — a browser has an address bar and a reload
+  // to recover with. The app has neither: a pinch there sticks, the fixed
+  // header and bottom nav are pinned to a viewport that no longer matches the
+  // content, and there is no obvious way back to 100%. Inputs are 16px so this
+  // costs nothing (iOS never honoured user-scalable=no anyway; maximum-scale is
+  // the half it does honour).
+  document.querySelector('meta[name="viewport"]')?.setAttribute(
+    'content',
+    'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover',
+  )
+
   // Universal Links / App Links: a shared marketplace listing should open the
   // car in the app rather than bouncing to Safari.
   const urlOpen = await App.addListener('appUrlOpen', ({ url }) => {

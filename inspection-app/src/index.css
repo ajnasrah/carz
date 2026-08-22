@@ -44,6 +44,16 @@
 
   input, select, textarea {
     @apply bg-slate-800 border border-slate-600 text-white rounded-lg px-4 py-3 w-full focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500;
+    /* 16px literal, not 1rem — html is 15px, so 1rem would be 15px and iOS
+       Safari zooms the page in whenever you focus a field under 16px, then
+       leaves you zoomed. That auto-zoom is the whole reason the viewport used
+       to be locked with maximum-scale=1; fixing it here is what let the lock
+       come off, which is what gives Android pinch-zoom back.
+
+       Nothing overrides this downward — audited: no input, select or textarea
+       in src/ carries text-xs, text-sm, or a sub-16px arbitrary size. Keep it
+       that way, or that field will bounce the page on iOS. */
+    font-size: 16px;
   }
 }
 
