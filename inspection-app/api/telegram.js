@@ -165,10 +165,24 @@ async function processUpdate(update) {
       // tag is a different car, so sweeping up everything this sender parked
       // would file five cars' pictures under whichever one he answered about.
       const targeted = await bindAnsweredPhoto(db, msg.reply_to_message.message_id, answer);
-      if (!targeted && chat.station !== 'wash_line') {
+      // In the intake groups the answer speaks for everything this sender has
+      // parked: one car is shot at a time there, and that sweep is what makes
+      // "answer once, file the whole burst" work.
+      //
+      // In a shop it speaks for the pile the bot pointed at and nothing else.
+      // A worker posts car A, then car B, both uncaptioned; two questions are
+      // now outstanding, and answering the second would hand car A's photos to
+      // car B. Same reason the wash line never sweeps.
+      const intakeGroup = chat.station === 'ready' || chat.station === 'seller';
+      if (intakeGroup || (!targeted && chat.station !== 'wash_line')) {
         await resolvePendingForSender(db, fromId, answer, chat.station, null, { force: true });
         await adoptUnidentified(db, fromId, chat.station, answer);
       }
+      // Filing the photos isn't enough on its own: the body shop shows pictures
+      // on a car's job card, so a car nobody ever typed into the group has no
+      // card for them to land on. Typing the VIN opens a job; answering the
+      // bot's question is the same statement, so it opens one too.
+      if (chat.station === 'body_shop') await ensureBodyShopJob(db, answer, eventIso);
       // In a finish group the question wasn't only "whose photo is this" — the
       // car is standing there waiting to be marked done. An unreadable key tag
       // must not cost the car its move just because a human had to answer.
@@ -446,17 +460,20 @@ async function ensureBodyShopJob(db, vin6, eventIso) {
 // Bind a reply to the single photo the bot asked about, and file it. Returns
 // false when the question wasn't about one particular picture, which is what
 // sends the caller back to the broader intake rules.
+// The wash line asks about one photo; the shops ask about a whole album, so
+// every row carrying that question's id is part of the answer.
 async function bindAnsweredPhoto(db, askedMsgId, vin6) {
   if (!askedMsgId) return false;
-  const { data: row } = await db.from('wa_inbound_messages')
+  const { data: rows } = await db.from('wa_inbound_messages')
     .select('message_id')
     .eq('asked_msg_id', askedMsgId)
-    .is('media_path', null).not('pending_file_id', 'is', null)
-    .maybeSingle();
-  if (!row) return false;
-  await db.from('wa_inbound_messages')
-    .update({ vin6, session_vin_at_receipt: vin6 }).eq('message_id', row.message_id);
-  await settleParked(db, row.message_id);
+    .is('media_path', null).not('pending_file_id', 'is', null);
+  if (!rows || rows.length === 0) return false;
+  for (const row of rows) {
+    await db.from('wa_inbound_messages')
+      .update({ vin6, session_vin_at_receipt: vin6 }).eq('message_id', row.message_id);
+    await settleParked(db, row.message_id);
+  }
   return true;
 }
 

@@ -169,9 +169,20 @@ export async function rebindGuessedPhotos(db, limit = 25) {
 // queue — the sweep saw the same three rows on every run and filed nothing.
 async function askWhichCar(db, p) {
   const intake = p.station === 'ready' || p.station === 'seller';
+  // The shop groups ask too. They used to stamp and stay silent, which is the
+  // worst of both: the row leaves the retry queue and nobody is ever told the
+  // picture was dropped — 53 body shop photos went that way, 31 of them albums
+  // posted with no caption at all. A photo in these groups always means a car,
+  // so somebody in the room knows which one; asking is the only way to find out.
+  const shop = p.station === 'body_shop' || p.station === 'mechanic';
   const recent = Date.now() - new Date(p.received_at).getTime() < 6 * 60 * 60 * 1000;
 
   // Read before writing: our own stamp would otherwise look like a recent ask.
+  //
+  // Intake only. There a burst is one car and many albums, so a question per
+  // album would be pure noise. In the shops the opposite holds — each album is
+  // a different car — and the album-wide stamp below already guarantees exactly
+  // one question per pile, so throttling by sender would silently skip cars.
   let asked = true;
   if (intake && recent) {
     const { data } = await db.from('wa_inbound_messages')
@@ -181,24 +192,38 @@ async function askWhichCar(db, p) {
       .gte('asked_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
       .limit(1);
     asked = !!(data && data.length);
+  } else if (shop && recent) {
+    asked = false;
   }
 
   // Retire the whole album, not the one picture — a 40-photo burst is one
   // question and one give-up, not forty. This does not block recovery: if a
   // caption turns up later, the album branch of the RPC picks the pile back up.
-  const scope = db.from('wa_inbound_messages')
+  const scope = () => db.from('wa_inbound_messages')
     .update({ asked_at: new Date().toISOString() })
     .is('media_path', null).not('pending_file_id', 'is', null);
-  const { error } = await (p.media_group_id
-    ? scope.eq('media_group_id', p.media_group_id)
-    : scope.eq('message_id', p.message_id));
+  const inScope = (q) => (p.media_group_id
+    ? q.eq('media_group_id', p.media_group_id)
+    : q.eq('message_id', p.message_id));
+  const { error } = await inScope(scope());
   if (error) console.error('asked_at stamp failed', p.message_id, error.message || error);
 
   // Only actually ask about pictures somebody still remembers taking, in the
   // groups where a photo means a car. Asking about a July burst is noise.
-  if (!intake || !recent || asked) return;
+  if ((!intake && !shop) || !recent || asked) return;
   const chatId = p.message_id.split('_')[1];
-  await sendTelegramMessage(chatId,
+  const askedId = await sendTelegramMessage(chatId,
     '❓ Which car are these photos for?\n'
     + 'Reply to this message with the last 6 of the VIN and I\'ll file them.');
+  // Remember which question is about which pile. Without this the answer can
+  // only be applied by sweeping up everything the sender has parked, which is
+  // right in intake (one car at a time) and wrong in a shop, where the next
+  // car's photos are already in the queue behind these.
+  if (!askedId) return;
+  const { error: stampErr } = await inScope(
+    db.from('wa_inbound_messages')
+      .update({ asked_msg_id: askedId })
+      .is('media_path', null).not('pending_file_id', 'is', null),
+  );
+  if (stampErr) console.error('asked_msg_id stamp failed', p.message_id, stampErr.message || stampErr);
 }
