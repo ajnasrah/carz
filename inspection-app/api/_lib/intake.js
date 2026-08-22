@@ -211,10 +211,18 @@ async function askWhichCar(db, p) {
   // Only actually ask about pictures somebody still remembers taking, in the
   // groups where a photo means a car. Asking about a July burst is noise.
   if ((!intake && !shop) || !recent || asked) return;
-  const chatId = p.message_id.split('_')[1];
-  const askedId = await sendTelegramMessage(chatId,
-    '❓ Which car are these photos for?\n'
-    + 'Reply to this message with the last 6 of the VIN and I\'ll file them.');
+  const [, chatId, tgMsgId] = p.message_id.split('_');
+  // Quote the picture in the shops. Intake asks one question about one car and
+  // a free-floating question is clear enough there, but a shop group is several
+  // cars deep by the time anyone reads it, and "which car is this?" with nothing
+  // attached is unanswerable. Same reason the wash line quotes the key tag.
+  const question = '❓ Which car are these photos for?\n'
+    + 'Reply to this message with the last 6 of the VIN and I\'ll file them.';
+  let askedId = await sendTelegramMessage(chatId, question, shop ? tgMsgId : undefined);
+  // Telegram refuses the whole send if the quoted message is gone, and asked_at
+  // is already stamped by now — so a deleted photo would retire its album having
+  // asked nobody, which is the failure this function exists to end. Ask plainly.
+  if (!askedId && shop) askedId = await sendTelegramMessage(chatId, question);
   // Remember which question is about which pile. Without this the answer can
   // only be applied by sweeping up everything the sender has parked, which is
   // right in intake (one car at a time) and wrong in a shop, where the next
