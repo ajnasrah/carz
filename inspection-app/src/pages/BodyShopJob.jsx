@@ -837,13 +837,23 @@ function PhotoGrid({ job, photos, setPhotos, error, onError }) {
   // A car that comes back gets a NEW job, but photos are car-level — so without
   // this the new job would show the previous visit's damage with nothing marking
   // it as old, and the manager reads last month's quarter panel as today's work.
-  // "This visit" = shop photos taken since the car arrived. The 6h grace absorbs
-  // the usual case of photos landing just before the VIN message that opened the
-  // job, without reaching back into an earlier visit.
-  const since = job.entered_at ? new Date(job.entered_at).getTime() - 6 * 3600 * 1000 : null
+  //
+  // The boundary is when the car last LEFT the shop (visit_since), NOT when this
+  // card was created. Only a card the Telegram bot opens is born the moment the
+  // photos land; one made by hand, by the location sync, or by the history
+  // backfill is created days later, and anchoring on entered_at threw away every
+  // photo taken before it — 11 open cards were showing zero of the pictures the
+  // shop had actually posted. A car that has never been here has no boundary,
+  // and all of its shop photos belong to the visit it is on now.
+  const since = job.visit_since ? new Date(job.visit_since).getTime() : null
   const shopPhotos = photos.filter((p) => p.station === 'body_shop' || p.source === 'app')
-  const thisVisit = since == null ? shopPhotos
-    : shopPhotos.filter((p) => p.takenAt && new Date(p.takenAt).getTime() >= since)
+  const inWindow = since == null ? shopPhotos
+    : shopPhotos.filter((p) => p.takenAt && new Date(p.takenAt).getTime() > since)
+  // Last resort: if the window is empty but the shop HAS shot this car, show
+  // those rather than an empty grid. Photos older than the last visit are still
+  // the best answer to "what does this car look like" — and an empty gallery on
+  // a car with pictures reads as the pipeline having dropped them.
+  const thisVisit = inWindow.length ? inWindow : shopPhotos
   const visible = showAll ? photos : thisVisit
   const otherCount = photos.length - thisVisit.length
 
