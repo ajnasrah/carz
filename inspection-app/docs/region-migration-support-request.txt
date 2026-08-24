@@ -1,0 +1,27 @@
+Subject: In-place region migration request — project yprihgygmreibcuybwoy (us-west-2 -> us-east-2)
+
+Hello,
+
+I'd like to request an in-place region migration for project
+yprihgygmreibcuybwoy ("carz inc"), currently in us-west-2, to us-east-2.
+
+Reason: our entire team and all client devices are in Memphis, TN. Measured TCP
+round trip from Memphis is 76-93ms to us-west-2 against 37-39ms to us-east-2.
+End-to-end a single-row PostgREST select is currently 252ms min / 324ms median,
+and the application is round-trip bound, so this is the dominant cost for us.
+
+I would strongly prefer an in-place migration that PRESERVES the project ref,
+API URL and JWT secret, rather than creating a new project. Our iOS and Android
+apps have the project URL compiled into their shipped bundles, so a new ref
+would strand every device in the field until new builds clear App Store and Play
+review, and a new JWT secret would force every user through SMS OTP again.
+
+The database is small (~32MB total across all tables) plus three storage buckets
+(car-history, inspection-photos, db-backups), so I expect the actual transfer to be quick.
+We can take a maintenance window at any time with a day's notice, and can freeze
+writes for the duration.
+
+Could you confirm whether an in-place region migration is possible for this
+project, and what downtime we should plan for?
+
+Thank you.

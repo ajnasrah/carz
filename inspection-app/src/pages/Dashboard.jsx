@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { LogOut, Menu } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
+import { cachedQuery, peek } from '../services/queryCache'
 import { fetchSoldRecent, ymdMinusDays } from '../services/soldReports'
 import { store } from '../native/storage'
 import { averages } from '../services/compare'
@@ -11,6 +12,12 @@ import VinSearchBar from '../components/VinSearchBar'
 import ActionDrawer from '../components/ActionDrawer'
 import ShopTally from '../components/ShopTally'
 import BuySellPace from '../components/BuySellPace'
+
+// Shares the 'inventory:' prefix so an edit made on the Inventory page drops the
+// dashboard's numbers too — the two read the same rows and must not disagree
+// about where a car is. See invalidatePrefix in services/queryCache.js.
+const DASHBOARD_CACHE_KEY = 'inventory:dashboard'
+const DASHBOARD_TTL = 60_000
 
 // Rolling windows for the sold side of the comparison. The longest one is what
 // gets fetched — switching windows then re-slices in memory, no round trip.
@@ -57,17 +64,26 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false
-    async function load() {
+
+    // The four reads behind the tiles. Kept raw — every count below is measured
+    // from now(), so the arithmetic has to run on each paint even when the rows
+    // themselves came from cache.
+    async function fetchDashboard() {
       const [lotRes, costRes, locs, inspRes] = await Promise.all([
         supabase.from('vehicle_lot_status').select('stock_number, last_seen_at, days_on_lot'),
         supabase.rpc('inventory_costs'),
         selectAll(() => supabase.from('vehicle_locations').select('stock_number, physical_location, location_updated_at')),
         supabase.from('inspections').select('id', { count: 'exact', head: true }).eq('status', 'in_progress'),
       ])
-      if (cancelled) return
+      return {
+        lotRows: lotRes.data || [],
+        costs: costRes.data || [],
+        locs,
+        inspecting: inspRes.count ?? 0,
+      }
+    }
 
-      const lotRows = lotRes.data || []
-      const costs = costRes.data || []
+    function apply({ lotRows, costs, locs, inspecting }) {
       const now = Date.now()
 
       const locMap = new Map(locs.map((l) => [l.stock_number, l]))
@@ -110,9 +126,24 @@ export default function Dashboard() {
         stuckCount: stuck,
         missingCount: missing,
         needsDispatchCount: needsDispatch,
-        inspectingCount: inspRes.count ?? 0,
+        inspectingCount: inspecting,
       })
     }
+
+    // This is the landing page — it is what everyone stares at while the app
+    // "loads". Painting last known numbers immediately and correcting them a
+    // moment later beats an empty set of tiles every single time.
+    async function load() {
+      const hit = peek(DASHBOARD_CACHE_KEY)
+      if (hit && !cancelled) apply(hit.data)
+      try {
+        const payload = await cachedQuery(DASHBOARD_CACHE_KEY, fetchDashboard, { ttl: DASHBOARD_TTL })
+        if (!cancelled) apply(payload)
+      } catch (e) {
+        console.error('Dashboard load failed:', e?.message || e)
+      }
+    }
+
     load()
     return () => { cancelled = true }
   }, [])

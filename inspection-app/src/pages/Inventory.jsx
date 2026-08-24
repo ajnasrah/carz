@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -15,6 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { supabase } from "../services/supabase";
+import { cachedQuery, peek, invalidatePrefix } from "../services/queryCache";
 import { toInt, toMoney } from "../services/utils";
 import {
   staleness,
@@ -25,6 +26,27 @@ import VehicleHistoryModal from "../components/VehicleHistoryModal";
 import BulkLocationEdit from "../components/BulkLocationEdit";
 import { saveCsv } from "../native/files";
 import { copyText } from "../native/clipboard";
+
+// One key for the whole page: the four reads are fetched together and are only
+// ever used together, so caching them as one payload keeps them consistent with
+// each other. The `inventory:` prefix is what mutations invalidate — see the
+// invalidatePrefix calls below and in BulkLocationEdit.
+const INVENTORY_CACHE_KEY = "inventory:page";
+// Long enough that navigating around the app is free, short enough that a car
+// someone else moved shows up without a manual refresh.
+const INVENTORY_TTL = 60_000;
+
+// How many cards are drawn up front, and how many more each time the bottom of
+// the list comes into view.
+//
+// The list used to render every match at once — all ~343 cars, each a card with
+// a dozen nodes and several buttons. That is thousands of DOM nodes built before
+// the first car is visible, and on the older Android handsets on the lot it is
+// the difference between a list that appears and a list that hitches. Nothing
+// about the data changes: filters, counts, the copy-report button and the CSV
+// export all still run over the FULL filtered set — this only governs how much
+// of it is on screen at once.
+const CARD_PAGE = 40;
 
 // A car physically at one of these "settled" out-of-town destinations has
 // already been moved — it should NOT clutter Needs Dispatch or the Stale aging
@@ -157,15 +179,19 @@ export default function Inventory() {
   // (shop_locations), so this page and the dashboard tally always agree.
   const [shopLocs, setShopLocs] = useState({});
 
-  async function load() {
-    setLoading(true);
-    
-    // First get inventory stock numbers to filter vehicle_locations
-    const { data: inventoryStocks } = await supabase
-      .from("inventory")
-      .select("stock_number");
-    const stockNumbers = (inventoryStocks || []).map(r => r.stock_number);
-    
+  // Everything the page reads, in ONE wave of parallel requests.
+  //
+  // This used to open with a SELECT of every stock number in inventory purely so
+  // the vehicle_locations query could be filtered by it — a whole round trip that
+  // nothing else could overlap with, followed by shipping ~350 stock numbers back
+  // up as a query string. The inventory_locations view does that join in Postgres
+  // (migration 20260824000001), so the location read joins the same Promise.all as
+  // everything else and the page starts one full round trip earlier.
+  //
+  // Returns raw rows. The derived fields (effective_days_since and the sort) are
+  // computed in applyInventory instead, because they are relative to NOW — baking
+  // them in here would let a cached payload paint yesterday's day counts.
+  async function fetchInventory() {
     // Pull from vehicle_lot_status view (joins inventory + latest scan).
     // Falls back to the plain inventory table if the view doesn't exist yet
     // (i.e. the lot-tracking-schema.sql migration hasn't been run).
@@ -183,14 +209,11 @@ export default function Inventory() {
         .select("name")
         .eq("active", true)
         .order("sort_order"),
-      stockNumbers.length > 0
-        ? supabase
-            .from("vehicle_locations")
-            .select(
-              "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
-            )
-            .in('stock_number', stockNumbers)
-        : Promise.resolve({ data: [], error: null })
+      supabase
+        .from("inventory_locations")
+        .select(
+          "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
+        ),
     ]);
 
     // Say so out loud. Cost failing silently is how it went missing for a day:
@@ -198,6 +221,31 @@ export default function Inventory() {
     // as a problem.
     if (costRes.error)
       console.error("inventory_costs failed — cost will read $0:", costRes.error);
+
+    // The view is new (20260824000001). If the migration hasn't reached this
+    // environment yet, fall back to the old two-step read rather than drawing a
+    // page with every car's location missing — which reads as "nothing is
+    // tracked" and is worse than being slow.
+    let locRows = locRes.data;
+    if (locRes.error || locRows == null) {
+      console.warn(
+        "inventory_locations unavailable — falling back to the slower two-step read:",
+        locRes.error?.message,
+      );
+      const { data: inventoryStocks } = await supabase
+        .from("inventory")
+        .select("stock_number");
+      const stockNumbers = (inventoryStocks || []).map((r) => r.stock_number);
+      const legacy = stockNumbers.length
+        ? await supabase
+            .from("vehicle_locations")
+            .select(
+              "stock_number, physical_location, physical_source, location_updated_at, sa_status, manheim_status, ove_status, sold_on",
+            )
+            .in("stock_number", stockNumbers)
+        : { data: [] };
+      locRows = legacy.data || [];
+    }
 
     let statusRows = statusRes.data;
     if (statusRes.error || statusRows == null) {
@@ -217,26 +265,34 @@ export default function Inventory() {
       }));
     }
 
+    return {
+      statusRows,
+      costs: costRes.data || [],
+      sections: (secsRes.data || []).map((sec) => sec.name),
+      locRows,
+    };
+  }
+
+  // Shape the raw payload into what the page renders. Split out from the fetch so
+  // it can run again against a cached payload — the day counts below are measured
+  // from now(), so they have to be recomputed on every paint rather than cached.
+  function applyInventory({ statusRows: rawRows, costs, sections: secs, locRows }) {
     // Location-update times from vehicle_locations — a list upload (UAX/DAA/ADESA/
-    // Super Dispatch) or chat-sourced entry counts as tracking too, not just  
+    // Super Dispatch) or chat-sourced entry counts as tracking too, not just
     // physical lot scans.
     const lm = new Map();
-    for (const row of locRes.data || []) {
+    for (const row of locRows || []) {
       const r =
         row.physical_location === "jorge"
           ? { ...row, physical_location: "body_shop" }
           : row;
       lm.set(r.stock_number, r);
     }
-    
-    // Debug in production
-    console.log('Vehicle locations loaded:', {
-      count: (locRes.data || []).length,
-      has05_234_26: lm.has('05-234-26'),
-      data05_234_26: lm.get('05-234-26')
-    });
-    window._DEBUG_LOCMAP = lm; // Expose for console debugging
-    
+
+    // Copied, not annotated in place: rawRows belongs to the cache, and writing
+    // derived fields onto it would leave now()-relative numbers sitting in a
+    // payload that gets replayed later.
+    const statusRows = (rawRows || []).map((r) => ({ ...r }));
 
     // Annotate each row with effective_last_seen = max(scan, location_updated_at)
     // and effective_days_since. Z-code (Transport) cars without any other signal
@@ -244,7 +300,7 @@ export default function Inventory() {
     // tracking signal, so they're not "never tracked" and still trip the
     // stuck-21d warning based on how long they've been sitting in Transport.
     const cmLocal = new Map();
-    for (const r of costRes.data || []) cmLocal.set(r.stock_number, r);
+    for (const r of costs) cmLocal.set(r.stock_number, r);
     const now = Date.now();
     for (const r of statusRows) {
       const scanMs = r.last_seen_at ? new Date(r.last_seen_at).getTime() : 0;
@@ -303,26 +359,58 @@ export default function Inventory() {
     setRows(statusRows);
 
     const cm = new Map();
-    for (const r of costRes.data || []) cm.set(r.stock_number, r);
+    for (const r of costs) cm.set(r.stock_number, r);
     setCostMap(cm);
     setLocMap(lm);
-    setSections((secsRes.data || []).map((s) => s.name));
-    
+    setSections(secs);
+
     // Extract unique buyers for filter dropdown
-    const uniqueBuyers = [...new Set((costRes.data || []).map(r => r.buyer).filter(Boolean))].sort();
+    const uniqueBuyers = [...new Set(costs.map((r) => r.buyer).filter(Boolean))].sort();
     setBuyers(uniqueBuyers);
     // Extract unique vendors/auctions for filter dropdown
-    const uniqueVendors = [...new Set((costRes.data || []).map(r => r.vendor).filter(Boolean))].sort();
+    const uniqueVendors = [...new Set(costs.map((r) => r.vendor).filter(Boolean))].sort();
     setVendors(uniqueVendors);
-    setLoading(false);
+  }
+
+  // Read through the cache so coming back to this list is instant.
+  //
+  // Walking into a car and pressing back used to re-run the whole load — several
+  // round trips and a few hundred KB — to redraw a list that had not changed. Now
+  // the last payload paints immediately and a fresh copy lands underneath it. The
+  // page only shows a spinner when there is genuinely nothing to show yet.
+  async function load({ force = false, alive = () => true } = {}) {
+    const hit = peek(INVENTORY_CACHE_KEY);
+    if (hit) {
+      applyInventory(hit.data);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    try {
+      const payload = await cachedQuery(INVENTORY_CACHE_KEY, fetchInventory, {
+        ttl: INVENTORY_TTL,
+        force,
+      });
+      if (alive()) applyInventory(payload);
+    } catch (e) {
+      // A failed refresh leaves whatever was already on screen. On the lot a
+      // dropped request is routine, and a list that is a minute old beats a
+      // blank one — but say so, because silence here is how a genuinely broken
+      // read gets mistaken for an empty lot.
+      console.error("Inventory load failed:", e?.message || e);
+    } finally {
+      if (alive()) setLoading(false);
+    }
   }
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    load();
+    let cancelled = false;
+    load({ alive: () => !cancelled });
 
     // Cleanup function to clear any pending timeouts
     return () => {
+      cancelled = true;
       if (reloadTimeout) {
         clearTimeout(reloadTimeout);
       }
@@ -520,6 +608,12 @@ export default function Inventory() {
     A: "Auction",
   };
 
+  // Grows as the list is scrolled; reset whenever the filtered set changes so a
+  // new search starts back at the top of a short list rather than deep in a long
+  // one.
+  const [visibleCount, setVisibleCount] = useState(CARD_PAGE);
+  const sentinelRef = useRef(null);
+
   const filtered = useMemo(() => {
     let result = rows;
     
@@ -688,6 +782,29 @@ export default function Inventory() {
 
   // Avg added costs + avg days on lot for the FILTERED (tab/search) view — so
   // switching tabs or filters recomputes.
+  // A new filter or search means a different list — start it at the top.
+  useEffect(() => {
+    setVisibleCount(CARD_PAGE);
+  }, [filtered]);
+
+  // Grow the window when the bottom sentinel scrolls into view. rootMargin pulls
+  // the trigger 600px early so the next batch is already mounted by the time the
+  // user reaches it and the list reads as continuous.
+  useEffect(() => {
+    const node = sentinelRef.current;
+    if (!node) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleCount((n) => (n >= filtered.length ? n : n + CARD_PAGE));
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    io.observe(node);
+    return () => io.disconnect();
+  }, [filtered.length, visibleCount]);
+
   const filteredStats = useMemo(() => {
     let addedSum = 0,
       addedN = 0;
@@ -864,6 +981,11 @@ export default function Inventory() {
         })
       );
       
+      // The optimistic updates above fixed the screen, not the cache. Drop the
+      // cached payload so the next visit re-reads rather than repainting this
+      // car at its old location.
+      invalidatePrefix("inventory:");
+
       // Success - close modal
       setEditingRow(null);
       setEditLocation("");
@@ -1450,7 +1572,7 @@ export default function Inventory() {
             </p>
           </div>
           <div className="space-y-2">
-            {filtered.map((r) => {
+            {filtered.slice(0, visibleCount).map((r) => {
               const label = [r.vehicle_year, r.vehicle_make, r.vehicle_model]
                 .filter(Boolean)
                 .join(" ");
@@ -1649,6 +1771,14 @@ export default function Inventory() {
               );
             })}
           </div>
+          {/* Watched by the IntersectionObserver above; mounting it only while
+              cars remain means reaching the true end of the list stops the
+              growth loop instead of firing forever. */}
+          {visibleCount < filtered.length && (
+            <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-500">
+              Loading {filtered.length - visibleCount} more…
+            </div>
+          )}
         </>
       )}
 
@@ -1821,7 +1951,9 @@ export default function Inventory() {
           onClose={() => setShowBulkEdit(false)}
           onSuccess={() => {
             setShowBulkEdit(false);
-            load(); // Reload data after bulk update
+            // force: a bulk edit just changed rows we hold, so the cached payload
+            // is known-stale and must not be served while the refetch runs.
+            load({ force: true });
           }}
         />
       )}

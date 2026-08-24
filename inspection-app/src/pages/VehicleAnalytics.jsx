@@ -50,7 +50,18 @@ export default function VehicleAnalytics({ embedded = false }) {
           .select("stock_number, vehicle_year, vehicle_make, vehicle_model, vehicle_vin, mileage, days_on_lot"),
         supabase.rpc("inventory_costs"),
         supabase.from("inspections").select("*"),
-        selectAll(() => supabase.from("vehicle_locations").select("*"))
+        // Two columns, not select("*"). This page reads exactly stock_number and
+        // physical_location off these rows (the locations tab groups by place and
+        // lists the stocks) — but it was dragging back every column of all 2,658
+        // rows to do it: ~1.6MB over the wire to use ~170KB of it. Measured on the
+        // live table, the first 1,000 rows alone are 627KB as select("*") against
+        // 65KB narrowed.
+        //
+        // Still the whole table rather than the inventory_locations view, because
+        // the filter below keeps sold cars too (allStocks is sold ∪ inventory) and
+        // that view is inventory-only — swapping it in here would silently drop
+        // every sold car off the locations tab.
+        selectAll(() => supabase.from("vehicle_locations").select("stock_number, physical_location"))
       ]);
 
       if (invCostRes.error)

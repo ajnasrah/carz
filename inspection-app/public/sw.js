@@ -14,7 +14,7 @@
 // Changing this file at all is what makes browsers install a new worker; the
 // activate handler below then deletes every carz-inspect-* cache that isn't this
 // one, so the bad shell clears itself on the next load.
-const CACHE_NAME = 'carz-inspect-v5'
+const CACHE_NAME = 'carz-inspect-v6'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -52,8 +52,38 @@ self.addEventListener('fetch', (event) => {
   // Skip Vite dev server endpoints
   if (url.pathname.startsWith('/@vite/') || url.pathname.startsWith('/@react-refresh')) return
 
-  // Network-first for same-origin assets — always fetch fresh JS, fall back
-  // to cache only when actually offline
+  // Cache-FIRST for hashed build assets; network-first for everything else.
+  //
+  // Everything under /assets/ is content-hashed by Vite — index-DfEKNcMB.js names
+  // its own bytes. A file at such a path can never legitimately change, so asking
+  // the network about it is always wasted, and on the lot it is worse than wasted:
+  // network-first means a phone on one bar sits waiting for fetch() to give up
+  // before it falls back to a copy it already had. That is the app "freezing" on
+  // open while holding every byte it needs. Serve from cache the moment we have
+  // it and never ask again.
+  //
+  // index.html deliberately stays network-first. It is the one file that is NOT
+  // content-addressed and it names which hashed bundles to load, so a stale copy
+  // points at bundles that no longer exist and the app comes up blank — the exact
+  // failure the v5 comment below describes.
+  if (isImmutableAsset(url)) {
+    event.respondWith(
+      caches.match(event.request).then((hit) => {
+        if (hit) return hit
+        return fetch(event.request).then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const clone = response.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone))
+          }
+          return response
+        })
+      }),
+    )
+    return
+  }
+
+  // Network-first for the shell and anything else same-origin — always fetch
+  // fresh HTML, fall back to cache only when actually offline.
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -66,3 +96,13 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(event.request)),
   )
 })
+
+// A path is safe to cache forever only if its name pins its contents. Vite emits
+// /assets/<name>-<hash>.<ext>; the hash is what makes the URL change whenever the
+// bytes do, so a new build asks for new URLs and the old entries simply go unused
+// (and are cleared wholesale when CACHE_NAME is bumped). Anything that does not
+// match this shape — index.html, the manifest, icons, /training — keeps the
+// network-first path, because those URLs are stable while their contents are not.
+function isImmutableAsset(url) {
+  return /^\/assets\/.+-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/.test(url.pathname)
+}

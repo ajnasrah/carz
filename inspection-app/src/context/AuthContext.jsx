@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../services/supabase'
+import { clearCache } from '../services/queryCache'
 import { AuthContext } from './useAuth'
 // Removed automatic admin setup - handled by database migration instead
 // import { ensurePrimaryAdmin } from '../services/adminSetup'
@@ -9,11 +10,22 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // Whose cached reads are currently in memory. A shared lot phone can go from
+  // one signed-in user to another without ever passing through signOut() — a
+  // token swap arrives as a plain auth state change — so identity is checked on
+  // every hydrate, not just on the sign-out button.
+  const cachedFor = useRef(null)
+
   useEffect(() => {
     let cancelled = false
 
     function hydrate(session) {
       if (cancelled) return
+      const nextId = session?.user?.id ?? null
+      if (cachedFor.current !== nextId) {
+        clearCache()
+        cachedFor.current = nextId
+      }
       setUser(session?.user ?? null)
       if (session?.user) {
         // Back to loading while the profile is fetched. Without this, signing
@@ -182,6 +194,11 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut()
     setUser(null)
     setProfile(null)
+    // Cached page reads are held in memory and are NOT role-aware. inventory_costs()
+    // hands real money to an admin and nulls to everyone else, so an admin's cached
+    // Inventory left behind here would show the next person to sign in on this phone
+    // numbers they are not allowed to see. See src/services/queryCache.js.
+    clearCache()
   }
 
   async function refreshProfile() {
