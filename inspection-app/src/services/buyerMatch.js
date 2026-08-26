@@ -49,6 +49,25 @@ export function segment(make, model) {
   return 'car';
 }
 
+// The model a car actually is, not just its make and body style. "JEEP suv" put
+// a Wrangler Rubicon in front of a dealer whose four Jeeps were all Cherokees —
+// same make, same segment, a completely different vehicle and a different buyer.
+// Trim words are dropped ("WRANGLER UNLIMI" -> WRANGLER) but genuinely distinct
+// two-word nameplates are kept whole (GRAND CHEROKEE is not a CHEROKEE).
+const TWO_WORD_HEAD = new Set(['GRAND', 'SUPER', 'SANTA', 'MODEL', 'LAND', 'RANGE', 'GRAN', 'TOWN', 'SANTA']);
+export function modelFamily(make, model) {
+  // Join the hyphen in F-150 / CX-5 / MACH-E rather than splitting on it, or
+  // every Ford truck collapses into a family called "F".
+  const s = String(model ?? '').toUpperCase()
+    .replace(/([A-Z])[-/]([0-9A-Z])/g, '$1$2')
+    .replace(/[^A-Z0-9]+/g, ' ').trim();
+  const mk = String(make ?? '').toUpperCase().trim();
+  if (!s) return mk ? `${mk}|?` : null;
+  const t = s.split(' ');
+  const fam = TWO_WORD_HEAD.has(t[0]) && t[1] ? `${t[0]} ${t[1]}` : t[0];
+  return `${mk}|${fam}`;
+}
+
 // Stable buyer identity — phone, then email, then name. MUST mirror
 // buyer_training_rows() in SQL and buyerKey() in buyerTrends.js, or one dealer
 // becomes two buyers depending on which screen you are looking at.
@@ -140,6 +159,34 @@ export const DEFAULT_CONFIG = {
   // the call list. Roughly "pretend we also saw this buyer make `shrink` average
   // purchases".
   shrink: 8,
+  // Weight on the exact nameplate, over and above make x body style.
+  //
+  // ZERO ON PURPOSE, and this is the measurement rather than an opinion. It looks
+  // obviously right that a dealer with four Cherokees and no Wranglers should not
+  // be pitched a Wrangler, so it was swept walk-forward over the last 180 days of
+  // real sales (26 weekly folds, 1,057 sales, named buyers ranked among named
+  // buyers) — and every non-zero value is worse, monotonically:
+  //
+  //   modelWeight   top-1    top-3    top-10
+  //   0             18.3%    28.2%    40.2%
+  //   0.15          18.1%    26.6%    39.8%
+  //   0.30          16.9%    25.0%    38.9%
+  //   0.50          14.6%    23.1%    36.6%
+  //
+  // Dealers buy a body style at a price point, not a nameplate: the Cherokee
+  // buyer's next unit is an Equinox or a Rogue about as often as it is another
+  // Cherokee, and paying for nameplate agreement costs real hit rate. What the
+  // nameplate IS good for is telling the truth about the match — see the reason
+  // string and `confidence` in scoreCar, which both read the nameplate count and
+  // neither of which touches the ranking. Re-run the sweep with ?bmdebug=1
+  // before changing this.
+  modelWeight: 0,
+  // Every channel also gets a lane profile, not just the ones we have no buyer
+  // names for. Carz Jackson sells 229 cars a year to 196 walk-ins, 89% of whom
+  // buy exactly once — so no individual ever ranked, and the store appeared
+  // nowhere on this screen at all. A rooftop is a place to send a car whether or
+  // not we know who signs for it.
+  laneForEveryChannel: true,
   // A car only appears in a buyer's list if he is among the top N buyers for it.
   // Without a floor every buyer gets a full dozen cars and the list means
   // nothing; at 25 it is still ~8x more generous than the old top-3.
@@ -154,6 +201,7 @@ export const DEFAULT_CONFIG = {
   // list would bury every nameable buyer. They get their own list instead.
   separateChannels: true,
   topN: 3,             // buyers shown per car
+  topLanes: 5,         // channels shown per car
   topCars: 12,         // cars shown per buyer
 };
 
@@ -166,6 +214,7 @@ export function buildModel(sold, config = {}) {
     ...r,
     _p: num(r.sale_price), _o: num(r.odometer), _y: num(r.year),
     _seg: r.segment || segment(r.make, r.model),
+    _fam: modelFamily(r.make, r.model),
     _d: dateNum(r.sale_date),
     _key: buyerKeyOf(r),
   })).filter((r) => r._key);
@@ -195,18 +244,19 @@ export function buildModel(sold, config = {}) {
 
   const prof = new Map();
   let totalW = 0;
-  const segW = {}, makeW = {};
+  const segW = {}, makeW = {}, famW = {};
   for (const r of rows) {
     const w = weightOf(r);
     totalW += w;
     segW[r._seg] = (segW[r._seg] || 0) + w;
     makeW[r.make] = (makeW[r.make] || 0) + w;
+    if (r._fam) famW[r._fam] = (famW[r._fam] || 0) + w;
 
     let p = prof.get(r._key);
     if (!p) {
       p = {
         key: r._key, name: (r.buyer_name || '').trim(), cars: [],
-        w: 0, n: 0, segW: {}, makeW: {}, makeSegW: {},
+        w: 0, n: 0, segW: {}, makeW: {}, makeSegW: {}, famW: {}, famN: {},
         channel_key: r.channel_key || 'smartauction',
         channel_label: r.channel_label || null,
         is_channel: r._key.startsWith('c:'),
@@ -219,12 +269,54 @@ export function buildModel(sold, config = {}) {
     p.segW[r._seg] = (p.segW[r._seg] || 0) + w;
     p.makeW[r.make] = (p.makeW[r.make] || 0) + w;
     p.makeSegW[`${r.make}|${r._seg}`] = (p.makeSegW[`${r.make}|${r._seg}`] || 0) + w;
+    if (r._fam) { p.famW[r._fam] = (p.famW[r._fam] || 0) + w; p.famN[r._fam] = (p.famN[r._fam] || 0) + 1; }
     // Keep the newest non-empty contact details and the newest spelling of the name.
     p.email = r.buyer_email || p.email;
     p.phone = r.buyer_phone || p.phone;
     p.state = r.buyer_state || p.state;
     p.city = r.buyer_city || p.city;
     if (r.buyer_name) p.name = String(r.buyer_name).trim();
+  }
+
+  // Every channel is also a lane, not only the ones whose buyers we never learn.
+  // Where we DO know the names — Carz Jackson, Direct, SmartAuction — the rows
+  // stay attached to those buyers as well; this adds the rooftop itself as a
+  // place a car can go. Without it Carz Jackson was invisible: 229 sales to 196
+  // walk-ins, 89% of them one-time, so no individual ever cleared the ranking
+  // floor and the store never appeared on this screen in any form.
+  //
+  // Built AFTER the loop above on purpose: these profiles must not contribute to
+  // segBase/makeBase/famBase, or the same sale would be counted twice in the
+  // market mix every lift is measured against.
+  if (cfg.laneForEveryChannel) {
+    const byChannel = new Map();
+    for (const r of rows) {
+      if (String(r._key).startsWith('c:')) continue;   // already its own lane
+      const ck = r.channel_key || 'smartauction';
+      let g = byChannel.get(ck);
+      if (!g) { g = []; byChannel.set(ck, g); }
+      g.push(r);
+    }
+    for (const [ck, chRows] of byChannel) {
+      const key = `c:${ck}`;
+      if (prof.has(key)) continue;
+      const p = {
+        key, name: chRows[0].channel_label || ck, cars: chRows,
+        w: 0, n: chRows.length, segW: {}, makeW: {}, makeSegW: {}, famW: {}, famN: {},
+        channel_key: ck, channel_label: chRows[0].channel_label || ck,
+        is_channel: true, email: null, phone: null, state: null, city: null,
+      };
+      for (const r of chRows) {
+        const w = weightOf(r);
+        p.w += w;
+        p.segW[r._seg] = (p.segW[r._seg] || 0) + w;
+        p.makeW[r.make] = (p.makeW[r.make] || 0) + w;
+        p.makeSegW[`${r.make}|${r._seg}`] = (p.makeSegW[`${r.make}|${r._seg}`] || 0) + w;
+        if (r._fam) { p.famW[r._fam] = (p.famW[r._fam] || 0) + w; p.famN[r._fam] = (p.famN[r._fam] || 0) + 1; }
+        p.state = r.buyer_state || p.state;
+      }
+      prof.set(key, p);
+    }
   }
 
   const SHRINK = 3;
@@ -268,6 +360,7 @@ export function buildModel(sold, config = {}) {
     rows, profiles: [...prof.values()], segMed, maxDate, totalW,
     segTierMed,
     segBase: Object.fromEntries(Object.entries(segW).map(([k, v]) => [k, totalW ? v / totalW : 0])),
+    famBase: Object.fromEntries(Object.entries(famW).map(([k, v]) => [k, totalW ? v / totalW : 0])),
     makeBase: Object.fromEntries(Object.entries(makeW).map(([k, v]) => [k, totalW ? v / totalW : 0])),
     cfg,
   };
@@ -301,8 +394,9 @@ function cmv(car, model) {
 
 // ---- scoring one car against every buyer -----------------------------------
 export function scoreCar(car, model, demand) {
-  const { profiles, segMed, segBase, makeBase, cfg } = model;
+  const { profiles, segMed, segBase, makeBase, famBase, cfg } = model;
   const seg = car.segment || segment(car.make, car.model);
+  const fam = modelFamily(car.make, car.model);
   const value = cmv(car, model);
   const codo = num(car.odometer);
   const tier = priceTier(value, segMed[seg]);
@@ -327,6 +421,13 @@ export function scoreCar(car, model, demand) {
     const msRate = Math.max((makeBase[car.make] || 0) * segRate, 0.002);
     const msShare = ((p.makeSegW[`${car.make}|${seg}`] || 0) + K * msRate) / (p.w + K);
     const msLift = msShare / msRate;
+    // --- and does he buy THIS nameplate ---
+    // Same lift-and-shrink shape one level finer. A dealer with four Cherokees
+    // and no Wranglers reads as a Jeep-SUV buyer without this, and got pitched a
+    // Wrangler Rubicon on that basis.
+    const famRate = fam ? Math.max((famBase[fam] || 0), 0.0008) : null;
+    const famShare = fam ? (((p.famW[fam] || 0) + K * famRate) / (p.w + K)) : null;
+    const famLift = fam ? famShare / famRate : 1;
 
     // --- does the money line up ---
     // Prefer what he pays for cars in THIS price bracket of THIS segment; fall
@@ -360,6 +461,7 @@ export function scoreCar(car, model, demand) {
     const likelihood = volume
       * Math.pow(Math.max(segLift, 0.05), 0.7)
       * Math.pow(Math.max(msLift, 0.05), 0.35)
+      * Math.pow(Math.max(famLift, 0.05), cfg.modelWeight)
       * Math.max(priceFit, 0.02)
       * odoFit * demandMult * geoMult;
     // Top dollar first, then proven buyer — the owner's stated priority.
@@ -367,18 +469,32 @@ export function scoreCar(car, model, demand) {
 
     const segN = p.cars.filter((c) => c._seg === seg).length;
     const makeInSeg = p.cars.filter((c) => c._seg === seg && c.make === car.make).length;
+    const nameplateN = fam ? (p.famN[fam] || 0) : 0;
+    // "High" used to mean three of the same make in the same body style, which is
+    // how four Cherokees certified a Wrangler Rubicon as a high-confidence match.
+    // The badge does not move the ranking, so it can afford to be strict: high
+    // means we have actually watched this buyer take this nameplate.
     const confidence = p.is_channel
       ? (segN >= 20 ? 'high' : segN >= 5 ? 'medium' : 'low')
-      : (makeInSeg >= 3 || (segN >= 8 && priceFit > 0.5)) ? 'high'
-        : (makeInSeg >= 1 || segN >= 3) ? 'medium' : 'low';
+      : (nameplateN >= 2 || (nameplateN >= 1 && segN >= 5)) ? 'high'
+        : (nameplateN >= 1 || makeInSeg >= 2 || (segN >= 3 && priceFit > 0.5)) ? 'medium' : 'low';
 
     const geoStr = miles == null ? (p.state || '—') : `${p.state}, ~${miles}mi`;
     const fresh = p.daysSince == null ? 'no dated buys' : p.daysSince <= 45 ? 'buying now' : `last bought ${p.daysSince}d ago`;
+    // Say what he actually bought, at the nameplate. The old wording read
+    // "Bought 4 JEEP suvs" under a Wrangler Rubicon when all four were Cherokees,
+    // which is exactly the claim the number does not support.
+    const plate = fam ? fam.split('|')[1] : null;
+    const history = nameplateN
+      ? `Bought ${nameplateN} ${car.make} ${plate}${nameplateN > 1 ? 's' : ''}`
+      : makeInSeg
+        ? `Buys ${car.make} ${seg}s (${makeInSeg}) but no ${plate || 'match'}`
+        : `Buys ${seg}s (${segN}), no ${car.make}`;
     const reason = p.is_channel
       ? `${p.name} takes ${segN} ${seg}${segN === 1 ? '' : 's'} like this` +
-        `${makeInSeg ? ` (${makeInSeg} ${car.make})` : ''}; ` +
+        `${nameplateN ? ` (${nameplateN} ${plate})` : makeInSeg ? ` (${makeInSeg} ${car.make})` : ''}; ` +
         `typically ${buyerAvg ? '$' + Math.round(buyerAvg).toLocaleString() : '?'} vs this ${value ? '$' + Math.round(value).toLocaleString() : '?'}. ${fresh}.`
-      : `${makeInSeg ? `Bought ${makeInSeg} ${car.make} ${seg}${makeInSeg > 1 ? 's' : ''}; ` : `Buys ${seg}s (${segN}); `}` +
+      : `${history}; ` +
         `avg ${buyerAvg ? '$' + Math.round(buyerAvg).toLocaleString() : '?'} vs this ${value ? '$' + Math.round(value).toLocaleString() : '?'} ` +
         `(${Math.round(priceFit * 100)}% price fit)${looked ? `, looked at ${looked} like it` : ''}. ${p.n} buys, ${fresh}, ${geoStr}.`;
 
@@ -388,7 +504,7 @@ export function scoreCar(car, model, demand) {
       channel_key: p.channel_key, channel_label: p.channel_label, is_channel: p.is_channel,
       predicted_price: predicted ? Math.round(predicted) : null,
       buyer_avg_price: buyerAvg ? Math.round(buyerAvg) : null,
-      buyer_seg_count: segN, make_in_seg: makeInSeg,
+      buyer_seg_count: segN, make_in_seg: makeInSeg, nameplate_count: nameplateN,
       price_fit: Math.round(priceFit * 100), demand_views: looked,
       total_buys: p.n, days_since: p.daysSince, miles,
       score, baseScore: score, confidence, reason,
@@ -469,7 +585,7 @@ export function recommendAll(activeCars, soldRows, config = {}, demandRows = [])
     return {
       vin: c.vin, stock_number: c.stock_number, value: c.value, segment: c.segment, tier: c.tier,
       recommendations: rank(named.slice(0, cfg.topN)),
-      channels: rank(lanes.slice(0, 3)),
+      channels: rank(lanes.slice(0, cfg.topLanes)),
       candidateCount: c.candidates.length,
     };
   });

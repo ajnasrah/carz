@@ -97,6 +97,18 @@ export const fetchActiveCars = () =>
 // buyer_match_bootstrap() evaluates the union once and returns a JSON document.
 // Returning JSON is also what makes the row cap a non-issue: PostgREST truncates
 // at 1,000 ROWS, and this is one row.
+// The one call still costs 1.7 s warm and 5.5 s cold on the server — most of it
+// buyer_match_universe(), which rebuilds marketplace_listings() and
+// vehicle_last_sale() from scratch every time — and it ships 2.5 MB of raw sales
+// so the browser can build the model. Until that is cached server-side, hold the
+// last answer for the life of the tab: leaving the page and coming back, or
+// bouncing between Buyer Match and a car, then costs nothing instead of another
+// five-second white screen.
+let cached = null
+
+export function peekBuyerMatchBootstrap() { return cached }
+export function clearBuyerMatchBootstrap() { cached = null }
+
 export async function fetchBuyerMatchBootstrap(demandDays = 60) {
   const { data, error } = await supabase.rpc('buyer_match_bootstrap', { p_demand_days: demandDays })
   if (error) throw error
@@ -109,13 +121,14 @@ export async function fetchBuyerMatchBootstrap(demandDays = 60) {
     throw new Error(`training data truncated: ${training.length} of ${data.training_count} sales`)
   }
   const num = (x) => (x == null ? null : Number(x))
-  return {
+  cached = {
     training,
     cars: (data.cars || []).map((c) => ({ ...c, buy_now: num(c.buy_now), opening_price: num(c.opening_price) })),
     excluded: data.excluded || [],
     demand: data.demand || [],
     channels: data.channels || [],
   }
+  return cached
 }
 
 // Just the car list. The bootstrap above is the fast path for opening the page;

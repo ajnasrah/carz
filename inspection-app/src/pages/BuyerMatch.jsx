@@ -10,6 +10,8 @@ import {
 import { triggerGhlSync, seedGhlBuyers } from '../services/ghlSync'
 import BuyerAnalytics from '../components/BuyerAnalytics'
 import BuyerCarsView from '../components/BuyerCarsView'
+import { peekBuyerMatchBootstrap } from '../services/buyerMatchData'
+import * as engine from '../services/buyerMatch'
 import HistoryButton from '../components/HistoryButton'
 import { copyText } from '../native/clipboard'
 
@@ -25,12 +27,18 @@ const CONF = {
 
 export default function BuyerMatch() {
   const navigate = useNavigate()
-  const [active, setActive] = useState([])      // every car we are trying to sell
-  const [sold, setSold] = useState([])          // training rows, all channels
-  const [demand, setDemand] = useState([])      // recent browsing, by known buyer
-  const [channels, setChannels] = useState([])  // what we are learning from
-  const [excluded, setExcluded] = useState([])  // cars held back as already sold
-  const [loading, setLoading] = useState(true)
+  const boot = peekBuyerMatchBootstrap()
+  const [active, setActive] = useState(() => boot?.cars || [])      // every car we are trying to sell
+  const [sold, setSold] = useState(() => boot?.training || [])      // training rows, all channels
+  const [demand, setDemand] = useState(() => boot?.demand || [])    // recent browsing, by known buyer
+  const [channels, setChannels] = useState(() => boot?.channels || [])  // what we are learning from
+  // Channels switched OFF. The chips were plain text for months — they read as
+  // filters, so people clicked them, and nothing happened.
+  const [chanOff, setChanOff] = useState(() => new Set())
+  const [excluded, setExcluded] = useState(() => boot?.excluded || [])  // cars held back as already sold
+  // Coming back to this page inside the same session paints from the last answer
+  // instead of a five-second white screen; the refresh then lands underneath.
+  const [loading, setLoading] = useState(() => !peekBuyerMatchBootstrap())
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [spread, setSpread] = useState(true)
@@ -43,16 +51,24 @@ export default function BuyerMatch() {
   // 'buyers' = per buyer, what he has bought (performance analytics)
   const [view, setView] = useState('cars')
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load({ background: !!peekBuyerMatchBootstrap() }) }, [])
 
-  async function load() {
-    setLoading(true); setErr('')
+  async function load({ background = false } = {}) {
+    if (!background) setLoading(true)
+    setErr('')
     try {
       // One call. See fetchBuyerMatchBootstrap — this used to be eleven, and the
       // page took minutes to open because of it.
       const b = await fetchBuyerMatchBootstrap(60)
       setActive(b.cars); setSold(b.training); setDemand(b.demand)
       setChannels(b.channels); setExcluded(b.excluded)
+      // Open the page with ?bmdebug=1 to get the engine and the exact data it was
+      // handed on the console. Every tuning claim in buyerMatch.js came from a
+      // walk-forward backtest, and this is how one is run against live sales
+      // instead of a synthetic stand-in.
+      if (new URLSearchParams(location.search).has('bmdebug')) {
+        window.__buyerMatch = { ...engine, data: b }
+      }
     } catch (e) {
       // A signed-in buyer (not staff) gets no training data; fall back to the
       // SmartAuction-only table rather than showing an empty page.
@@ -137,23 +153,40 @@ export default function BuyerMatch() {
   // across channels, and correctly keeping the cars we sold and bought back.
   const sellable = active
 
+  // What the model is allowed to learn from, after the channel chips. Filtering
+  // the TRAINING set (rather than the output) is what makes the chips answer the
+  // question they look like they ask: "who at SmartAuction buys this car".
+  const training = useMemo(
+    () => (chanOff.size ? sold.filter((r) => !chanOff.has(r.channel_key || 'smartauction')) : sold),
+    [sold, chanOff],
+  )
+
+  function toggleChannel(key) {
+    setChanOff((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      // Turning everything off would train on nothing; treat it as "all on".
+      return next.size >= channels.length ? new Set() : next
+    })
+  }
+
   const results = useMemo(() => {
-    if (!sellable.length || !sold.length) return []
-    return recommendAll(sellable, sold, { spread: { enabled: spread } }, demand)
-  }, [sellable, sold, spread, demand])
+    if (!sellable.length || !training.length) return []
+    return recommendAll(sellable, training, { spread: { enabled: spread } }, demand)
+  }, [sellable, training, spread, demand])
 
   // The buyer-first view is its own ranking over the full car x buyer matrix, not
   // an inversion of each car's top three. Slicing first was why only 38 of 383
   // buyers ever appeared on a screen.
   const buyerView = useMemo(() => {
-    if (!sellable.length || !sold.length) return { buyers: [] }
-    return recommendForBuyers(sellable, sold, { spread: { enabled: spread } }, demand)
-  }, [sellable, sold, spread, demand])
+    if (!sellable.length || !training.length) return { buyers: [] }
+    return recommendForBuyers(sellable, training, { spread: { enabled: spread } }, demand)
+  }, [sellable, training, spread, demand])
 
   const byVin = useMemo(() => new Map(sellable.map((c) => [c.vin, c])), [sellable])
   const buyerCount = useMemo(
-    () => new Set(sold.map((r) => r.buyer_key || r.buyer_name).filter(Boolean)).size,
-    [sold],
+    () => new Set(training.map((r) => r.buyer_key || r.buyer_name).filter(Boolean)).size,
+    [training],
   )
 
   const filtered = useMemo(() => {
@@ -215,8 +248,8 @@ export default function BuyerMatch() {
           </h1>
           <p className="text-xs text-slate-400">
             {sellable.length} sellable{excluded.length > 0 && ` (${excluded.length} sold)`}
-            {' · '}{sold.length.toLocaleString()} sales · {buyerCount.toLocaleString()} buyers
-            {channels.length > 0 && <> · {channels.length} channels</>}
+            {' · '}{training.length.toLocaleString()} sales · {buyerCount.toLocaleString()} buyers
+            {channels.length > 0 && <> · {channels.length - chanOff.size} of {channels.length} channels</>}
             {listUploaded && <> · SA list {listUploaded}</>}
           </p>
         </div>
@@ -233,7 +266,7 @@ export default function BuyerMatch() {
           <a href="/listings" target="_blank" rel="noreferrer" className="p-2 text-slate-400 hover:text-emerald-400" title="Public listings">
             <ExternalLink size={18} />
           </a>
-          <button onClick={load} className="p-2 text-slate-400 hover:text-emerald-400" title="Reload">
+          <button onClick={() => load()} className="p-2 text-slate-400 hover:text-emerald-400" title="Reload">
             <RefreshCw size={18} />
           </button>
         </div>
@@ -246,19 +279,33 @@ export default function BuyerMatch() {
       {/* What the model is actually learning from. The engine trained on
           SmartAuction alone for months without that being visible anywhere. */}
       {channels.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {channels.map((c) => (
-            <span
-              key={c.channel_key}
-              title={`${Number(c.sales).toLocaleString()} sales · ${c.buyers} ${Number(c.buyers) === 1 ? 'customer' : 'customers'} · avg $${Number(c.avg_price || 0).toLocaleString()} · through ${c.last_sale}`}
-              className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                c.per_buyer_data
-                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                  : 'bg-slate-700/40 text-slate-300 border-slate-600'}`}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {channels.map((c) => {
+            const off = chanOff.has(c.channel_key)
+            return (
+              <button
+                key={c.channel_key}
+                onClick={() => toggleChannel(c.channel_key)}
+                title={`${Number(c.sales).toLocaleString()} sales · ${c.buyers} ${Number(c.buyers) === 1 ? 'customer' : 'customers'} · avg $${Number(c.avg_price || 0).toLocaleString()} · through ${c.last_sale}\n\nClick to ${off ? 'train on' : 'ignore'} this channel`}
+                className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                  off
+                    ? 'bg-slate-900 text-slate-600 border-slate-800 line-through'
+                    : c.per_buyer_data
+                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:border-emerald-400'
+                      : 'bg-slate-700/40 text-slate-300 border-slate-600 hover:border-slate-400'}`}
+              >
+                {c.channel_label} {Number(c.sales).toLocaleString()}
+              </button>
+            )
+          })}
+          {chanOff.size > 0 && (
+            <button
+              onClick={() => setChanOff(new Set())}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
             >
-              {c.channel_label} {Number(c.sales).toLocaleString()}
-            </span>
-          ))}
+              Reset · training on {training.length.toLocaleString()} of {sold.length.toLocaleString()}
+            </button>
+          )}
         </div>
       )}
 
