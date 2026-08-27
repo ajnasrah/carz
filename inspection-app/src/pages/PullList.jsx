@@ -220,7 +220,7 @@ export default function PullList() {
           <p className="text-slate-500 text-xs mt-1">Tap + to add recently sold cars to track</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
           {filtered.map((a) => {
             const isResolved = a.status === 'resolved'
             const isDismissed = a.status === 'dismissed'

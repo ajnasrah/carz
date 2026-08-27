@@ -12,6 +12,10 @@
       "destination": "/api/listing-og?id=:id"
     },
     {
+      "source": "/support",
+      "destination": "/support.html"
+    },
+    {
       "source": "/((?!training/|api/).*)",
       "destination": "/index.html"
     }

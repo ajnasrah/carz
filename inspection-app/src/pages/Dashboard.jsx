@@ -213,8 +213,14 @@ export default function Dashboard() {
           go out. Stacked, full width, always. Side by side squeezed Inventory
           vs Sold until its row labels truncated to "In… / S… / D…", and left it
           floating in a column of dead space beside a card three times its
-          height. Two cards of very different heights don't pair. */}
-      <div className="grid gap-4 mb-4">
+          height. Two cards of very different heights don't pair.
+
+          That reasoning is about the phone, where the pair had ~480px between
+          them. On a tablet there is roughly twice that, which is enough for
+          both to keep their labels, so they go side by side from md up.
+          items-start so the shorter card keeps its own height instead of being
+          stretched to match the taller one. */}
+      <div className="grid gap-4 mb-4 md:grid-cols-2 md:items-start">
         {/* Inventory vs Sold — what we're holding against what's actually been
             moving. Recon spend and age above the sold line means the lot is
             getting heavier than what it's selling: going backward. */}

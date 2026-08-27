@@ -100,7 +100,11 @@ export default function BodyShop() {
     const unpriced = open.filter((j) => j.price == null).length
     const oldest = open.length ? Math.max(...open.map((j) => jobAge(j).days || 0)) : null
     const pending = open.filter((j) => j.awaiting_inventory).length
-    return { count: open.length, unpriced, oldest, pending, held: scoped.filter(isOnHold).length }
+    // Cars with a part still marked Needed — the ordering queue's size. COUNT
+    // arrives as a bigint, so it's compared as a number, not for truthiness.
+    const toOrder = open.filter((j) => Number(j.parts_needed) > 0).length
+    return { count: open.length, unpriced, oldest, pending, toOrder,
+             held: scoped.filter(isOnHold).length }
   }, [scoped])
 
   // How many cars are sitting in each stage right now. Every stage is counted,
@@ -143,6 +147,18 @@ export default function BodyShop() {
             <button onClick={() => navigate('/body-shop/payout')}
               className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-sm font-semibold active:bg-slate-700"
               title="Saturday payout">💵</button>
+          )}
+          {manager && (
+            <button onClick={() => navigate('/body-shop/parts')}
+              className="relative p-2 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700"
+              title="Parts to order">
+              📦
+              {stats.toOrder > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-orange-500 text-slate-900 text-[10px] font-bold leading-4">
+                  {stats.toOrder}
+                </span>
+              )}
+            </button>
           )}
           {manager && (
             <button onClick={() => setAdding(true)}
@@ -233,7 +249,7 @@ export default function BodyShop() {
           )}
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2 lg:grid-cols-3">
           {/* The ids ride along so the job screen can swipe between exactly the
               cars on screen here, in this order — the same filter, the same
               search, the same oldest-first sort. */}

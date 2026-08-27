@@ -8,7 +8,7 @@ import { supabase } from './services/supabase'
 import { useAuth } from './context/useAuth'
 import { isPrimaryAdmin } from './services/adminSetup'
 import { isBodyShopOnly } from './services/bodyShop'
-import BottomNav from './components/BottomNav'
+import BottomNav, { useNavShown } from './components/BottomNav'
 
 // The two screens that can be the FIRST thing rendered stay eagerly imported:
 // Login for a signed-out visitor, Dashboard for everyone else. Making these
@@ -57,6 +57,7 @@ const Listings = lazy(() => import('./pages/Listings'))
 const BodyShop = lazy(() => import('./pages/BodyShop'))
 const BodyShopJob = lazy(() => import('./pages/BodyShopJob'))
 const BodyShopPayout = lazy(() => import('./pages/BodyShopPayout'))
+const PartsToOrder = lazy(() => import('./pages/PartsToOrder'))
 // Inbound Inspection Pages
 const InboundDashboard = lazy(() => import('./pages/InboundDashboard'))
 const InboundStart = lazy(() => import('./pages/InboundStart'))
@@ -228,6 +229,7 @@ function AppRoutes() {
           Jobs open themselves from the Telegram body shop group. */}
       <Route path="/body-shop" element={<ProtectedRoute><BodyShop /></ProtectedRoute>} />
       <Route path="/body-shop/payout" element={<ProtectedRoute><BodyShopPayout /></ProtectedRoute>} />
+      <Route path="/body-shop/parts" element={<ProtectedRoute><PartsToOrder /></ProtectedRoute>} />
       <Route path="/body-shop/:id" element={<ProtectedRoute><BodyShopJob /></ProtectedRoute>} />
 
       {/* Inbound Inspection System */}
@@ -432,6 +434,26 @@ function AfterLogin() {
   return <Navigate to={target} replace state={{ reserve: target !== '/' }} />
 }
 
+// The routed content, held clear of the navigation.
+//
+// This wrapper used to carry `max-w-lg mx-auto`, which capped every screen at a
+// phone width no matter what it was opened on. The cap now lives on .page (see
+// index.css) so each screen sizes itself, and all this does is keep content out
+// from under the fixed nav — the bottom bar on a phone (via .app-shell), the
+// left rail on a tablet. The rail is 14rem wide and only exists on routes that
+// show navigation at all, so the offset is conditional on the same check.
+//
+// Needs to be its own component: useNavShown reads the router and the auth
+// context, so it can't be called in App, which is what renders both providers.
+function AppFrame() {
+  const navShown = useNavShown()
+  return (
+    <div className={`app-shell ${navShown ? 'md:pl-56' : ''}`}>
+      <AppRoutes />
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -439,9 +461,7 @@ export default function App() {
         <NativeBridge />
         <SessionKeeper />
         <RouteMemory />
-        <div className="max-w-lg mx-auto app-shell">
-          <AppRoutes />
-        </div>
+        <AppFrame />
         <BottomNav />
         {/* The status bar strip. viewport-fit=cover means the webview runs the
             full height of the phone, under the notch and the speaker, so every

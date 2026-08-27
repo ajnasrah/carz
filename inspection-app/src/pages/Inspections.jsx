@@ -146,7 +146,7 @@ export default function Inspections() {
           <p className="text-slate-500 text-sm">Tap + to start one</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 md:space-y-0 md:grid md:grid-cols-2 md:gap-3">
           {inspections.map((insp) => {
             const isComplete = insp.status === 'complete'
             const tracks = getTrackStatuses(insp.checklist)

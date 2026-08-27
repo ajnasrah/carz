@@ -232,7 +232,7 @@ export default function UnmatchedVehicles() {
           <p>No unmatched vehicles found</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
           {filteredVehicles.map((vehicle) => (
             <div
               key={vehicle.id}

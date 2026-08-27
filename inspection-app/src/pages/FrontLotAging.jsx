@@ -208,7 +208,7 @@ function FrontLotAging() {
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
           {vehicles.map((v, i) => {
             const key = v.stock_number || v.vin || i;
             const last6 = v.vin ? v.vin.slice(-6).toUpperCase() : '—';

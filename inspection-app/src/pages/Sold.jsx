@@ -193,7 +193,7 @@ export default function Sold() {
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
             {filtered.slice(0, 200).map((r) =>
               source === 'auction' ? (
                 <AuctionRow key={r.stock_number} r={r} onHistory={() => setHistoryFor({ stock_number: r.stock_number, vin: r.vin })} />

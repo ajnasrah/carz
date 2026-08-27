@@ -79,6 +79,39 @@
     /* pt-4 plus the status bar / notch. Pages override pb, never pt, so the
        bottom inset is handled by the app wrapper and BottomNav instead. */
     padding-top: calc(1rem + var(--safe-top));
+
+    /* The width cap lives here, not on the app shell.
+       It used to be a `max-w-lg` on the one wrapper in App.jsx, which had two
+       costs on a tablet. It stranded every screen in a phone-width column in
+       the middle of an 11" iPad — what App Review called "not optimized to
+       support all screen sizes" — and because it wrapped ALL routes, it also
+       silently capped the pages that declare a wide container of their own
+       (Marketplace and Listings ask for max-w-5xl, Vehicle Analytics for
+       max-w-7xl, List Builder for 1600px) at 32rem. Those never got the width
+       they were written for.
+       Moving it onto .page means the 30 screens that opt into .page keep an
+       identical phone layout, the wide pages are finally allowed to be wide,
+       and the cap can grow with the display instead of being one number.
+       rem, not px, on purpose — html is 15px, so these track the same density
+       scale as every Tailwind size in the app (32rem = the old 480px). */
+    max-width: 32rem;
+    margin-inline: auto;
+  }
+
+  /* iPad portrait (768pt+) and landscape (1024pt+). Deliberately short of the
+     full width — text measure past ~72rem is hard to read, and the margin is
+     what makes it look laid out rather than stretched. */
+  @media (min-width: 768px) {
+    .page {
+      max-width: 56rem;
+      @apply px-6;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .page {
+      max-width: 72rem;
+    }
   }
 
   .page-title {
@@ -121,5 +154,13 @@
      pb, so the combined value lives here on the shared wrapper. */
   .app-shell {
     padding-bottom: calc(5rem + var(--safe-bottom));
+  }
+
+  /* On a tablet the bottom tab bar becomes a left rail (see BottomNav), so
+     there is no bar at the bottom of the screen left to clear. */
+  @media (min-width: 768px) {
+    .app-shell {
+      padding-bottom: var(--safe-bottom);
+    }
   }
 }
