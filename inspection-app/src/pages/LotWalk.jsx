@@ -438,7 +438,7 @@ export default function LotWalk() {
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed top-3 left-3 right-3 z-50 rounded-xl shadow-2xl p-4 flex items-start gap-3 max-w-lg mx-auto ${
+          className={`fixed top-3 left-3 right-3 md:left-60 z-50 rounded-xl shadow-2xl p-4 flex items-start gap-3 max-w-lg mx-auto ${
             toast.kind === 'success'
               ? 'bg-emerald-500 text-slate-900'
               : 'bg-red-500 text-white'

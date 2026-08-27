@@ -602,7 +602,7 @@ export default function Admin() {
 
       {/* Error Toast */}
       {error && (
-        <div className="fixed bottom-20 left-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50">
+        <div className="fixed bottom-20 left-4 right-4 md:bottom-4 md:left-60 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50">
           {error}
         </div>
       )}

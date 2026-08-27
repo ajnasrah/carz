@@ -498,7 +498,10 @@ function Shell({ children }) {
   // page: same specificity, and p-3 is emitted later, so the inset lost and the
   // header sat under the speaker.
   return (
-    <div className="p-3 pt-[calc(0.75rem+var(--safe-top))] min-h-screen bg-slate-900 text-slate-200">
+    // max-w matches the cap .page uses on a wide display. This page rolls its
+    // own shell rather than using .page, so without it Buyer Match is the one
+    // tab that runs the full width of an iPad while the other three stop.
+    <div className="p-3 pt-[calc(0.75rem+var(--safe-top))] min-h-screen bg-slate-900 text-slate-200 lg:max-w-6xl lg:mx-auto">
       {children}
     </div>
   )

@@ -202,7 +202,7 @@ export default function Sold() {
               ),
             )}
             {filtered.length > 200 && (
-              <p className="text-center text-xs text-slate-500 py-3">
+              <p className="text-center text-xs text-slate-500 py-3 md:col-span-2">
                 Showing first 200 of {filtered.length}. Refine search to narrow.
               </p>
             )}

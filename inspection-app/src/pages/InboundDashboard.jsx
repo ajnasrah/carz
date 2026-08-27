@@ -318,7 +318,7 @@ export default function InboundDashboard() {
       </div>
 
       {/* Quick Actions */}
-      <div className="fixed bottom-20 right-4 space-y-2">
+      <div className="fixed bottom-20 right-4 md:bottom-4 space-y-2">
         <button
           onClick={() => navigate('/inbound/reports')}
           className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center shadow-lg"
