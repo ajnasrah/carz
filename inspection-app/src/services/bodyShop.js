@@ -394,6 +394,100 @@ export async function deletePart(id) {
   if (error) throw error
 }
 
+// ------------------------------------------------- the order list
+//
+// Buying parts is its own sitting: the manager has the vendor on the phone and
+// works ONE list, not twenty car screens. Before this, finding out whether a car
+// still needed anything bought meant opening that car's job, and nothing
+// recorded that you'd already looked — so the same car got opened again the next
+// time, and the time after.
+//
+// A car is on this list while it has at least one part still marked `needed`,
+// and it leaves the moment the last one is marked Ordered. That is the whole
+// rule: the list empties as it's worked, and a car already ordered for is gone
+// until somebody adds another part to it.
+//
+// Held cars are off it for the same reason they're off the board — nobody buys a
+// bumper for junk — and so are done cars.
+export async function fetchPartsToOrder() {
+  const board = await fetchBoard()
+  const open = board.filter((j) => j.status !== 'done' && !isOnHold(j))
+
+  // The rollup on the view narrows which jobs we ask about; it is never the
+  // source of what's shown. COUNT comes back as a bigint, so compare it as a
+  // number rather than trusting it to be truthy.
+  const needing = open.filter((j) => Number(j.parts_needed) > 0)
+
+  const rows = []
+  const CHUNK = 100        // a few hundred ids in one ?in=(…) makes the URL too long
+  const ids = needing.map((j) => j.id)
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const { data, error } = await supabase
+      .from('body_shop_parts').select('*')
+      .eq('status', 'needed')
+      .in('job_id', ids.slice(i, i + CHUNK))
+      .order('created_at', { ascending: true })
+    if (error) throw error
+    rows.push(...(data || []))
+  }
+
+  const byJob = new Map()
+  for (const part of rows) {
+    if (!byJob.has(part.job_id)) byJob.set(part.job_id, [])
+    byJob.get(part.job_id).push(part)
+  }
+
+  // fetchBoard() already sorted longest-owned first, and this list keeps that
+  // order: the car burning the most money gets its parts bought first.
+  const cars = needing
+    .map((job) => ({ job, parts: byJob.get(job.id) || [] }))
+    .filter((c) => c.parts.length > 0)
+
+  // Cars nobody has listed parts for yet. NOT part of the order list — there is
+  // nothing to buy on them — but an empty order list means "nothing to order"
+  // only if somebody has actually looked at these, so they're counted in the
+  // footer instead of being silently absent.
+  const untriaged = open.filter((j) => Number(j.parts_total) === 0).length
+
+  return { cars, untriaged }
+}
+
+export async function markPartOrdered(id, { vendor, cost } = {}) {
+  const patch = { status: 'ordered' }
+  if (vendor !== undefined) patch.vendor = String(vendor || '').trim() || null
+  if (cost !== undefined && cost !== '' && cost !== null) patch.cost = Number(cost)
+  return updatePart(id, patch)
+}
+
+// Every part still needed on one car, in one write — the common case, because a
+// car's parts are usually bought from the same vendor in the same call.
+export async function markJobPartsOrdered(jobId) {
+  const { data, error } = await supabase
+    .from('body_shop_parts').update({ status: 'ordered' })
+    .eq('job_id', jobId).eq('status', 'needed')
+    .select()
+  if (error) throw error
+  return data || []
+}
+
+// Undo. ordered_at has to be cleared by hand: the trigger only stamps it on the
+// way IN (and only when it's null), so a part put back to needed would otherwise
+// keep the timestamp of an order that never happened, and re-ordering it later
+// would inherit that stale time.
+export async function markPartNeeded(id) {
+  return updatePart(id, { status: 'needed', ordered_at: null })
+}
+
+// A car whose parts have just been bought is, by definition, waiting on parts.
+// Only an INTAKE car is moved: one already in progress or in final check that
+// needed a late supplemental part must not be yanked backwards down the
+// pipeline. Returns the stage it came from so an undo can put it back.
+export async function advanceToWaitingParts(job) {
+  if (job?.status !== 'intake') return null
+  await updateJob(job.id, { status: 'waiting_parts' })
+  return 'intake'
+}
+
 // ---------------------------------------------------------------- charges
 // The charge is negotiated: Jorge proposes, an owner approves or counters,
 // Jorge accepts. Only an AGREED charge is payable. Every transition is a

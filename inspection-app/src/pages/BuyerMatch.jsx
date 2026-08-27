@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink } from 'lucide-react'
 import { recommendAll, recommendForBuyers } from '../services/buyerMatch'
@@ -182,6 +182,38 @@ export default function BuyerMatch() {
     if (!sellable.length || !training.length) return { buyers: [] }
     return recommendForBuyers(sellable, training, { spread: { enabled: spread } }, demand)
   }, [sellable, training, spread, demand])
+
+  // PERSIST THE PICKS.
+  //
+  // They were computed on every page open and then thrown away — for months.
+  // saveRecommendations() only ever ran inside a CSV upload, and the car list
+  // stopped coming from CSVs when it moved to buyer_match_cars(), so the branch
+  // never fired again. Both tables read empty: recommendation_scorecard()
+  // returned 924 cars sold / 0 recommended / 0 hits, and the Chrome extension
+  // has been reading an empty sa_recommendations.
+  //
+  // Once per session, and only for the DEFAULT view — a channel-filtered or
+  // spread-off run is someone exploring, not the call list, and it must not be
+  // what we are graded on later. recommendation_history is keyed
+  // (computed_on, vin, buyer_key), so re-opening the page all afternoon updates
+  // one row per car per day rather than multiplying the evidence.
+  const persisted = useRef(false)
+  useEffect(() => {
+    if (persisted.current || !results.length) return
+    if (chanOff.size || !spread) return
+    persisted.current = true
+    saveRecommendations(results)
+      .then((n) => n && setGhl((g) => `${g ? g + ' · ' : ''}Saved ${n} recommendation${n === 1 ? '' : 's'}`))
+      .catch((e) => {
+        // A signed-in buyer is not staff and save_recommendations refuses them
+        // by design. That is not a failure worth a red banner.
+        const msg = e?.message || String(e)
+        if (/staff only|permission|row-level security/i.test(msg)) return
+        // Anything else IS reported. Silently swallowing this is precisely how
+        // it went unnoticed for six months.
+        setErr(`Could not save recommendations: ${msg}`)
+      })
+  }, [results, chanOff, spread])
 
   const byVin = useMemo(() => new Map(sellable.map((c) => [c.vin, c])), [sellable])
   const buyerCount = useMemo(

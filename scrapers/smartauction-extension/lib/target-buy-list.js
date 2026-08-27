@@ -1026,8 +1026,35 @@
   // search.manheim.com/results?vin=<VIN>. That route also carries the VIN
   // through the login redirect in its `state` parameter, so it lands on the car
   // even from a browser that has to sign in first.
+  // Which Manheim marketplace a car opens on is a property of the ROW. Its
+  // `Inventory` column says so — but that vocabulary is open, and matching one
+  // literal is what has broken this twice: `Simulcast` cars once went to an OVE
+  // detail page for a marketplace they were never in, and then `Timed Sale`
+  // cars (all 303 rows of the 2026-08-26 export) went to the lane search.
+  // Matched by meaning now; an unknown word warns instead of silently guessing.
+  //
+  // Keep in lockstep with isOnlineListing() in
+  // inspection-app/src/services/targetBuyList.js
+  const ONLINE_CHANNEL = /OVE|TIMED|BUY.?NOW|ONLINE|MARKETPLACE|EXCHANGE/i;
+  const LANE_CHANNEL = /SIMULCAST|LANE|LIVE.?BLOCK/i;
+
+  function isOnlineListing(c) {
+    const ch = String((c && c.channel) || '').trim();
+    if (ONLINE_CHANNEL.test(ch)) return true;
+    if (LANE_CHANNEL.test(ch)) return false;
+    if (ch) {
+      console.warn('[target buy list] unknown Manheim channel "' + ch +
+        '" — falling back to the lane/run columns.');
+    }
+    // A car with a lane and a run number is a lane car; anything else is online.
+    // Not the other way round: that same export had one `Timed Sale` car
+    // carrying Lane 8 / Run 52 — a lane assignment for a car being sold online
+    // ahead of the block — which is why the channel word outranks this.
+    return !(String((c && c.lane) || '').trim() || String((c && c.run) || '').trim());
+  }
+
   const DIRECT_URL = {
-    manheim: (c) => (/OVE/i.test(c.channel || '')
+    manheim: (c) => (isOnlineListing(c)
       ? `https://www.ove.com/search/results#/details/${c.vin}/OVE`
       : `https://search.manheim.com/results?vin=${c.vin}`),
     adesa: (c) => `https://marketplace.adesa.com/details/${c.vin}`,

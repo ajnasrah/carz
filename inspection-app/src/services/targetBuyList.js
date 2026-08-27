@@ -13,7 +13,7 @@
 //          frazer-ingest edge function. Read via the list_all_sold() RPC because
 //          the table itself is RLS-protected against the anon key.
 
-import { supabase, selectAll } from './supabase'
+import { supabase } from './supabase'
 
 // ── Buy criteria ─────────────────────────────────────────────────────────────
 export const TARGET_PROFIT = 800
@@ -426,11 +426,16 @@ export const detectFormat = (rows) => (rows.length ? FORMATS.find((f) => f.detec
 // which site the cars live on — but the format alone does not finish the job for
 // Manheim, which runs two marketplaces and exports both from one report.
 //
-// Its `Inventory` column is the tell: `OVE` is the online exchange, `Simulcast`
-// is a car rolling through a physical lane. This used to send every Manheim car
-// to an OVE detail route on the assumption that a Manheim export IS an OVE
-// export; every list we actually get is Simulcast, so every link searched a
-// marketplace the car was never in and came back empty.
+// Its `Inventory` column is the tell — but it is an OPEN vocabulary, and that is
+// what keeps breaking this. It has read `OVE`, it has read `Simulcast`, and an
+// export on 2026-08-26 read `Timed Sale` on all 303 rows. Every previous version
+// of this matched one literal and sent everything else to the other site, so
+// each new word Manheim invents silently misroutes a whole list: first every
+// Simulcast car went to an OVE detail page for a car that was never in that
+// marketplace, and then every Timed Sale car went to the lane search.
+//
+// So it is matched by MEANING, not by literal, and an unrecognised word is no
+// longer a silent default — it warns, and falls back on structure.
 //
 // The lane route is Manheim's own: their legacy
 // /members/powersearch/searchResults.do?vin= 301s to
@@ -444,8 +449,34 @@ export const detectFormat = (rows) => (rows.length ? FORMATS.find((f) => f.detec
 // Takes the car, not the VIN — which site it opens on is a property of the
 // listing. Keep in lockstep with DIRECT_URL in
 // scrapers/smartauction-extension/lib/target-buy-list.js
+const ONLINE_CHANNEL = /OVE|TIMED|BUY.?NOW|ONLINE|MARKETPLACE|EXCHANGE/i
+const LANE_CHANNEL = /SIMULCAST|LANE|LIVE.?BLOCK/i
+
+// True when the car sells online, so it opens on OVE rather than in the lane
+// search. The channel word decides it; the lane/run columns are only the
+// tiebreak for a word nobody has taught this yet.
+//
+// Note the two are NOT mutually exclusive in the export: that same 2026-08-26
+// file had one car marked `Timed Sale` carrying Lane 8 / Run 52 — a car with a
+// lane assignment being offered online ahead of the block. It sells online today,
+// so it opens online today. Which is exactly why the channel outranks structure.
+export function isOnlineListing(c) {
+  const ch = String(c.channel || '').trim()
+  if (ONLINE_CHANNEL.test(ch)) return true
+  if (LANE_CHANNEL.test(ch)) return false
+  if (ch) {
+    console.warn(
+      `[target buy list] Manheim channel "${ch}" is not one this knows. ` +
+      'Falling back to the lane/run columns — add it to ONLINE_CHANNEL or ' +
+      'LANE_CHANNEL in targetBuyList.js (and in the extension copy).')
+  }
+  // No word to go on: a car with a lane and a run number is a lane car; anything
+  // else is online, because online is where a car with no lane sells.
+  return !(String(c.lane || '').trim() || String(c.run || '').trim())
+}
+
 export const DIRECT_URL = {
-  manheim: (c) => (/OVE/i.test(c.channel || '')
+  manheim: (c) => (isOnlineListing(c)
     ? `https://www.ove.com/search/results#/details/${c.vin}/OVE`
     : `https://search.manheim.com/results?vin=${c.vin}`),
   adesa: (c) => `https://marketplace.adesa.com/details/${c.vin}`,
