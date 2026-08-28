@@ -15,6 +15,7 @@ import { ShareCarButton } from '../components/ShareToBuyer'
 import { listingUrl } from '../services/marketplaceShare'
 import { toInt } from '../services/utils'
 import { STARTUP_ITEMS, TEST_DRIVE_ITEMS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
+import { readFindings } from '../services/mechanicalFindings'
 import HistoryButton from '../components/HistoryButton'
 import { copyText } from '../native/clipboard'
 import { openExternal, smsUrl } from '../native/links'
@@ -319,13 +320,23 @@ export default function MarketplaceListing() {
   // Startup findings
   const startupItems = STARTUP_ITEMS.map((item) => ({
     ...item,
-    result: cl.startup?.[item.id] || {},
+    result: {
+      ...(cl.startup?.[item.id] || {}),
+      // A check holds a list now. Without this the page shows a Fail badge and
+      // no text next to it, because the old `note` field is gone.
+      note: readFindings(cl, 'startup', item.id).map((f) => f.description).join(', ')
+        || cl.startup?.[item.id]?.note || '',
+    },
   }))
 
   // Test drive findings
   const testDriveItems = TEST_DRIVE_ITEMS.map((item) => ({
     ...item,
-    result: cl.test_drive?.[item.id] || {},
+    result: {
+      ...(cl.test_drive?.[item.id] || {}),
+      note: readFindings(cl, 'test_drive', item.id).map((f) => f.description).join(', ')
+        || cl.test_drive?.[item.id]?.note || '',
+    },
   }))
 
   // Exterior damages

@@ -60,11 +60,7 @@ const BodyShopPayout = lazy(() => import('./pages/BodyShopPayout'))
 const PartsToOrder = lazy(() => import('./pages/PartsToOrder'))
 const MechanicBoard = lazy(() => import('./pages/MechanicBoard'))
 const MechanicJob = lazy(() => import('./pages/MechanicJob'))
-// Inbound Inspection Pages
-const InboundDashboard = lazy(() => import('./pages/InboundDashboard'))
-const InboundStart = lazy(() => import('./pages/InboundStart'))
-const ArrivalInspection = lazy(() => import('./pages/ArrivalInspection'))
-const MechanicalInspection = lazy(() => import('./pages/MechanicalInspection'))
+const CarWorkOrder = lazy(() => import('./pages/CarWorkOrder'))
 
 // Warm the chunks for the screens that are one tap away.
 //
@@ -239,11 +235,29 @@ function AppRoutes() {
       <Route path="/mechanic" element={<ProtectedRoute><MechanicBoard /></ProtectedRoute>} />
       <Route path="/mechanic/:id" element={<ProtectedRoute><MechanicJob /></ProtectedRoute>} />
 
+      {/* One car, both shops, one screen — the answer to "is this car actually
+          ready", which previously needed two boards and a good memory. */}
+      <Route path="/work" element={<ProtectedRoute><CarWorkOrder /></ProtectedRoute>} />
+      <Route path="/work/:vin6" element={<ProtectedRoute><CarWorkOrder /></ProtectedRoute>} />
+
       {/* Inbound Inspection System */}
-      <Route path="/inbound" element={<ProtectedRoute><InboundDashboard /></ProtectedRoute>} />
-      <Route path="/inbound/new" element={<ProtectedRoute><InboundStart /></ProtectedRoute>} />
-      <Route path="/inbound/:id/arrival" element={<ProtectedRoute><ArrivalInspection /></ProtectedRoute>} />
-      <Route path="/inbound/:id/mechanical" element={<ProtectedRoute><MechanicalInspection /></ProtectedRoute>} />
+      {/* The old /inbound module is gone. It was a second, unfinished copy of
+          the inspection flow — its own v:3 checklist, its own mechanical and
+          arrival screens — built on four tables that were never created, so
+          every one of its screens threw. Its own buttons pointed at
+          /inbound/start, /inbound/reports and /inbound/pending-approvals, none
+          of which were ever routes.
+
+          Everything it was for now happens in the working flow, which has the
+          granular findings, the offline queue and the work order router behind
+          it. The redirects stay so an old bookmark or a link in someone's
+          messages still lands somewhere real. Its arrival checks — VIN matches
+          paperwork, title present, keys count, transport damage — are worth
+          reinstating as a section of the real flow when the arrival damage
+          claim gets built; they are in git history, not lost. */}
+      <Route path="/inbound" element={<Navigate to="/inspections" replace />} />
+      <Route path="/inbound/new" element={<Navigate to="/inspections" replace />} />
+      <Route path="/inbound/:id/*" element={<Navigate to="/inspections" replace />} />
 
       {/* Admin */}
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
@@ -284,7 +298,7 @@ function NativeBridge() {
       // inspector out of a half-finished car.
       onBack: ({ canGoBack }) => {
         const path = window.location.pathname
-        if (path === '/' || path.startsWith('/inspect/') || path.startsWith('/inbound/')) return
+        if (path === '/' || path.startsWith('/inspect/')) return
         if (canGoBack) navigate(-1)
       },
     }).then((fn) => {

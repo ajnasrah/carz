@@ -127,6 +127,14 @@ export default function MechanicJob() {
             {job.mileage != null && <span className="text-slate-600"> · {Number(job.mileage).toLocaleString()} mi</span>}
           </div>
         </div>
+        {/* The other half of the car. A tech who fixes only what is on this
+            board sends back a car with the body shop's work still on it. */}
+        {last6 && (
+          <button onClick={() => navigate(`/work/${last6}`)} title="Everything this car needs"
+            className="p-2 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700 text-sm">
+            🧾
+          </button>
+        )}
         <button onClick={() => { setLoading(true); load() }} aria-label="Refresh"
           className="p-2 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700">
           <RefreshCw size={16} className="text-slate-300" />

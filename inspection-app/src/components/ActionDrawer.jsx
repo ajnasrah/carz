@@ -21,6 +21,9 @@ const PRIMARY = [
   // Next to the body shop because they're the same question asked of the two
   // shops: what's in there, and how long have we owned it.
   { to: '/mechanic', emoji: '🔧', label: 'Mechanic' },
+  // Asked while standing next to a car: what does this one still need, from
+  // anybody? Answering it used to mean opening both shop boards in turn.
+  { to: '/work', emoji: '🧾', label: 'Work Order' },
   { to: '/list-builder', emoji: '🔨', label: 'List Builder' },
   { to: '/marketplace', emoji: '🏪', label: 'Marketplace' },
   { to: '/front-lot-aging', emoji: '⏰', label: 'Lot Aging' },
@@ -31,7 +34,6 @@ const PRIMARY = [
 const MORE = [
   { to: '/pull-list', emoji: '📋', label: 'Pull List' },
   { to: '/inspections', emoji: '📝', label: 'Inspect' },
-  { to: '/inbound', emoji: '📥', label: 'Inbound' },
   { to: '/lookup', emoji: '📊', label: 'MMR/BB' },
   { href: '/training/', emoji: '🎓', label: 'Training' },
 ]

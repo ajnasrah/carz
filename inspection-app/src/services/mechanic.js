@@ -403,3 +403,61 @@ export function isMechanic(profile) {
 export function canSeeMechanicMoney(profile) {
   return isMechanicManager(profile)
 }
+
+// ---------------------------------------------------------------- one car
+
+// Everything a car is waiting on, across both shops, in one read.
+//
+// The failure this exists to stop: a tech fixes what is on the mechanic board,
+// the car goes back on the lot, and the dent nobody mentioned to him is still
+// there — so it comes back. A car is ready when BOTH shops are finished with
+// it, and until now nothing on one screen could say whether that was true.
+//
+// Newest open job wins; if both shops are finished we still show the last one,
+// because "what did we do to this car" is the other question this answers.
+export async function fetchCarWorkOrder(vin6) {
+  const six = String(vin6 || '').trim().toUpperCase().slice(-6)
+  if (six.length < 6) throw new Error('Enter the last 6 of the VIN')
+
+  const pickCurrent = (rows) => {
+    const open = (rows || []).filter((r) => r.status !== 'done')
+    const pool = open.length ? open : (rows || [])
+    return pool.sort((a, b) => new Date(b.entered_at) - new Date(a.entered_at))[0] || null
+  }
+
+  const [mechRes, bsRes] = await Promise.all([
+    supabase.from('mechanic_board').select('*').eq('vin6', six),
+    supabase.from('body_shop_board').select('*').eq('vin6', six),
+  ])
+  if (mechRes.error) throw mechRes.error
+  // The body shop board is gated the same way but a missing row is normal —
+  // most cars never go there.
+  const mech = pickCurrent(mechRes.data)
+  const body = bsRes.error ? null : pickCurrent(bsRes.data)
+
+  const [lines, mechParts, bodyParts, miss] = await Promise.all([
+    mech ? fetchLines(mech.id) : Promise.resolve([]),
+    mech ? fetchParts(mech.id) : Promise.resolve([]),
+    body
+      ? supabase.from('body_shop_parts').select('*').eq('job_id', body.id)
+          .then(({ data }) => data || [])
+      : Promise.resolve([]),
+    mech
+      ? supabase.from('mechanic_job_miss_rate').select('*').eq('job_id', mech.id).maybeSingle()
+          .then(({ data }) => data)
+      : Promise.resolve(null),
+  ])
+
+  return { vin6: six, mech, body, lines, mechParts, bodyParts, miss }
+}
+
+// "That's everything I found." Recorded as a statement by a person, separate
+// from the car physically leaving — close_mechanic_job() deliberately does not
+// set this, because a car being moved is an event, not a judgement.
+export async function signOffJob(jobId) {
+  const { data: { user } } = await supabase.auth.getUser()
+  return updateJob(jobId, {
+    signed_off_at: new Date().toISOString(),
+    signed_off_by: user?.id || null,
+  })
+}
