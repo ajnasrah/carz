@@ -74,10 +74,15 @@ export default function CarWorkOrder() {
   const partsOpen = [...mechParts, ...bodyParts].filter((p) => p.status !== 'received')
   const age = car ? jobAge(car) : null
 
-  // The one sentence this screen exists to say.
+  // The one sentence this screen exists to say — and it has THREE states, not
+  // two. A car with no repair lines has not been cleared, it has not been
+  // looked at, and showing that as "0 things still open" is the same lie the
+  // old board told. Undiagnosed and finished must never read alike.
   const mechDone = !mech || mech.status === 'done'
   const bodyDone = !body || body.status === 'done'
-  const ready = mechDone && bodyDone && openLines.length === 0 && partsOpen.length === 0
+  const undiagnosed = !!mech && mech.status !== 'done' && lines.length === 0
+  const outstanding = openLines.length + partsOpen.length
+  const ready = !undiagnosed && mechDone && bodyDone && outstanding === 0
 
   async function onSignOff() {
     setBusy(true)
@@ -113,15 +118,21 @@ export default function CarWorkOrder() {
         <>
           {/* The verdict, first, because it is the reason anyone opened this. */}
           <div className={`card mb-3 py-3 text-center ${
-            ready ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-amber-500/10 border-amber-500/40'}`}>
-            <p className={`text-base font-bold ${ready ? 'text-emerald-400' : 'text-amber-300'}`}>
-              {ready ? 'Nothing outstanding' : `${openLines.length + partsOpen.length} thing${
-                openLines.length + partsOpen.length === 1 ? '' : 's'} still open`}
+            ready ? 'bg-emerald-500/10 border-emerald-500/40'
+              : undiagnosed ? 'bg-yellow-500/10 border-yellow-500/40'
+              : 'bg-amber-500/10 border-amber-500/40'}`}>
+            <p className={`text-base font-bold ${
+              ready ? 'text-emerald-400' : undiagnosed ? 'text-yellow-400' : 'text-amber-300'}`}>
+              {ready ? 'Nothing outstanding'
+                : undiagnosed ? 'Not diagnosed yet'
+                : `${outstanding} thing${outstanding === 1 ? '' : 's'} still open`}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
               {ready
                 ? 'Both shops are finished with this car.'
-                : 'Fix it all now — a second trip restarts the clock.'}
+                : undiagnosed
+                  ? "Nobody has said what's wrong with it. Nothing can be ordered or scheduled until they do."
+                  : 'Fix it all now — a second trip restarts the clock.'}
             </p>
             {age && (
               <p className={`text-[11px] mt-1 ${age.owned ? ownedStyle(age.days) : ageStyle(age.days)}`}>
@@ -188,11 +199,18 @@ export default function CarWorkOrder() {
                 </div>
               ) : (
                 <>
-                  <button onClick={onSignOff} disabled={busy || openLines.length > 0}
+                  {/* Signing off a car with no lines would be signing off a car
+                      nobody looked at — the exact thing this is meant to catch. */}
+                  <button onClick={onSignOff} disabled={busy || openLines.length > 0 || undiagnosed}
                     className="btn-primary disabled:opacity-40">
                     {busy ? 'Saving…' : "Nothing else found — sign off"}
                   </button>
-                  {openLines.length > 0 && (
+                  {undiagnosed ? (
+                    <p className="text-[11px] text-slate-500 mt-2 text-center">
+                      Nothing is listed on this car yet. Put what's wrong on the job
+                      first — or, if it really is fine, say so with a line marked Not Fixing.
+                    </p>
+                  ) : openLines.length > 0 && (
                     <p className="text-[11px] text-slate-500 mt-2 text-center">
                       {openLines.length} repair{openLines.length === 1 ? '' : 's'} still open.
                       Close or decline {openLines.length === 1 ? 'it' : 'them'} first.

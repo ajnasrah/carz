@@ -11,6 +11,7 @@ import { useAuth } from '../context/useAuth'
 import useSwipe from '../hooks/useSwipe'
 import HistoryButton from '../components/HistoryButton'
 import PhotoLightbox from '../components/PhotoLightbox'
+import PartsSearchButton from '../components/PartsSearchButton'
 import BurstCamera from '../components/BurstCamera'
 import {
   fetchJob, updateJob, assignTech, deleteJob, fetchBoard,
@@ -318,6 +319,7 @@ export default function BodyShopJob() {
       {/* Parts */}
       <Section title={`Parts Needed${parts.length ? ` (${parts.filter((p) => p.status === 'received').length}/${parts.length})` : ''}`}>
         <PartsList jobId={id} parts={parts} setParts={setParts} showCost={seeMoney}
+          vehicle={job}
           onError={setError} onChanged={() => fetchJob(id).then(setJob)} />
       </Section>
 
@@ -717,7 +719,7 @@ function VinRow({ job }) {
   )
 }
 
-function PartsList({ jobId, parts, setParts, onError, onChanged, showCost = true }) {
+function PartsList({ jobId, parts, setParts, onError, onChanged, showCost = true, vehicle }) {
   const [name, setName] = useState('')
   const [cost, setCost] = useState('')
   const [vendor, setVendor] = useState('')
@@ -784,6 +786,7 @@ function PartsList({ jobId, parts, setParts, onError, onChanged, showCost = true
                     </div>
                   )}
                 </div>
+                <PartsSearchButton vehicle={vehicle} term={part.name} />
                 <button onClick={() => remove(part)} className="shrink-0 p-1 text-slate-600 active:text-red-400">
                   <Trash2 size={14} />
                 </button>

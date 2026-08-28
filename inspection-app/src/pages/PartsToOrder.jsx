@@ -15,6 +15,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, RefreshCw, ChevronRight, Undo2 } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
+import PartsSearchButton from '../components/PartsSearchButton'
 import {
   fetchPartsToOrder, markPartOrdered, markPartNeeded, markJobPartsOrdered,
   jobAge, ownedStyle, ageStyle, vehicleLabel, lastSix,
@@ -254,7 +255,7 @@ function CarParts({ car, onOpen, onOrder, onOrderAll, showCost }) {
 
       <div className="border-t border-slate-700 divide-y divide-slate-700/60">
         {parts.map((part) => (
-          <PartRow key={part.id} part={part} showCost={showCost}
+          <PartRow key={part.id} part={part} showCost={showCost} vehicle={job}
             onOrder={(fields) => onOrder(part, fields)} />
         ))}
       </div>
@@ -273,7 +274,7 @@ function CarParts({ car, onOpen, onOrder, onOrderAll, showCost }) {
 // what it cost. Both optional — a part ordered with no price still leaves the
 // list, because holding the list hostage to bookkeeping is how the list stops
 // getting worked.
-function PartRow({ part, onOrder, showCost }) {
+function PartRow({ part, onOrder, showCost, vehicle }) {
   const [vendor, setVendor] = useState(part.vendor || '')
   const [cost, setCost] = useState(part.cost == null ? '' : String(part.cost))
   const [busy, setBusy] = useState(false)
@@ -286,7 +287,12 @@ function PartRow({ part, onOrder, showCost }) {
 
   return (
     <div className="p-3">
-      <div className="text-sm text-slate-200">{part.name}</div>
+      <div className="flex items-center gap-1">
+        <span className="flex-1 min-w-0 text-sm text-slate-200 truncate">{part.name}</span>
+        {/* Buying happens here, so the shortcut belongs here — the car and the
+            part name are all any vendor needs. */}
+        <PartsSearchButton vehicle={vehicle} term={part.name} />
+      </div>
       {part.eta && (
         <div className="text-[11px] text-slate-500 mt-0.5">ETA {part.eta}</div>
       )}

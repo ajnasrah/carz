@@ -186,9 +186,12 @@ export default function Dashboard() {
     <div className="page pb-24">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
+        {/* Phone only. On anything wider the left rail is already showing
+            every one of these destinations, and a button that opened a second
+            copy of the menu on top of it was the whole bug. */}
         <button
           onClick={() => setMenuOpen(true)}
-          className="p-2 -ml-2 mr-1 rounded-lg bg-slate-800 text-slate-300"
+          className="md:hidden p-2 -ml-2 mr-1 rounded-lg bg-slate-800 text-slate-300"
           aria-label="Open menu"
         >
           <Menu size={20} />

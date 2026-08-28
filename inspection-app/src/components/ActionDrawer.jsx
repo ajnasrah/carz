@@ -1,42 +1,21 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { X } from 'lucide-react'
+import { PRIMARY_LINKS, MORE_LINKS } from '../navLinks'
 
 // "What do you want to do?" as a left drawer instead of a wall of tiles. The
 // dashboard's job is the numbers; the nav is something you reach for, not
 // something that should be occupying half the screen underneath them.
 //
+// PHONE ONLY. The destinations live in navLinks.js and anything md and wider
+// shows the same list permanently in the left rail, so this never opens over
+// it — which it used to, at the same z-index, and lost.
+//
 // The day's work on top, in the order it gets reached for; the occasional
 // screens under More. A drawer has room for all of it, so nothing hides behind
 // a toggle — the heading is the only thing separating them.
-const PRIMARY = [
-  { to: '/lot', emoji: '🚶', label: 'Walk Lot' },
-  { to: '/inventory', emoji: '🚗', label: 'Cars' },
-  // The sold list, sitting directly under Cars because it's the other half of
-  // the same question — what we're holding, and what left. 💰 matches the
-  // bottom nav's Sold tab, but that tab goes to /sold-reports (the profit
-  // trends). This is the car list itself, which had no way in from anywhere.
-  { to: '/sold', emoji: '💰', label: 'Sold' },
-  { to: '/body-shop', emoji: '🎨', label: 'Body Shop' },
-  // Next to the body shop because they're the same question asked of the two
-  // shops: what's in there, and how long have we owned it.
-  { to: '/mechanic', emoji: '🔧', label: 'Mechanic' },
-  // Asked while standing next to a car: what does this one still need, from
-  // anybody? Answering it used to mean opening both shop boards in turn.
-  { to: '/work', emoji: '🧾', label: 'Work Order' },
-  { to: '/list-builder', emoji: '🔨', label: 'List Builder' },
-  { to: '/marketplace', emoji: '🏪', label: 'Marketplace' },
-  { to: '/front-lot-aging', emoji: '⏰', label: 'Lot Aging' },
-  { to: '/buyer-match', emoji: '🎯', label: 'Buyers' },
-  { to: '/reports', emoji: '📈', label: 'Reports' },
-]
-
-const MORE = [
-  { to: '/pull-list', emoji: '📋', label: 'Pull List' },
-  { to: '/inspections', emoji: '📝', label: 'Inspect' },
-  { to: '/lookup', emoji: '📊', label: 'MMR/BB' },
-  { href: '/training/', emoji: '🎓', label: 'Training' },
-]
+const PRIMARY = PRIMARY_LINKS.filter((l) => l.to !== '/')
+const MORE = MORE_LINKS
 
 export default function ActionDrawer({ open, onClose, footer }) {
   // Escape closes it, and the page behind it doesn't scroll while it's open —
@@ -60,12 +39,12 @@ export default function ActionDrawer({ open, onClose, footer }) {
       <div
         onClick={onClose}
         aria-hidden={!open}
-        className={`fixed inset-0 z-40 bg-slate-950/70 transition-opacity duration-200 ${
+        className={`fixed inset-0 z-[60] bg-slate-950/70 transition-opacity duration-200 ${
           open ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[17rem] max-w-[85vw] bg-slate-900 border-r border-slate-800 flex flex-col transition-transform duration-200 ${
+        className={`fixed inset-y-0 left-0 z-[70] w-[17rem] max-w-[85vw] bg-slate-900 border-r border-slate-800 flex flex-col transition-transform duration-200 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{ paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)' }}
