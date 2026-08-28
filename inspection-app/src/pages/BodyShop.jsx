@@ -177,8 +177,13 @@ export default function BodyShop() {
           number you just read and the list you get are the same thing — and the
           tally doubles as the filter instead of sitting above a second row of
           chips saying the same numbers. Tap the active one again to go back to
-          all open cars. */}
-      <div className="grid grid-cols-5 gap-1.5 mb-2">
+          all open cars.
+
+          Six stages don't fit across a phone, so they wrap to two rows of
+          three — which happens to break exactly where the shop does: what the
+          car is waiting on, then who is working it. One row again once there's
+          width for it. */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
         {JOB_STATUSES.filter((s) => s.key !== 'done').map((s) => (
           <StageTile key={s.key} stage={s} count={byStage[s.key]}
             active={statusFilter === s.key}
@@ -276,6 +281,7 @@ export default function BodyShop() {
 // hidden — "no cars in Final Check" is information.
 const STAGE_TONES = {
   intake:        { on: 'bg-slate-600 border-slate-400',        num: 'text-slate-100' },
+  need_parts:    { on: 'bg-rose-500/30 border-rose-400',       num: 'text-rose-300' },
   waiting_parts: { on: 'bg-orange-500/30 border-orange-400',   num: 'text-orange-300' },
   parts_in:      { on: 'bg-yellow-500/30 border-yellow-400',   num: 'text-yellow-300' },
   in_progress:   { on: 'bg-emerald-500/30 border-emerald-400', num: 'text-emerald-300' },

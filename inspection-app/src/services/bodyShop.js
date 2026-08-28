@@ -18,13 +18,24 @@ import { isPrimaryAdmin } from './adminSetup'
 // is its own stage, because a car on the buffer is not a finished car and must
 // not be payable yet.
 //
+// The parts run is THREE stages, not one, because "waiting on parts" was hiding
+// the only one of them we can do anything about. A car nobody has ordered for is
+// our delay; a car whose bumper is on a truck is the vendor's. Lumping them
+// together made 26 cars look like one problem that was somebody else's.
+//
+// Those three are driven by the parts checklist, not by tapping — see
+// sync_body_shop_job_parts_stage in the migration. The buttons still exist for
+// the odd car the list doesn't describe, but nobody should need them.
+//
 // Order matters beyond the labels: the board's filter chips, the status buttons,
 // and the swipe-through order all read this array.
 export const JOB_STATUSES = [
   { key: 'intake',        label: 'Intake',        emoji: '📥', color: 'slate',
     hint: 'Just arrived — needs a price' },
-  { key: 'waiting_parts', label: 'Waiting Parts', emoji: '📦', color: 'orange',
-    hint: 'Blocked until parts land' },
+  { key: 'need_parts',    label: 'Need Parts',    emoji: '🛒', color: 'rose',
+    hint: 'Nothing ordered yet — on us' },
+  { key: 'waiting_parts', label: 'Parts Ordered', emoji: '📦', color: 'orange',
+    hint: 'Bought — waiting on the vendor' },
   { key: 'parts_in',      label: 'Parts In',      emoji: '📬', color: 'yellow',
     hint: 'Parts delivered — waiting to start' },
   { key: 'in_progress',   label: 'In Progress',   emoji: '🔨', color: 'emerald',
@@ -48,6 +59,7 @@ export const HOLD_STATUS = { key: 'on_hold', label: 'On Hold', emoji: '⛔',
 
 export const JOB_STATUS_STYLES = {
   intake:        'bg-slate-700 text-slate-200',
+  need_parts:    'bg-rose-500/20 text-rose-300 border border-rose-500/40',
   waiting_parts: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
   parts_in:      'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
   in_progress:   'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
@@ -478,15 +490,11 @@ export async function markPartNeeded(id) {
   return updatePart(id, { status: 'needed', ordered_at: null })
 }
 
-// A car whose parts have just been bought is, by definition, waiting on parts.
-// Only an INTAKE car is moved: one already in progress or in final check that
-// needed a late supplemental part must not be yanked backwards down the
-// pipeline. Returns the stage it came from so an undo can put it back.
-export async function advanceToWaitingParts(job) {
-  if (job?.status !== 'intake') return null
-  await updateJob(job.id, { status: 'waiting_parts' })
-  return 'intake'
-}
+// Nothing here moves the car any more. Marking the last part Ordered puts the
+// job in Parts Ordered, marking one back to Needed puts it in Need Parts, and
+// the last part landing puts it in Parts In — all of it in the database, on the
+// parts rows themselves, so the board tells the same story no matter who touched
+// the checklist or from which screen. See sync_body_shop_job_parts_stage.
 
 // ---------------------------------------------------------------- charges
 // The charge is negotiated: Jorge proposes, an owner approves or counters,

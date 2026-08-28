@@ -218,8 +218,16 @@ export default function BodyShopJob() {
       {error && <div className="card border-red-500/40 bg-red-500/10 text-red-300 text-sm mb-3">{error}</div>}
 
       {/* Status — the stages in the order the car moves through them:
-          intake → waiting parts → in progress → final check → done. Done is
-          full width because it's the end of the line, not another lane.
+          intake → need parts → parts ordered → parts in → in progress →
+          final check → done. Done is full width because it's the end of the
+          line, not another lane.
+
+          The three parts stages are set by the checklist below, not from here:
+          add a part and the car is in Need Parts, mark it Ordered and it's in
+          Parts Ordered, mark the last one Received and it's in Parts In. The
+          buttons still work — a car can be waiting on something nobody wrote
+          down — but tapping them is the exception now, and the next checklist
+          change takes the car back.
 
           On hold is drawn under the grid, not inside it, because it isn't a
           stage: it takes the car off the pipeline. Red, and separate, so nobody

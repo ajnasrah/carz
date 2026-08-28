@@ -17,7 +17,6 @@ import { ArrowLeft, RefreshCw, ChevronRight, Undo2 } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import {
   fetchPartsToOrder, markPartOrdered, markPartNeeded, markJobPartsOrdered,
-  advanceToWaitingParts, updateJob,
   jobAge, ownedStyle, ageStyle, vehicleLabel, lastSix,
   isBodyShopManager, canSeeShopMoney, JOB_STATUSES, JOB_STATUS_STYLES,
 } from '../services/bodyShop'
@@ -80,10 +79,9 @@ export default function PartsToOrder() {
 
     try {
       await markPartOrdered(part.id, fields)
-      const from = remaining.length === 0 ? await advanceToWaitingParts(car.job) : null
       offerUndo({
         label: `${part.name} · ${vehicleLabel(car.job)}`,
-        parts: [part], job: car.job, movedFrom: from,
+        parts: [part], job: car.job,
       })
     } catch (e) {
       setError(e.message || 'Could not mark that part ordered')
@@ -99,10 +97,9 @@ export default function PartsToOrder() {
 
     try {
       await markJobPartsOrdered(car.job.id)
-      const from = await advanceToWaitingParts(car.job)
       offerUndo({
         label: `${all.length} ${all.length === 1 ? 'part' : 'parts'} · ${vehicleLabel(car.job)}`,
-        parts: all, job: car.job, movedFrom: from,
+        parts: all, job: car.job,
       })
     } catch (e) {
       setError(e.message || 'Could not mark those parts ordered')
@@ -124,10 +121,10 @@ export default function PartsToOrder() {
     setUndo(null)
     clearTimeout(undoTimer.current)
     try {
+      // Putting the parts back puts the stage back on its own: the part rows
+      // are what the stage is computed from, so a car whose order was undone
+      // lands in Need Parts again without this screen having to know that.
       await Promise.all(payload.parts.map((p) => markPartNeeded(p.id)))
-      // Putting the parts back has to put the stage back too, or the undo leaves
-      // a car sitting in Waiting Parts with nothing on order.
-      if (payload.movedFrom) await updateJob(payload.job.id, { status: payload.movedFrom })
       await load()
     } catch (e) {
       setError(e.message || 'Could not undo that')

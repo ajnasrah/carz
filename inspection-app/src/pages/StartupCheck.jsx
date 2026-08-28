@@ -1,17 +1,30 @@
-import { useState, useEffect, useRef } from 'react'
+// Quick Check — what the car tells you before it moves.
+//
+// Same rewrite as the test drive: each check now holds a list of findings
+// instead of one pass/fail and one line of text. "Accessories" alone covers
+// fourteen separate things; asking an inspector to fit a dead radio, a broken
+// window switch and a blown speaker into one sentence is how two of the three
+// stopped reaching the shop.
+
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, Check, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { STARTUP_ITEMS, KEY_FOBS_ITEM } from '../services/inspectionFlow'
 import { markTrackComplete, markTrackStarted } from '../services/tracks'
+import MechanicalChecks from '../components/MechanicalChecks'
+import {
+  isAnswered, unansweredChecks, readFindings, readOtherFindings, setCheckStatus,
+} from '../services/mechanicalFindings'
+
+const CHECKS = STARTUP_ITEMS.map((c) => ({ ...c, section: 'startup' }))
 
 export default function StartupCheck() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [inspection, setInspection] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const noteTimer = useRef(null)
+  const [finishing, setFinishing] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -23,73 +36,50 @@ export default function StartupCheck() {
     load()
   }, [id])
 
-  async function saveChecklist(updated) {
-    setSaving(true)
-    await supabase.from('inspections').update({ checklist: updated }).eq('id', id)
-    setSaving(false)
-  }
+  const onChange = useCallback((checklist) => {
+    setInspection((prev) => ({ ...prev, checklist }))
+  }, [])
 
-  function setStatus(itemId, status) {
-    let toSave
-    setInspection((prev) => {
-      const updated = { ...prev.checklist }
-      updated.startup = { ...updated.startup }
-      updated.startup[itemId] = { ...updated.startup[itemId], status }
-      toSave = updated
-      return { ...prev, checklist: updated }
+  const checklist = inspection?.checklist || {}
+  const answered = CHECKS.filter((c) => isAnswered(checklist, 'startup', c.id)).length
+  const missing = unansweredChecks(checklist, CHECKS)
+  const findingCount =
+    CHECKS.reduce((n, c) => n + readFindings(checklist, 'startup', c.id).length, 0) +
+    readOtherFindings(checklist).length
+  const keyFobs = checklist.startup?.[KEY_FOBS_ITEM.id]?.value || ''
+
+  // Key fob count is a plain value on the startup branch, not a finding — it is
+  // an inventory fact, not something to repair.
+  async function setKeyFobs(value) {
+    const { data, error } = await supabase.rpc('patch_inspection_checklist', {
+      p_inspection_id: id,
+      p_path: ['startup', KEY_FOBS_ITEM.id],
+      p_value: { value },
     })
-    saveChecklist(toSave)
+    if (!error && data) onChange(data)
   }
 
-  function setNote(itemId, note) {
-    let toSave
-    setInspection((prev) => {
-      const updated = { ...prev.checklist }
-      updated.startup = { ...updated.startup }
-      updated.startup[itemId] = { ...updated.startup[itemId], note }
-      toSave = updated
-      return { ...prev, checklist: updated }
-    })
-    if (noteTimer.current) clearTimeout(noteTimer.current)
-    noteTimer.current = setTimeout(() => saveChecklist(toSave), 500)
-  }
-
-  function setKeyFobs(value) {
-    let toSave
-    setInspection((prev) => {
-      const updated = { ...prev.checklist }
-      updated.startup = { ...updated.startup }
-      updated.startup[KEY_FOBS_ITEM.id] = { value }
-      toSave = updated
-      return { ...prev, checklist: updated }
-    })
-    if (noteTimer.current) clearTimeout(noteTimer.current)
-    noteTimer.current = setTimeout(() => saveChecklist(toSave), 500)
-  }
-
-  function markAllGood() {
-    let toSave
-    setInspection((prev) => {
-      const updated = { ...prev.checklist }
-      updated.startup = { ...updated.startup }
-      STARTUP_ITEMS.forEach((item) => {
-        updated.startup[item.id] = { ...updated.startup[item.id], status: 'pass' }
-      })
-      toSave = updated
-      return { ...prev, checklist: updated }
-    })
-    saveChecklist(toSave)
-  }
-
-  function getProgress() {
-    const startup = inspection?.checklist?.startup || {}
-    const done = STARTUP_ITEMS.filter((i) => startup[i.id]?.status === 'pass' || startup[i.id]?.status === 'fail').length
-    return { done, total: STARTUP_ITEMS.length }
+  async function markRestGood() {
+    let next = checklist
+    for (const c of missing) {
+      next = await setCheckStatus(id, next, 'startup', c.id, 'pass')
+    }
+    onChange(next)
   }
 
   async function handleNext() {
+    if (missing.length > 0) {
+      const ok = window.confirm(
+        `${missing.length} check${missing.length === 1 ? '' : 's'} not answered:\n\n` +
+        missing.map((c) => `• ${c.label}`).join('\n') +
+        '\n\nAn unanswered check is not the same as a good one. Finish anyway?'
+      )
+      if (!ok) return
+    }
+    setFinishing(true)
     const result = await markTrackComplete(id, 'quick')
     if (result?.error) {
+      setFinishing(false)
       alert('Save failed: ' + result.error.message)
       return
     }
@@ -103,90 +93,65 @@ export default function StartupCheck() {
   if (loading) return <div className="page text-center text-slate-400 pt-20">Loading...</div>
   if (!inspection) return <div className="page text-center text-red-400 pt-20">Not found</div>
 
-  const progress = getProgress()
-  const startup = inspection.checklist?.startup || {}
-  const keyFobs = startup[KEY_FOBS_ITEM.id]?.value || ''
-
   return (
-    <div className="page">
+    <div className="page pb-24">
       <div className="flex items-center gap-3 mb-4">
-        <button onClick={() => navigate('/')} className="p-2 rounded-lg bg-slate-800">
+        <button onClick={() => navigate('/')} aria-label="Back"
+          className="p-2 rounded-lg bg-slate-800">
           <ArrowLeft size={20} />
         </button>
-        <div className="flex-1">
-          <h1 className="text-lg font-bold text-emerald-400">Startup Check</h1>
-          <p className="text-sm text-slate-400">VIN ...{inspection.vin_last6 || inspection.vin?.slice(-6)}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold text-amber-400">Quick Check</h1>
+          <p className="text-sm text-slate-400">
+            VIN ...{inspection.vin_last6 || inspection.vin?.slice(-6)}
+          </p>
         </div>
-        <span className={`text-xs font-bold ${saving ? 'text-yellow-400' : 'text-emerald-400'}`}>
-          {saving ? 'Saving...' : `${progress.done}/${progress.total}`}
+        <span className="text-xs font-bold text-slate-400 tabular-nums">
+          {answered}/{CHECKS.length}
         </span>
       </div>
 
-      <button
-        onClick={markAllGood}
-        className="w-full mb-4 py-2.5 rounded-lg bg-emerald-500/20 text-emerald-400 font-bold text-sm flex items-center justify-center gap-2 active:bg-emerald-500/40"
-      >
-        <Check size={14} /> All Good - No Issues
-      </button>
+      <p className="text-[11px] text-slate-500 mb-3 leading-snug">
+        Tap everything that's wrong. Each tap is its own job for the shop.
+      </p>
 
-      <div className="space-y-4">
-        {STARTUP_ITEMS.map((item) => {
-          const data = startup[item.id] || { status: null, note: '' }
-          return (
-            <div key={item.id} className="border-b border-slate-800 pb-3">
-              <div className="flex items-start gap-3">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-white">{item.label}</p>
-                  <p className="text-xs text-slate-500 mt-0.5 leading-snug">{item.parts}</p>
-                </div>
-                <div className="flex gap-1 shrink-0">
-                  <button
-                    onClick={() => setStatus(item.id, 'pass')}
-                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition-colors ${
-                      data.status === 'pass' ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-500 active:bg-emerald-500/30'
-                    }`}
-                  >
-                    <Check size={16} />
-                  </button>
-                  <button
-                    onClick={() => setStatus(item.id, 'fail')}
-                    className={`w-11 h-11 rounded-lg flex items-center justify-center transition-colors ${
-                      data.status === 'fail' ? 'bg-red-500 text-white' : 'bg-slate-800 text-slate-500 active:bg-red-500/30'
-                    }`}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              </div>
-              {data.status === 'fail' && (
-                <input
-                  type="text"
-                  placeholder={item.failNote}
-                  value={data.note || ''}
-                  onChange={(e) => setNote(item.id, e.target.value)}
-                  className="text-sm py-2 mt-2 border-red-500/50"
-                />
-              )}
-            </div>
-          )
-        })}
-
-        <div className="flex items-center gap-3 pt-1">
-          <span className="flex-1 text-sm text-white font-semibold">{KEY_FOBS_ITEM.label}</span>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={keyFobs}
-            onChange={(e) => setKeyFobs(e.target.value.replace(/\D/g, '').slice(0, 2))}
-            placeholder="#"
-            className="w-16 text-center text-base py-2 px-2"
-          />
+      {findingCount > 0 && (
+        <div className="mb-3 p-2.5 rounded-xl bg-red-500/10 border border-red-500/40 text-[11px] text-red-300">
+          {findingCount} {findingCount === 1 ? 'problem' : 'problems'} recorded so far.
         </div>
+      )}
+
+      <MechanicalChecks
+        inspectionId={id}
+        checklist={checklist}
+        checks={CHECKS}
+        section="startup"
+        onChange={onChange}
+      />
+
+      <div className="flex items-center gap-3 mt-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+        <span className="flex-1 text-sm text-white font-semibold">{KEY_FOBS_ITEM.label}</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={keyFobs}
+          onChange={(e) => setKeyFobs(e.target.value.replace(/\D/g, '').slice(0, 2))}
+          placeholder="#"
+          className="w-16 text-center text-base py-2 px-2"
+        />
       </div>
 
-      <div className="mt-6">
-        <button onClick={handleNext} className="btn-primary flex items-center justify-center gap-2 text-lg">
-          Mark Quick Check Done <ArrowRight size={20} />
+      {missing.length > 0 && (
+        <button onClick={markRestGood}
+          className="w-full mt-4 py-2.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 font-semibold text-sm flex items-center justify-center gap-2 active:bg-slate-700">
+          <Check size={14} /> Rest of it was fine ({missing.length})
+        </button>
+      )}
+
+      <div className="mt-4">
+        <button onClick={handleNext} disabled={finishing}
+          className="btn-primary flex items-center justify-center gap-2 text-lg">
+          {finishing ? 'Saving…' : 'Mark Quick Check Done'} <ArrowRight size={20} />
         </button>
       </div>
     </div>

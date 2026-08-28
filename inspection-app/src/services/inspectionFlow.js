@@ -11,24 +11,70 @@ export const STEPS = [
 
 // ── Step 2: Startup Check ──────────────────────────────────────────
 
+// How bad it is, in the inspector's words rather than the shop's. The `key` is
+// the vocabulary mechanic_lines.severity uses, so a finding carries its own
+// severity all the way to the tech's board and the router never has to guess.
+//
+// Captured per finding, not per check: a car can have a dead radio and a failing
+// alternator under the same "accessories" heading, and they are not the same
+// kind of problem.
+export const FINDING_SEVERITIES = [
+  { key: 'critical', label: "Don't drive it", hint: 'Unsafe — nobody moves this car until it is fixed' },
+  { key: 'severe',   label: 'Before it sells', hint: 'Must be right before the car goes out' },
+  { key: 'moderate', label: 'Should fix',      hint: 'Worth doing while it is here' },
+  { key: 'minor',    label: 'Note only',       hint: 'Write it down, no work needed' },
+]
+
+// ── Step 2: Startup Check ──────────────────────────────────────────
+//
+// Three checks, but each one holds AS MANY FINDINGS AS THE CAR HAS. That is the
+// whole point of the rewrite: `accessories` used to be one pass/fail and one
+// single-line text box covering fourteen different things, so an inspector who
+// found a dead radio and a broken window had to compress both into one sentence
+// — and by the time he was writing it up, one of them was gone.
+//
+// `symptoms` are one tap each and every tap is its own finding. Picking from a
+// list also beats recalling from memory, which is the actual failure mode: the
+// inspector is not forgetting that something was wrong, he is failing to
+// reconstruct a list at the end of a drive.
+//
+// `system` and `severity` ride along so a finding arrives at the mechanic's
+// board already classified.
+
 export const STARTUP_ITEMS = [
   {
     id: 'dash_lights',
-    label: 'Dashboard — all warning lights off?',
-    parts: 'Check engine, ABS, airbag, TPMS, traction/stability, oil pressure, battery, temperature, any other warning',
-    failNote: 'Which lights are on?',
+    label: 'Warning lights',
+    parts: 'Key on, engine running. Which lights stayed on?',
+    system: 'electrical',
+    severity: 'moderate',
+    symptoms: [
+      'Check engine', 'ABS', 'Airbag / SRS', 'TPMS', 'Traction / stability',
+      'Oil pressure', 'Battery / charging', 'Temperature', 'Other light',
+    ],
   },
   {
     id: 'accessories',
-    label: 'Accessories — everything works?',
-    parts: 'Radio, touchscreen, bluetooth, backup camera, sunroof, A/C & heat, windows, locks, mirrors, seats, wipers, horn, battery',
-    failNote: "What's not working?",
+    label: 'Accessories',
+    parts: 'Work through the cabin. Tap everything that does not work.',
+    system: 'electrical',
+    severity: 'moderate',
+    symptoms: [
+      'Radio / speakers', 'Touchscreen', 'Bluetooth', 'Backup camera', 'Sunroof',
+      'A/C not cold', 'Heat not hot', 'Window', 'Door lock', 'Mirror',
+      'Power seat', 'Wipers', 'Horn', 'Interior lights', 'Key fob',
+    ],
   },
   {
     id: 'engine',
-    label: 'Engine — idles smooth, runs clean?',
-    parts: 'Rev 3–4 times in park. Listen for knocks, ticks, whines. Check for exhaust smoke and fluid leaks.',
-    failNote: 'Describe the issue',
+    label: 'Engine — idle & noise',
+    parts: 'Rev 3–4 times in park. Listen, then look underneath.',
+    system: 'engine',
+    severity: 'severe',
+    symptoms: [
+      'Knock', 'Tick / lifter', 'Whine', 'Rough idle', 'Stalls', 'Hard start',
+      'Exhaust smoke', 'Oil leak', 'Coolant leak', 'Belt squeal',
+    ],
   },
 ]
 
@@ -173,26 +219,110 @@ export const INTERIOR_DAMAGE_TYPES = [
 
 // ── Step 5: Test Drive Questions ───────────────────────────────────
 
+// Eight checks where there used to be three, because a tech does not fix
+// "drivetrain" — he fixes a slipping transmission, or a whining differential,
+// or both, and they are different jobs with different parts. Three questions
+// covering ten systems is what made a car with three problems arrive at the
+// shop as one line.
+//
+// The order is the order of the drive: what you notice pulling out, then at
+// speed, then stopping.
 export const TEST_DRIVE_ITEMS = [
   {
-    id: 'drivetrain',
-    label: 'Drivetrain — shifts smooth, strong power?',
-    parts: 'Transmission shifts cleanly through all gears, no slipping. Strong acceleration. Rear diff / AWD quiet and engages properly.',
-    failNote: 'Describe the issue (slipping, hard shift, sluggish, noise...)',
+    id: 'transmission',
+    label: 'Transmission',
+    parts: 'Through every gear, up and down.',
+    system: 'transmission',
+    severity: 'severe',
+    symptoms: [
+      'Slips', 'Hard shift', 'Delayed engagement', "Won't downshift",
+      'Noise in gear', "Won't go into gear", 'Shudder',
+    ],
   },
   {
-    id: 'brakes_steering',
-    label: 'Brakes & steering — stops straight, tracks true?',
-    parts: 'Brakes stop straight with no grinding, pulling, or soft pedal. Steering centered and tight. Cruise control engages and holds.',
-    failNote: 'Describe the issue (pulling, grinding, loose, drift...)',
+    id: 'power',
+    label: 'Power & acceleration',
+    parts: 'Get on it once, safely.',
+    system: 'engine',
+    severity: 'severe',
+    symptoms: ['Sluggish', 'Hesitation', 'Misfire', 'Loss of power', 'Surging'],
   },
   {
-    id: 'ride_tires',
-    label: 'Ride & tires — no vibration or noise?',
-    parts: 'No vibration or pulling at highway speed. Suspension quiet over bumps and turns. No tire cupping noise.',
-    failNote: 'Describe the issue (vibration, clunking, rattle, road noise...)',
+    id: 'driveline',
+    label: 'Driveline & axles',
+    parts: 'Listen from the rear and on full-lock turns.',
+    system: 'transmission',
+    severity: 'severe',
+    symptoms: [
+      'Whine from rear', 'Clunk on takeoff', 'AWD / 4WD not engaging',
+      'Vibration under acceleration', 'Click on turns',
+    ],
+  },
+  {
+    id: 'brakes',
+    label: 'Brakes',
+    parts: 'One hard stop from speed, somewhere empty.',
+    system: 'brakes',
+    severity: 'severe',
+    symptoms: [
+      'Grinding', 'Squealing', 'Pulls left', 'Pulls right', 'Soft / spongy pedal',
+      'Pulsating', 'ABS light under braking', 'Parking brake',
+    ],
+  },
+  {
+    id: 'steering',
+    label: 'Steering & alignment',
+    parts: 'Hands light on the wheel on a straight road.',
+    system: 'suspension',
+    severity: 'moderate',
+    symptoms: [
+      'Wheel off-centre', 'Pulls left', 'Pulls right', 'Loose / play',
+      'Hard to turn', 'Noise turning', 'Vibration in the wheel',
+    ],
+  },
+  {
+    id: 'suspension',
+    label: 'Suspension & ride',
+    parts: 'Find a rough patch on purpose.',
+    system: 'suspension',
+    severity: 'moderate',
+    symptoms: ['Clunk over bumps', 'Bouncy / floaty', 'Rattle', 'Bottoms out', 'Leaking shock'],
+  },
+  {
+    id: 'tires',
+    label: 'Tires',
+    parts: 'All four and the spare.',
+    system: 'suspension',
+    severity: 'moderate',
+    symptoms: [
+      'Low tread', 'Cupping', 'Uneven wear', 'Sidewall damage / bulge',
+      'Mismatched sizes', 'TPMS sensor',
+    ],
+  },
+  {
+    id: 'road_check',
+    label: 'At speed',
+    parts: 'Highway run — cruise on, watch the gauges.',
+    system: 'other',
+    severity: 'moderate',
+    symptoms: [
+      "Cruise won't set", 'Warning light came on driving', 'Runs hot',
+      'Speedometer', 'Noise at highway speed', 'Wanders',
+    ],
   },
 ]
+
+// Every mechanical check in one list, with the section it belongs to. The
+// review screen and the work order router both want "all of them" more often
+// than they want one section.
+export const MECHANICAL_CHECKS = [
+  ...STARTUP_ITEMS.map((c) => ({ ...c, section: 'startup' })),
+  ...TEST_DRIVE_ITEMS.map((c) => ({ ...c, section: 'test_drive' })),
+]
+
+export function findCheck(id) {
+  return MECHANICAL_CHECKS.find((c) => c.id === id) || null
+}
 
 // ── Step 6: Required Photos ────────────────────────────────────────
 // outline keys: 'car_fl' | 'car_fr' | 'car_rr' | 'car_rl' | 'dashboard' | 'interior' | 'engine' | 'tire'

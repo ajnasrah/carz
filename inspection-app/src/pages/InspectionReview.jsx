@@ -8,6 +8,20 @@ import {
   STARTUP_ITEMS, KEY_FOBS_ITEM, EXTERIOR_PANELS, INTERIOR_ZONES,
   TEST_DRIVE_ITEMS, REQUIRED_PHOTOS, allTracksComplete
 } from '../services/inspectionFlow'
+import { readFindings, readOtherFindings, severityLabel } from '../services/mechanicalFindings'
+
+// Flatten a section's checks into one row per finding. readFindings() also
+// converts legacy {status, note} rows into a single finding, so an inspection
+// finished before the rewrite still reads the same way here.
+function readFindings2(checklist, checks, section) {
+  return checks.flatMap((c) =>
+    readFindings(checklist, section, c.id).map((f) => ({
+      label: c.label,
+      note: f.description,
+      severity: f.severity,
+      photos: f.photos || [],
+    })))
+}
 
 export default function InspectionReview() {
   const { id } = useParams()
@@ -45,11 +59,16 @@ export default function InspectionReview() {
   const cl = inspection.checklist || {}
 
   // ── Startup summary ──
+  //
+  // One row per FINDING, not per failed check. A check now holds a list, so
+  // summarising by check would hide exactly what this screen exists to show —
+  // and this is the last place anyone looks before the car goes to the shop.
   const startup = cl.startup || {}
-  const startupIssues = STARTUP_ITEMS
-    .filter((item) => startup[item.id]?.status === 'fail')
-    .map((item) => ({ label: item.label, note: startup[item.id]?.note }))
+  const startupIssues = readFindings2(cl, STARTUP_ITEMS, 'startup')
   const keyFobsCount = startup[KEY_FOBS_ITEM.id]?.value || ''
+  const otherIssues = readOtherFindings(cl).map((f) => ({
+    label: 'Anything else', note: f.description, severity: f.severity,
+  }))
 
   // ── Exterior summary ──
   const exterior = cl.exterior || {}
@@ -82,17 +101,14 @@ export default function InspectionReview() {
   })
 
   // ── Test drive summary ──
-  const testDrive = cl.test_drive || {}
-  const driveIssues = TEST_DRIVE_ITEMS.filter((i) => testDrive[i.id]?.status === 'fail').map((i) => ({
-    label: i.label,
-    note: testDrive[i.id]?.note,
-  }))
+  const driveIssues = readFindings2(cl, TEST_DRIVE_ITEMS, 'test_drive')
 
   // ── Photos summary ──
   const photos = cl.photos || {}
   const photosTaken = REQUIRED_PHOTOS.filter((p) => photos[p.id]?.url).length
 
-  const totalIssues = startupIssues.length + extDamageCount + intDamageCount + driveIssues.length
+  const totalIssues = startupIssues.length + extDamageCount + intDamageCount
+    + driveIssues.length + otherIssues.length
   const isComplete = inspection.status === 'complete'
 
   const sections = [
@@ -235,14 +251,15 @@ export default function InspectionReview() {
                   {section.key === 'startup' && (
                     <div className="space-y-1">
                       {startupIssues.length > 0 ? (
-                        startupIssues.map((issue, i) => (
-                          <div key={i} className="text-xs flex gap-2">
-                            <span className="text-red-400 font-semibold">{issue.label}</span>
-                            {issue.note && <span className="text-slate-400">- {issue.note}</span>}
-                          </div>
-                        ))
+                        startupIssues.map((issue, i) => <IssueRow key={i} issue={issue} />)
                       ) : (
                         <p className="text-xs text-emerald-400">All startup checks passed.</p>
+                      )}
+                      {otherIssues.length > 0 && (
+                        <div className="pt-2 mt-1 border-t border-slate-800 space-y-1">
+                          <p className="text-[10px] uppercase tracking-wide text-slate-500">Anything else</p>
+                          {otherIssues.map((issue, i) => <IssueRow key={i} issue={issue} />)}
+                        </div>
                       )}
                       {keyFobsCount !== '' && (
                         <p className="text-xs text-slate-400 pt-1">Key fobs on hand: <span className="text-white font-semibold">{keyFobsCount}</span></p>
@@ -307,12 +324,7 @@ export default function InspectionReview() {
                   {section.key === 'testdrive' && (
                     driveIssues.length > 0 ? (
                       <div className="space-y-1">
-                        {driveIssues.map((issue, i) => (
-                          <div key={i} className="text-xs flex gap-2">
-                            <span className="text-red-400 font-semibold">{issue.label}</span>
-                            {issue.note && <span className="text-slate-400">- {issue.note}</span>}
-                          </div>
-                        ))}
+                        {driveIssues.map((issue, i) => <IssueRow key={i} issue={issue} />)}
                       </div>
                     ) : (
                       <p className="text-xs text-emerald-400">No test drive issues.</p>
@@ -360,6 +372,34 @@ export default function InspectionReview() {
         <button onClick={() => navigate('/')} className="btn-secondary">
           Back to Dashboard
         </button>
+      )}
+    </div>
+  )
+}
+
+// One finding. The severity is the inspector's own call, made with the car in
+// front of him — it rides through to the mechanic's board, so it belongs on the
+// screen where he signs the inspection off.
+const SEVERITY_TONE = {
+  critical: 'bg-red-500/20 text-red-300 border border-red-500/40',
+  severe:   'bg-orange-500/20 text-orange-300 border border-orange-500/40',
+  moderate: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
+  minor:    'bg-slate-700 text-slate-300',
+}
+
+function IssueRow({ issue }) {
+  return (
+    <div className="text-xs flex gap-2 items-center flex-wrap">
+      <span className="text-red-400 font-semibold">{issue.label}</span>
+      {issue.note && <span className="text-slate-300">{issue.note}</span>}
+      {issue.severity && (
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+          SEVERITY_TONE[issue.severity] || SEVERITY_TONE.moderate}`}>
+          {severityLabel(issue.severity)}
+        </span>
+      )}
+      {issue.photos?.length > 0 && (
+        <span className="text-[10px] text-emerald-400">📷 {issue.photos.length}</span>
       )}
     </div>
   )
