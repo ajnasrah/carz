@@ -15,7 +15,9 @@ import { markTrackComplete, markTrackStarted } from '../services/tracks'
 import MechanicalChecks from '../components/MechanicalChecks'
 import {
   isAnswered, unansweredChecks, readFindings, readOtherFindings, setCheckStatus,
+  replayHandlers,
 } from '../services/mechanicalFindings'
+import { startAutoDrain, onQueueChange, pendingCount } from '../services/captureQueue'
 
 const CHECKS = STARTUP_ITEMS.map((c) => ({ ...c, section: 'startup' }))
 
@@ -25,6 +27,7 @@ export default function StartupCheck() {
   const [inspection, setInspection] = useState(null)
   const [loading, setLoading] = useState(true)
   const [finishing, setFinishing] = useState(false)
+  const [queued, setQueued] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -35,6 +38,15 @@ export default function StartupCheck() {
     }
     load()
   }, [id])
+
+  // Same local queue the drive uses — the back of the lot has no more signal
+  // than the road does.
+  useEffect(() => {
+    pendingCount().then(setQueued)
+    const off = onQueueChange(setQueued)
+    const stop = startAutoDrain(replayHandlers)
+    return () => { off(); stop() }
+  }, [])
 
   const onChange = useCallback((checklist) => {
     setInspection((prev) => ({ ...prev, checklist }))
@@ -68,14 +80,9 @@ export default function StartupCheck() {
   }
 
   async function handleNext() {
-    if (missing.length > 0) {
-      const ok = window.confirm(
-        `${missing.length} check${missing.length === 1 ? '' : 's'} not answered:\n\n` +
-        missing.map((c) => `• ${c.label}`).join('\n') +
-        '\n\nAn unanswered check is not the same as a good one. Finish anyway?'
-      )
-      if (!ok) return
-    }
+    // A hard gate. A blank check reads downstream as a car with nothing wrong
+    // with it, and "Rest of it was fine" is one tap away.
+    if (missing.length > 0) return
     setFinishing(true)
     const result = await markTrackComplete(id, 'quick')
     if (result?.error) {
@@ -110,6 +117,13 @@ export default function StartupCheck() {
           {answered}/{CHECKS.length}
         </span>
       </div>
+
+      {queued > 0 && (
+        <div className="mb-3 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-[11px] text-amber-300">
+          📡 {queued} {queued === 1 ? 'note is' : 'notes are'} saved on this phone and waiting for
+          signal. They upload themselves — don't close the app until they do.
+        </div>
+      )}
 
       <p className="text-[11px] text-slate-500 mb-3 leading-snug">
         Tap everything that's wrong. Each tap is its own job for the shop.
@@ -149,10 +163,15 @@ export default function StartupCheck() {
       )}
 
       <div className="mt-4">
-        <button onClick={handleNext} disabled={finishing}
-          className="btn-primary flex items-center justify-center gap-2 text-lg">
+        <button onClick={handleNext} disabled={finishing || missing.length > 0}
+          className="btn-primary flex items-center justify-center gap-2 text-lg disabled:opacity-40">
           {finishing ? 'Saving…' : 'Mark Quick Check Done'} <ArrowRight size={20} />
         </button>
+        {missing.length > 0 && (
+          <p className="text-[11px] text-slate-500 mt-2 text-center">
+            Still to answer: {missing.map((c) => c.label).join(', ')}
+          </p>
+        )}
       </div>
     </div>
   )

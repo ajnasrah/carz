@@ -15,6 +15,7 @@
 // parallel tracks erase each other — see the RPC's own comment.
 
 import { supabase } from './supabase'
+import { enqueue } from './captureQueue'
 import { findCheck, FINDING_SEVERITIES } from './inspectionFlow'
 
 export const DEFAULT_SEVERITY = 'moderate'
@@ -96,9 +97,32 @@ export function unansweredChecks(checklist, checks) {
 
 // ---------------------------------------------------------------- writing
 
+// A save that failed because the phone left the lot is not a save that failed.
+// Anything that looks like a dead network is queued and replayed; anything the
+// server actively rejected is a real error and surfaces.
+function offlineish(err) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true
+  if (err?.code) return false      // Postgres said no — that is a real answer
+  return /fetch|network|timeout|load failed|connection/i.test(String(err?.message || ''))
+}
+
+// Apply a patch to a local copy, so the screen updates at the moment of the tap
+// whether or not the write reached the server.
+function localPatch(checklist, path, value) {
+  const next = { ...(checklist || {}) }
+  let node = next
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const k = path[i]
+    node[k] = Array.isArray(node[k]) ? [...node[k]] : { ...(node[k] || {}) }
+    node = node[k]
+  }
+  node[path[path.length - 1]] = value
+  return next
+}
+
 // One branch, merged server-side. Returns the authoritative checklist so the
 // caller re-renders from what is actually stored rather than from its own guess.
-async function patch(inspectionId, path, value) {
+async function patchRemote(inspectionId, path, value) {
   const { data, error } = await supabase.rpc('patch_inspection_checklist', {
     p_inspection_id: inspectionId,
     p_path: path,
@@ -106,6 +130,20 @@ async function patch(inspectionId, path, value) {
   })
   if (error) throw error
   return data
+}
+
+// `intent` is what gets replayed later — never the computed value, which would
+// be stale by the time the network returns and would delete anything recorded
+// in between. See captureQueue for why.
+async function patch(inspectionId, path, value, { checklist, intent } = {}) {
+  try {
+    return await patchRemote(inspectionId, path, value)
+  } catch (err) {
+    if (!offlineish(err) || !intent) throw err
+    const queued = await enqueue({ inspectionId, ...intent })
+    if (!queued) throw err
+    return localPatch(checklist, path, value)
+  }
 }
 
 export async function setCheckStatus(inspectionId, checklist, section, checkId, status) {
@@ -118,7 +156,7 @@ export async function setCheckStatus(inspectionId, checklist, section, checkId, 
     ...entry,
     status,
     findings: status === 'pass' ? [] : findings,
-  })
+  }, { checklist, intent: { kind: 'setStatus', section, checkId, status } })
 }
 
 export async function addFinding(inspectionId, checklist, section, checkId, { symptom, description, severity, note } = {}) {
@@ -141,35 +179,44 @@ export async function addFinding(inspectionId, checklist, section, checkId, { sy
 
   if (section === OTHER_SECTION) {
     const list = readOtherFindings(checklist)
-    await patch(inspectionId, [OTHER_SECTION, 'findings'], [...list, finding])
+    return {
+      finding,
+      checklist: await patch(inspectionId, [OTHER_SECTION, 'findings'], [...list, finding],
+        { checklist, intent: { kind: 'addFinding', section: OTHER_SECTION, checkId: null, finding } }),
+    }
   } else {
     const entry = readCheck(checklist, section, checkId) || {}
     const findings = readFindings(checklist, section, checkId).filter((f) => !f.legacy)
     // Recording a problem IS failing the check; making someone tap fail first is
     // a step that adds nothing and can be skipped.
-    await patch(inspectionId, [section, checkId], {
-      ...entry, status: 'fail', findings: [...findings, finding],
-    })
+    return {
+      finding,
+      checklist: await patch(inspectionId, [section, checkId], {
+        ...entry, status: 'fail', findings: [...findings, finding],
+      }, { checklist, intent: { kind: 'addFinding', section, checkId, finding } }),
+    }
   }
-  return finding
 }
 
 export async function updateFinding(inspectionId, checklist, section, checkId, findingId, patchObj) {
   if (section === OTHER_SECTION) {
     const list = readOtherFindings(checklist).map((f) => (f.id === findingId ? { ...f, ...patchObj } : f))
-    return patch(inspectionId, [OTHER_SECTION, 'findings'], list)
+    return patch(inspectionId, [OTHER_SECTION, 'findings'], list,
+      { checklist, intent: { kind: 'updateFinding', section: OTHER_SECTION, checkId: null, findingId, patch: patchObj } })
   }
   const entry = readCheck(checklist, section, checkId) || {}
   const findings = readFindings(checklist, section, checkId)
     .filter((f) => !f.legacy)
     .map((f) => (f.id === findingId ? { ...f, ...patchObj } : f))
-  return patch(inspectionId, [section, checkId], { ...entry, status: 'fail', findings })
+  return patch(inspectionId, [section, checkId], { ...entry, status: 'fail', findings },
+    { checklist, intent: { kind: 'updateFinding', section, checkId, findingId, patch: patchObj } })
 }
 
 export async function removeFinding(inspectionId, checklist, section, checkId, findingId) {
   if (section === OTHER_SECTION) {
     const list = readOtherFindings(checklist).filter((f) => f.id !== findingId)
-    return patch(inspectionId, [OTHER_SECTION, 'findings'], list)
+    return patch(inspectionId, [OTHER_SECTION, 'findings'], list,
+      { checklist, intent: { kind: 'removeFinding', section: OTHER_SECTION, checkId: null, findingId } })
   }
   const entry = readCheck(checklist, section, checkId) || {}
   const findings = readFindings(checklist, section, checkId)
@@ -181,7 +228,7 @@ export async function removeFinding(inspectionId, checklist, section, checkId, f
     ...entry,
     status: findings.length ? 'fail' : null,
     findings,
-  })
+  }, { checklist, intent: { kind: 'removeFinding', section, checkId, findingId } })
 }
 
 export async function attachPhoto(inspectionId, checklist, section, checkId, findingId, photo) {
@@ -191,4 +238,76 @@ export async function attachPhoto(inspectionId, checklist, section, checkId, fin
   const current = list.find((f) => f.id === findingId)
   const photos = [...(current?.photos || []), photo]
   return updateFinding(inspectionId, checklist, section, checkId, findingId, { photos })
+}
+
+// A voice memo on a finding. Recorded and attached in the moment, because the
+// most useful thing about "whine from the rear" is the sound of it — and a
+// noise is the one finding a tech genuinely cannot picture from a sentence.
+//
+// Kept as audio rather than transcribed: transcription needs a vendor we have
+// not chosen yet, and a recording is already more use to the mechanic than a
+// transcript would be. Transcription drops in later without changing this.
+export async function attachAudio(inspectionId, checklist, section, checkId, findingId, audio) {
+  const list = section === OTHER_SECTION
+    ? readOtherFindings(checklist)
+    : readFindings(checklist, section, checkId)
+  const current = list.find((f) => f.id === findingId)
+  const clips = [...(current?.audio || []), audio]
+  return updateFinding(inspectionId, checklist, section, checkId, findingId, { audio: clips })
+}
+
+// Replayed by captureQueue when the network comes back. Each handler re-reads
+// the live checklist and applies the intent to it, so a queued tap lands
+// correctly on top of anything recorded in the meantime.
+export const replayHandlers = {
+  async setStatus(op) {
+    const cl = await fetchChecklist(op.inspectionId)
+    await setCheckStatus(op.inspectionId, cl, op.section, op.checkId, op.status)
+  },
+  async addFinding(op) {
+    const cl = await fetchChecklist(op.inspectionId)
+    // Re-adding one that already made it through would duplicate it — the id is
+    // generated on the phone, so it is the same finding either way.
+    const existing = op.section === OTHER_SECTION
+      ? readOtherFindings(cl)
+      : readFindings(cl, op.section, op.checkId)
+    if (existing.some((f) => f.id === op.finding.id)) return
+
+    const path = op.section === OTHER_SECTION
+      ? [OTHER_SECTION, 'findings']
+      : [op.section, op.checkId]
+    const value = op.section === OTHER_SECTION
+      ? [...existing, op.finding]
+      : { ...(readCheck(cl, op.section, op.checkId) || {}), status: 'fail',
+          findings: [...existing.filter((f) => !f.legacy), op.finding] }
+    await patchRemote(op.inspectionId, path, value)
+  },
+  async updateFinding(op) {
+    const cl = await fetchChecklist(op.inspectionId)
+    await updateFinding(op.inspectionId, cl, op.section, op.checkId, op.findingId, op.patch)
+  },
+  async removeFinding(op) {
+    const cl = await fetchChecklist(op.inspectionId)
+    await removeFinding(op.inspectionId, cl, op.section, op.checkId, op.findingId)
+  },
+}
+
+async function fetchChecklist(inspectionId) {
+  const { data, error } = await supabase
+    .from('inspections').select('checklist').eq('id', inspectionId).single()
+  if (error) throw error
+  return data?.checklist || {}
+}
+
+// Photos and voice notes both land in inspection-photos under the inspection's
+// own folder, next to the damage pictures the exterior flow already writes.
+// One bucket, one set of policies, one place to look when a car is questioned.
+export async function uploadMedia(inspectionId, checkId, file, ext) {
+  const uid = Math.random().toString(36).slice(2, 14)
+  const path = `${inspectionId}/damage/${checkId || 'other'}-${uid}.${ext}`
+  const { error } = await supabase.storage
+    .from('inspection-photos').upload(path, file, { contentType: file.type || undefined })
+  if (error) throw error
+  const { data: { publicUrl } } = supabase.storage.from('inspection-photos').getPublicUrl(path)
+  return { url: publicUrl, path }
 }

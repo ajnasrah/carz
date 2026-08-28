@@ -329,6 +329,16 @@ function LineRow({ line, parts, vehicle, seeMoney, manager, onChanged, onPartsCh
             {line.source_inspection_id && (
               <span className="text-[10px] text-slate-500" title="Raised by an inspection">📋 inspection</span>
             )}
+            {/* What the inspector saw and heard. A recorded noise narrows a
+                "whine from the rear" from six possible repairs to one, which no
+                amount of writing it down would have done. */}
+            {(line.media || []).map((m, i) => (
+              <a key={i} href={m.url} target="_blank" rel="noreferrer"
+                 title={m.kind === 'audio' ? 'Play what the inspector heard' : 'What the inspector saw'}
+                 className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-emerald-300 font-semibold">
+                {m.kind === 'audio' ? '🔊 Listen' : '📷 Photo'}
+              </a>
+            ))}
           </div>
         </div>
         {manager && (

@@ -12,11 +12,12 @@
 
 import { useState, useRef } from 'react'
 import { Check, X, Camera, Trash2, Plus } from 'lucide-react'
-import { supabase } from '../services/supabase'
+import VoiceMemo from './VoiceMemo'
 import { FINDING_SEVERITIES } from '../services/inspectionFlow'
 import {
   readCheck, readFindings, readOtherFindings, OTHER_SECTION,
-  setCheckStatus, addFinding, updateFinding, removeFinding, attachPhoto,
+  setCheckStatus, addFinding, updateFinding, removeFinding, attachPhoto, attachAudio,
+  uploadMedia,
 } from '../services/mechanicalFindings'
 
 export default function MechanicalChecks({ inspectionId, checklist, checks, section, onChange }) {
@@ -28,7 +29,10 @@ export default function MechanicalChecks({ inspectionId, checklist, checks, sect
   async function run(key, fn) {
     setBusy(key); setError('')
     try {
-      const next = await fn()
+      // addFinding hands back { finding, checklist }; everything else hands back
+      // the checklist itself.
+      const res = await fn()
+      const next = res?.checklist ?? res
       if (next) onChange(next)
     } catch (e) {
       setError(e.message || 'Could not save — try again')
@@ -184,18 +188,9 @@ function FindingRow({ finding, section, checkId, inspectionId, checklist, busy, 
     setUploading(true)
     try {
       const ext = file.name.split('.').pop() || 'jpg'
-      const uid = Math.random().toString(36).slice(2, 14)
-      const path = `${inspectionId}/damage/${checkId || 'other'}-${uid}.${ext}`
-
-      const { error: upErr } = await supabase.storage
-        .from('inspection-photos').upload(path, file, { contentType: file.type })
-      if (upErr) throw upErr
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('inspection-photos').getPublicUrl(path)
-
+      const photo = await uploadMedia(inspectionId, checkId, file, ext)
       await run(`${finding.id}:photo`, () =>
-        attachPhoto(inspectionId, checklist, section, checkId, finding.id, { url: publicUrl, path }))
+        attachPhoto(inspectionId, checklist, section, checkId, finding.id, photo))
     } catch (err) {
       alert('Upload failed: ' + (err.message || err))
     } finally {
@@ -211,6 +206,12 @@ function FindingRow({ finding, section, checkId, inspectionId, checklist, busy, 
       {finding.photos?.length > 0 && (
         <span className="shrink-0 text-[10px] text-emerald-400">📷 {finding.photos.length}</span>
       )}
+      {finding.audio?.length > 0 && (
+        <a href={finding.audio[finding.audio.length - 1].url} target="_blank" rel="noreferrer"
+           className="shrink-0 text-[10px] text-emerald-400" title="Play the note">
+          🔊 {finding.audio.length}
+        </a>
+      )}
 
       {/* Severity is captured here, per finding, so the tech's board shows what
           the person who drove the car actually thought — not a guess made later
@@ -225,6 +226,14 @@ function FindingRow({ finding, section, checkId, inspectionId, checklist, busy, 
           <option key={s.key} value={s.key}>{s.label}</option>
         ))}
       </select>
+
+      <VoiceMemo
+        onRecorded={async (blob, ext) => {
+          const clip = await uploadMedia(inspectionId, checkId, blob, ext)
+          await run(`${finding.id}:audio`, () =>
+            attachAudio(inspectionId, checklist, section, checkId, finding.id, clip))
+        }}
+      />
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment"
         onChange={onPhoto} className="hidden" />
