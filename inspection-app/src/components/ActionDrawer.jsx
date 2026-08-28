@@ -18,6 +18,9 @@ const PRIMARY = [
   // trends). This is the car list itself, which had no way in from anywhere.
   { to: '/sold', emoji: '💰', label: 'Sold' },
   { to: '/body-shop', emoji: '🎨', label: 'Body Shop' },
+  // Next to the body shop because they're the same question asked of the two
+  // shops: what's in there, and how long have we owned it.
+  { to: '/mechanic', emoji: '🔧', label: 'Mechanic' },
   { to: '/list-builder', emoji: '🔨', label: 'List Builder' },
   { to: '/marketplace', emoji: '🏪', label: 'Marketplace' },
   { to: '/front-lot-aging', emoji: '⏰', label: 'Lot Aging' },

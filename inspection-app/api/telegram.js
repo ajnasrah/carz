@@ -183,6 +183,7 @@ async function processUpdate(update) {
       // card for them to land on. Typing the VIN opens a job; answering the
       // bot's question is the same statement, so it opens one too.
       if (chat.station === 'body_shop') await ensureBodyShopJob(db, answer, eventIso);
+      if (chat.station === 'mechanic') await ensureMechanicJob(db, answer, eventIso);
       // In a finish group the question wasn't only "whose photo is this" — the
       // car is standing there waiting to be marked done. An unreadable key tag
       // must not cost the car its move just because a human had to answer.
@@ -251,11 +252,18 @@ async function processUpdate(update) {
       }
       vin6 = vins[0];
       vinSource = 'caption';
-      // Open a body shop job for every car mentioned, so the manager's board
-      // fills itself. Idempotent — an already-open job comes back untouched, so
-      // re-posting the same car never resets its age clock or doubles the card.
+      // Open a job for every car mentioned, so the manager's board fills itself.
+      // Idempotent — an already-open job comes back untouched, so re-posting the
+      // same car never resets its age clock or doubles the card.
+      //
+      // The mechanic group has always filed its photos and moved its cars but
+      // never opened anything, because until now there was no mechanic board for
+      // a card to land on. Its pictures had the same problem the body shop's
+      // did: a car nobody typed in has no card to show them on.
       if (chat.station === 'body_shop') {
         for (const v of vins) await ensureBodyShopJob(db, v, eventIso);
+      } else if (chat.station === 'mechanic') {
+        for (const v of vins) await ensureMechanicJob(db, v, eventIso);
       }
       // Claim photos this sender parked before sending the VIN. The intake
       // branch has always done this; the shop groups never did, so a photo that
@@ -457,6 +465,16 @@ async function ensureBodyShopJob(db, vin6, eventIso) {
   if (error) console.error('ensure_body_shop_job failed for', vin6, error.message || error);
 }
 
+// The same for the mechanic. Opens the card with no lines on it — what's wrong
+// with the car is not something the group message knows, and inventing lines we
+// can't source would put fiction on the board. The board shows a car with no
+// lines as "not diagnosed", which is the true state of a car somebody just
+// dropped off.
+async function ensureMechanicJob(db, vin6, eventIso) {
+  const { error } = await db.rpc('ensure_mechanic_job', { p_vin6: vin6, p_event: eventIso });
+  if (error) console.error('ensure_mechanic_job failed for', vin6, error.message || error);
+}
+
 // Bind a reply to the single photo the bot asked about, and file it. Returns
 // false when the question wasn't about one particular picture, which is what
 // sends the caller back to the broader intake rules.
@@ -477,15 +495,21 @@ async function bindAnsweredPhoto(db, askedMsgId, vin6) {
   return true;
 }
 
-// A car finished at a shop: close whatever body shop job is open on it and move
-// it to wherever finishing there sends it next.
+// A car finished at a shop: close whatever shop jobs are open on it and move it
+// to wherever finishing there sends it next.
 //
-// The two halves are independent on purpose. Most wash line cars never saw the
-// body shop, so a null from the RPC is the normal case, not a failure — and a
-// car that was never in inventory (a fresh buy) still gets its location, which
-// is how anyone finds it on the lot.
+// All three halves are independent on purpose. Most wash line cars never saw
+// either shop, so a null from a close RPC is the normal case, not a failure —
+// and a car that was never in inventory (a fresh buy) still gets its location,
+// which is how anyone finds it on the lot.
+//
+// The mechanic job closes here for the same reason the body shop's does: a car
+// at the wash line is finished with every shop, and a card left open on it would
+// keep reporting a repaired car as waiting on brakes. Held jobs are skipped by
+// the RPC itself, so parking a car still means parked.
 async function finishCar(db, vin6, locationCode, eventIso) {
   await closeBodyShopJob(db, vin6, eventIso);
+  await closeMechanicJob(db, vin6, eventIso);
   await updateLocation(db, vin6, locationCode, eventIso);
 }
 
@@ -495,6 +519,15 @@ async function closeBodyShopJob(db, vin6, eventIso) {
   const { data, error } = await db.rpc('close_body_shop_job', { p_vin6: vin6, p_event: eventIso });
   if (error) console.error('close_body_shop_job failed for', vin6, error.message || error);
   else if (data) console.log('closed body shop job for', vin6);
+}
+
+// Close this car's open mechanic job and everything still open on it. Same
+// contract as the body shop's: stamped with the message time, held jobs skipped,
+// never throws into the webhook.
+async function closeMechanicJob(db, vin6, eventIso) {
+  const { data, error } = await db.rpc('close_mechanic_job', { p_vin6: vin6, p_event: eventIso });
+  if (error) console.error('close_mechanic_job failed for', vin6, error.message || error);
+  else if (data) console.log('closed mechanic job for', vin6);
 }
 
 // Flatten a message the way keywords are stored: lowercase, letters+digits only,

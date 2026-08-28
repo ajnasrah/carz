@@ -58,6 +58,8 @@ const BodyShop = lazy(() => import('./pages/BodyShop'))
 const BodyShopJob = lazy(() => import('./pages/BodyShopJob'))
 const BodyShopPayout = lazy(() => import('./pages/BodyShopPayout'))
 const PartsToOrder = lazy(() => import('./pages/PartsToOrder'))
+const MechanicBoard = lazy(() => import('./pages/MechanicBoard'))
+const MechanicJob = lazy(() => import('./pages/MechanicJob'))
 // Inbound Inspection Pages
 const InboundDashboard = lazy(() => import('./pages/InboundDashboard'))
 const InboundStart = lazy(() => import('./pages/InboundStart'))
@@ -231,6 +233,11 @@ function AppRoutes() {
       <Route path="/body-shop/payout" element={<ProtectedRoute><BodyShopPayout /></ProtectedRoute>} />
       <Route path="/body-shop/parts" element={<ProtectedRoute><PartsToOrder /></ProtectedRoute>} />
       <Route path="/body-shop/:id" element={<ProtectedRoute><BodyShopJob /></ProtectedRoute>} />
+
+      {/* The mechanic's twin of the body shop board. Same shape, but a job here
+          is a list of repairs rather than one price — /mechanic/:id is the list. */}
+      <Route path="/mechanic" element={<ProtectedRoute><MechanicBoard /></ProtectedRoute>} />
+      <Route path="/mechanic/:id" element={<ProtectedRoute><MechanicJob /></ProtectedRoute>} />
 
       {/* Inbound Inspection System */}
       <Route path="/inbound" element={<ProtectedRoute><InboundDashboard /></ProtectedRoute>} />
