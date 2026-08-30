@@ -19,51 +19,16 @@
 
 import { useState } from 'react'
 import { ExternalLink, Copy, Check } from 'lucide-react'
-
-const VENDORS = [
-  {
-    key: 'ebay',
-    label: 'eBay',
-    emoji: '🏷️',
-    // Used parts and OEM takeoffs — usually the first place anyone looks here.
-    url: ({ q }) => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`,
-  },
-  {
-    key: 'amazon',
-    label: 'Amazon',
-    emoji: '📦',
-    url: ({ q }) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}`,
-  },
-  {
-    key: 'partstech',
-    label: 'PartsTech',
-    emoji: '🔩',
-    needsLogin: true,
-    url: () => 'https://app.partstech.com/',
-  },
-  {
-    key: 'repairlink',
-    label: 'RepairLink',
-    emoji: '🏭',
-    needsLogin: true,
-    url: () => 'https://repairlinkshop.com/',
-  },
-]
-
-// What we'd type into a parts site if we were typing: the car, then the part.
-// Trim is doing real work — a line with no part text yet should search the car
-// alone rather than the car plus a trailing space.
-function buildQuery(vehicle, term) {
-  return [vehicle?.year, vehicle?.make, vehicle?.model, term]
-    .filter(Boolean).join(' ').trim()
-}
+import { normalizeVehicle, buildQuery, carLabel, VENDORS } from '../services/partsSearch'
 
 export default function PartsSearch({ vehicle, defaultTerm = '', onSearched }) {
   const [term, setTerm] = useState(defaultTerm)
   const [copied, setCopied] = useState(false)
 
-  const vin = vehicle?.vin || ''
-  const q = buildQuery(vehicle, term)
+  const car = normalizeVehicle(vehicle)
+  const vin = car.vin || ''
+  const q = buildQuery(car, term)
+  const label = carLabel(car)
 
   async function copyVin() {
     if (!vin) return
@@ -95,7 +60,7 @@ export default function PartsSearch({ vehicle, defaultTerm = '', onSearched }) {
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-wide text-slate-500">Searching for</div>
           <div className="text-sm font-semibold truncate">
-            {[vehicle?.year, vehicle?.make, vehicle?.model].filter(Boolean).join(' ') || 'Unknown vehicle'}
+            {label || 'Unknown vehicle'}
           </div>
           {vin && (
             <div className="text-[11px] font-mono text-slate-400 truncate mt-0.5 select-all">{vin}</div>
@@ -130,10 +95,17 @@ export default function PartsSearch({ vehicle, defaultTerm = '', onSearched }) {
         ))}
       </div>
 
-      <p className="text-[10px] text-slate-500 leading-snug">
-        eBay and Amazon open on results for this car. PartsTech and RepairLink need
-        their own login — they open with the VIN copied, ready to paste.
-      </p>
+      {label ? (
+        <p className="text-[10px] text-slate-500 leading-snug">
+          eBay and Amazon open on results for this car. PartsTech and RepairLink need
+          their own login — they open with the VIN copied, ready to paste.
+        </p>
+      ) : (
+        <p className="text-[10px] text-amber-400 leading-snug">
+          No year/make/model on this car, so the search is the part name only —
+          check the fitment yourself before you buy.
+        </p>
+      )}
     </div>
   )
 }
