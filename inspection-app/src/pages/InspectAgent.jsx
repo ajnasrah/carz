@@ -275,39 +275,61 @@ export default function InspectAgent() {
     // '[begin]' is how the page asks the agent to open the walk. It is an
     // instruction, not something a person said, so it never appears in the log.
     if (said !== '[begin]') setLog((l) => [...l, { who: 'you', text: said }])
-    historyRef.current = [...historyRef.current, { role: 'user', content: said }]
+    // The turn is built on a COPY and only committed if it completes.
+    //
+    // A conversation with the model is only valid if every tool_use is followed
+    // by its tool_result. Appending to the live history as we go meant that any
+    // failure mid-turn — a dropped network, a 500, the loop guard running out —
+    // left a tool_use with nothing after it, and from then on EVERY message
+    // came back 400 and the walk was dead with no way back except a reload.
+    // Somebody standing at a car does not know to reload.
+    //
+    // So: work on a draft, publish it whole, or throw it away and leave the
+    // last good conversation exactly as it was.
+    let draft = [...historyRef.current, { role: 'user', content: said }]
 
     try {
       // Recording is only half a turn: when the model calls tools it STOPS, so
       // the results have to go back before it can say the next thing. And it
       // can call tools AGAIN on the way back — record two problems, then ask
       // for a photo — so this is a loop, not one round trip.
-      //
-      // Handling only one round left a tool_use with no tool_result in the
-      // history, and the API rejects the NEXT message with a 400 that kills the
-      // whole conversation. The bug does not show up until the third turn.
-      let json = await callAgent(historyRef.current)
+      let json = await callAgent(draft)
       let guard = 0
       while (json.actions?.length && guard < 5) {
         guard += 1
-        historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
+        draft = [...draft, { role: 'assistant', content: json.content }]
         await applyActions(json.actions)
-        historyRef.current = [...historyRef.current, {
+        // Answered even when we are about to stop looping: leaving the last
+        // tool_use unanswered is the exact thing that poisons the history.
+        draft = [...draft, {
           role: 'user',
           content: json.actions.map((a) => ({
             type: 'tool_result', tool_use_id: a.id, content: 'recorded',
           })),
         }]
-        json = await callAgent(historyRef.current)
+        if (guard >= 5) {
+          // It is stuck in a tool loop. Ask it once, plainly, for words.
+          draft = [...draft, { role: 'user', content: 'Stop recording and tell me what to do next.' }]
+        }
+        json = await callAgent(draft)
       }
-      historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
+      draft = [...draft, { role: 'assistant', content: json.content }]
+
+      historyRef.current = draft          // commit only now
 
       if (json.say) {
         setLog((l) => [...l, { who: 'agent', text: json.say }])
         speak(json.say)
+      } else {
+        // It finished without saying anything. Rather than leave a silent
+        // screen, say the one thing that is always true and useful.
+        const fallback = 'Got it. What else do you see?'
+        setLog((l) => [...l, { who: 'agent', text: fallback }])
+        speak(fallback)
       }
     } catch (e) {
-      setError(e.message || 'The agent did not answer — try again')
+      // historyRef is untouched, so the next thing he says still works.
+      setError(e.message || 'That did not go through — say it again')
     } finally {
       busyRef.current = false
       setThinking(false)
