@@ -61,6 +61,7 @@ const PartsToOrder = lazy(() => import('./pages/PartsToOrder'))
 const MechanicBoard = lazy(() => import('./pages/MechanicBoard'))
 const MechanicJob = lazy(() => import('./pages/MechanicJob'))
 const CarWorkOrder = lazy(() => import('./pages/CarWorkOrder'))
+const InspectAgent = lazy(() => import('./pages/InspectAgent'))
 
 // Warm the chunks for the screens that are one tap away.
 //
@@ -181,6 +182,9 @@ function AppRoutes() {
       <Route path="/new" element={<ProtectedRoute><StartInspection /></ProtectedRoute>} />
 
       {/* Inspection flow steps */}
+      {/* Talk the car instead of tapping it. Writes the same checklist the
+          six-step screens write, so the two are one system, not two. */}
+      <Route path="/inspect/:id/agent" element={<ProtectedRoute><InspectAgent /></ProtectedRoute>} />
       <Route path="/inspect/:id/startup" element={<ProtectedRoute><StartupCheck /></ProtectedRoute>} />
       <Route path="/inspect/:id/exterior" element={<ProtectedRoute><ExteriorDamage /></ProtectedRoute>} />
       <Route path="/inspect/:id/interior" element={<ProtectedRoute><InteriorDamage /></ProtectedRoute>} />

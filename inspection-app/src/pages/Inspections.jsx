@@ -178,6 +178,19 @@ export default function Inspections() {
                   </span>
                 </div>
 
+                {/* The way in. Talking the car is faster than tapping it and it
+                    is the only mode that captures a finding in the second it is
+                    noticed — the tracks below stay for anyone who would rather
+                    tap, and both write the same checklist. */}
+                {!isComplete && (
+                  <button
+                    onClick={() => navigate(`/inspect/${insp.id}/agent`)}
+                    className="w-full mb-2 py-3 rounded-xl bg-emerald-500 text-slate-900 font-bold text-sm flex items-center justify-center gap-2 active:bg-emerald-600"
+                  >
+                    🎙 Walk it with the agent
+                  </button>
+                )}
+
                 <div className="grid grid-cols-3 gap-2">
                   {TRACKS.map((track) => {
                     const st = STATUS_STYLES[tracks[track.key]]

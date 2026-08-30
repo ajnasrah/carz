@@ -461,3 +461,35 @@ export async function signOffJob(jobId) {
     signed_off_by: user?.id || null,
   })
 }
+
+// What we already fixed on this car.
+//
+// The outbound inspector's real job is not to find damage — it is to confirm
+// that what we paid to repair is actually repaired. Nobody could answer that
+// without opening two boards and reading job cards, so it never got done, and
+// cars went out with work we had bought and not received.
+export async function fetchRepairHistory(vin6) {
+  const six = String(vin6 || '').trim().toUpperCase().slice(-6)
+  if (six.length < 6) return { repairs: [], bodyShop: [] }
+
+  const { data: jobs } = await supabase
+    .from('mechanic_board').select('id, status, completed_at').eq('vin6', six)
+  const ids = (jobs || []).map((j) => j.id)
+
+  let repairs = []
+  if (ids.length) {
+    const { data } = await supabase
+      .from('mechanic_lines')
+      .select('description, system, severity, status, completed_at, notes')
+      .in('job_id', ids)
+      .in('status', ['done', 'declined'])
+      .order('completed_at', { ascending: false })
+    repairs = data || []
+  }
+
+  const { data: body } = await supabase
+    .from('body_shop_board')
+    .select('status, price, notes, completed_at, entered_at').eq('vin6', six)
+
+  return { repairs, bodyShop: body || [] }
+}

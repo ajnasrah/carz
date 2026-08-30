@@ -140,7 +140,11 @@ export default function StartInspection() {
       return
     }
 
-    navigate(`/inspect/${data.id}/startup`)
+    // Straight into the agent. A new hire's whole job on day one is to walk
+    // the car and say what he sees; making him first choose between three
+    // tracks he has never heard of is the wrong first screen. The tap screens
+    // are still there for anyone who wants them.
+    navigate(`/inspect/${data.id}/agent`)
   }
 
   return (

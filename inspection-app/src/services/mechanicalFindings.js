@@ -290,6 +290,14 @@ export const replayHandlers = {
     const cl = await fetchChecklist(op.inspectionId)
     await removeFinding(op.inspectionId, cl, op.section, op.checkId, op.findingId)
   },
+  async addDamage(op) {
+    const cl = await fetchChecklist(op.inspectionId)
+    const entry = cl?.[op.section]?.[op.panelId] || {}
+    const damages = Array.isArray(entry.damages) ? entry.damages : []
+    if (damages.some((d) => d.id === op.damage.id)) return
+    await patchRemote(op.inspectionId, [op.section, op.panelId],
+      { ...entry, damages: [...damages, op.damage] })
+  },
 }
 
 async function fetchChecklist(inspectionId) {
@@ -310,4 +318,60 @@ export async function uploadMedia(inspectionId, checkId, file, ext) {
   if (error) throw error
   const { data: { publicUrl } } = supabase.storage.from('inspection-photos').getPublicUrl(path)
   return { url: publicUrl, path }
+}
+
+// ---------------------------------------------------------------- damage
+
+// Body and interior damage, written where the damage diagrams write it.
+//
+// This matters more than it looks: the work order router counts
+// checklist.exterior / checklist.interior to decide whether to open a BODY SHOP
+// ticket, and reads findings to decide whether to open a MECHANIC job. Damage
+// recorded as a finding would send a dented door to the mechanic — the right
+// information to the wrong shop, which is worse than not recording it, because
+// somebody acts on it.
+//
+// The agent speaks a panel in whatever words the inspector used, so the name is
+// matched against the real panel list rather than trusted. An unmatched panel is
+// kept with its spoken name instead of being dropped; a body shop ticket with a
+// slightly odd panel label is still a ticket, and losing the damage is the only
+// unacceptable outcome.
+export function matchPanel(area, spoken, panels, zones) {
+  const raw = String(spoken || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_')
+  if (!raw) return null
+
+  const candidates = area === 'interior'
+    ? (zones || []).flatMap((c) => c.zones.map((z) => [z.id, z.label]))
+    : Object.entries(panels || {}).map(([id, p]) => [id, p.label])
+
+  for (const [id] of candidates) if (id === raw) return id
+  for (const [id, label] of candidates) {
+    if (String(label).toLowerCase().replace(/[^a-z0-9]+/g, '_') === raw) return id
+  }
+  // "driver door" -> driver_front_door, "left quarter panel" -> left_quarter
+  const words = raw.split('_').filter(Boolean)
+  let best = null, bestScore = 0
+  for (const [id, label] of candidates) {
+    const hay = `${id}_${String(label).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+    const score = words.filter((w) => w.length > 2 && hay.includes(w)).length
+    if (score > bestScore) { best = id; bestScore = score }
+  }
+  return bestScore >= 1 ? best : null
+}
+
+export async function addDamage(inspectionId, checklist, area, panelId, damage) {
+  const section = area === 'interior' ? 'interior' : 'exterior'
+  const entry = checklist?.[section]?.[panelId] || {}
+  const damages = Array.isArray(entry.damages) ? entry.damages : []
+  const next = {
+    id: newId(),
+    type: damage.type || 'Other',
+    size: damage.size || '',
+    note: damage.note || '',
+    count: '',
+    photos: [],
+    at: new Date().toISOString(),
+  }
+  return patch(inspectionId, [section, panelId], { ...entry, damages: [...damages, next] },
+    { checklist, intent: { kind: 'addDamage', section, panelId, damage: next } })
 }
