@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { LogOut, Menu } from 'lucide-react'
+import { LogOut, Menu, Mic } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
 import { cachedQuery, peek } from '../services/queryCache'
 import { fetchSoldRecent, ymdMinusDays } from '../services/soldReports'
@@ -10,6 +10,7 @@ import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 import VinSearchBar from '../components/VinSearchBar'
 import ActionDrawer from '../components/ActionDrawer'
+import VoiceAgentModal from '../components/VoiceAgentModal'
 import ShopTally from '../components/ShopTally'
 import BuySellPace from '../components/BuySellPace'
 
@@ -59,6 +60,7 @@ export default function Dashboard() {
     inspectingCount: null,
   })
   const [menuOpen, setMenuOpen] = useState(false)
+  const [voiceOpen, setVoiceOpen] = useState(false)
   const [soldRows, setSoldRows] = useState(null) // null = still loading
   const [soldDays, setSoldDays] = useState(30)
 
@@ -207,6 +209,21 @@ export default function Dashboard() {
       </div>
 
       <ActionDrawer open={menuOpen} onClose={() => setMenuOpen(false)} />
+
+      {/* Say it instead of posting it in the group chat. Sits directly above the
+          search box because they answer the same two questions — where is this
+          car, and where is it going — and this one answers them without typing.
+          Full width and first, because on a lot with a key in your hand it is
+          the only control on this screen you can actually use. */}
+      <button
+        onClick={() => setVoiceOpen(true)}
+        className="w-full mb-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-900 font-bold py-3.5 flex items-center justify-center gap-2 active:opacity-90"
+      >
+        <Mic size={18} />
+        Say it — move a car or ask
+      </button>
+
+      {voiceOpen && <VoiceAgentModal onClose={() => setVoiceOpen(false)} />}
 
       {/* Global VIN / stock search — opens a quick-info popup */}
       <VinSearchBar />

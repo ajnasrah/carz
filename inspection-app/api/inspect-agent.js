@@ -21,12 +21,17 @@
 
 const API = 'https://api.anthropic.com/v1/messages'
 
-// The conversation model. Judgement, not perception — it has to know that "it
-// shakes at 60" is a different repair from "it shakes when I brake", and hold a
-// checklist in its head while doing it. Low effort because each turn is one
-// small decision and the inspector is standing there waiting: latency is the
-// feature that decides whether this gets used.
-const MODEL = 'claude-opus-5'
+// The conversation model.
+//
+// Sonnet rather than Opus: this is a lot of short turns, all day, on every car,
+// and the judgement it needs — "it shakes at 60" is a different repair from "it
+// shakes when I brake", split a run-on sentence into separate problems — is
+// well inside Sonnet's range. It is also faster, which matters more than raw
+// reasoning when somebody is standing at a car waiting for an answer.
+//
+// Low effort for the same reason: each turn is one small decision, and latency
+// is the feature that decides whether this gets used at all.
+const MODEL = 'claude-sonnet-5'
 
 export const config = { runtime: 'nodejs' }
 
@@ -337,7 +342,11 @@ export default async function handler(req, res) {
       .filter((b) => b.type === 'tool_use')
       .map((b) => ({ id: b.id, name: b.name, input: b.input }))
 
-    res.status(200).json({ say, actions, stop_reason: data.stop_reason })
+    // The raw blocks go back too. When the model makes tool calls it STOPS —
+    // so the phone has to hand it the results and let it finish, or the agent
+    // records the problem and then says nothing, which is a new employee
+    // standing at a car wondering whether it broke.
+    res.status(200).json({ say, actions, content: data.content, stop_reason: data.stop_reason })
   } catch (err) {
     console.error('[inspect-agent]', err)
     res.status(500).json({ error: err.message || 'agent failed' })

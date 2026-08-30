@@ -43,12 +43,53 @@ async function authHeaders() {
   }
 }
 
+// The default speechSynthesis voice is the worst one installed — on Apple
+// devices it is the old compact Alex, which is where "sounds like a robot"
+// comes from. The good voices are already on the phone; nothing picks them
+// unless you ask by name.
+//
+// Ordered best-first. Anything with "Siri" or a name like Ava/Samantha is a
+// modern neural voice; a `localService` en-US voice is the next best thing;
+// the default is the last resort.
+const VOICE_PREF = [
+  /siri/i, /\bava\b/i, /samantha/i, /allison/i, /\bnicky\b/i, /\bzoe\b/i,
+  /\bjoanna\b/i, /google us english/i, /\bkaren\b/i, /\bdaniel\b/i,
+]
+
+let cachedVoice
+function pickVoice() {
+  if (cachedVoice !== undefined) return cachedVoice
+  if (typeof speechSynthesis === 'undefined') return (cachedVoice = null)
+  const voices = speechSynthesis.getVoices() || []
+  if (!voices.length) return null          // not loaded yet; try again next time
+
+  const english = voices.filter((v) => /^en(-|_|$)/i.test(v.lang || ''))
+  for (const want of VOICE_PREF) {
+    // "Enhanced" / "Premium" variants exist on iOS and are markedly better.
+    const hit = english.find((v) => want.test(v.name) && /enhanced|premium/i.test(v.name))
+      || english.find((v) => want.test(v.name))
+    if (hit) return (cachedVoice = hit)
+  }
+  return (cachedVoice = english.find((v) => v.localService) || english[0] || null)
+}
+
+if (typeof speechSynthesis !== 'undefined') {
+  // Voices arrive asynchronously on most browsers; the first call usually gets
+  // an empty list, so the cache is cleared once they land.
+  speechSynthesis.onvoiceschanged = () => { cachedVoice = undefined }
+}
+
 function speak(text) {
   if (!text || typeof speechSynthesis === 'undefined') return
   try {
     speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
-    u.rate = 1.05
+    const v = pickVoice()
+    if (v) { u.voice = v; u.lang = v.lang }
+    // Slightly under natural pace: this is being heard once, outdoors, over an
+    // engine, by somebody who is not looking at the screen.
+    u.rate = 0.98
+    u.pitch = 1
     speechSynthesis.speak(u)
   } catch { /* a phone with no voices installed still shows the text */ }
 }
@@ -67,6 +108,7 @@ export default function InspectAgent() {
   const [history, setHistory] = useState({ repairs: [], bodyShop: [] })
   const [error, setError] = useState('')
   const [canSpeak, setCanSpeak] = useState(true)
+  const [typed, setTyped] = useState('')
 
   const sessionRef = useRef(null)
   const historyRef = useRef([])               // the Claude message list
@@ -139,6 +181,35 @@ export default function InspectAgent() {
   // The agent returns actions; the phone performs them with the same services
   // the tap screens use. A failure here must not kill the conversation — the
   // inspector is mid-sentence — so each one is caught on its own.
+  const callAgent = useCallback(async (messages) => {
+    const remaining = MECHANICAL_CHECKS
+      .filter((c) => !isAnswered(checklistRef.current, c.section, c.id))
+      .map((c) => c.label)
+    const res = await fetch('/api/inspect-agent', {
+      method: 'POST',
+      headers: await authHeaders(),
+      body: JSON.stringify({
+        mode: 'turn',
+        type: inspection?.type || 'inbound',
+        car: {
+          year: inspection?.year, make: inspection?.make,
+          model: inspection?.model, mileage: inspection?.mileage,
+        },
+        issues,
+        repairs: history.repairs,
+        bodyShop: history.bodyShop,
+        covered: MECHANICAL_CHECKS
+          .filter((c) => isAnswered(checklistRef.current, c.section, c.id))
+          .map((c) => c.label),
+        remaining,
+        messages,
+      }),
+    })
+    const json = await res.json()
+    if (json.error) throw new Error(json.error)
+    return json
+  }, [inspection, issues, history])
+
   const applyActions = useCallback(async (actions) => {
     const done = []
     for (const a of actions) {
@@ -197,36 +268,24 @@ export default function InspectAgent() {
     historyRef.current = [...historyRef.current, { role: 'user', content: said }]
 
     try {
-      const remaining = MECHANICAL_CHECKS
-        .filter((c) => !isAnswered(checklistRef.current, c.section, c.id))
-        .map((c) => c.label)
+      let json = await callAgent(historyRef.current)
+      historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
 
-      const res = await fetch('/api/inspect-agent', {
-        method: 'POST',
-        headers: await authHeaders(),
-        body: JSON.stringify({
-          mode: 'turn',
-          type: inspection?.type || 'inbound',
-          car: {
-            year: inspection?.year, make: inspection?.make,
-            model: inspection?.model, mileage: inspection?.mileage,
-          },
-          issues,
-          repairs: history.repairs,
-          bodyShop: history.bodyShop,
-          covered: covered.map((c) => c.label),
-          remaining,
-          messages: historyRef.current,
-        }),
-      })
-      const json = await res.json()
-      if (json.error) throw new Error(json.error)
+      // Recording is only half a turn. When the model calls tools it STOPS, so
+      // handing back the results is what lets it actually say the next thing —
+      // without this it files the problem and goes quiet, which reads as broken.
+      if (json.actions?.length) {
+        await applyActions(json.actions)
+        historyRef.current = [...historyRef.current, {
+          role: 'user',
+          content: json.actions.map((a) => ({
+            type: 'tool_result', tool_use_id: a.id, content: 'recorded',
+          })),
+        }]
+        json = await callAgent(historyRef.current)
+        historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
+      }
 
-      // Keep the assistant turn in history so the agent remembers the walk.
-      historyRef.current = [...historyRef.current,
-        { role: 'assistant', content: json.say || '(recorded)' }]
-
-      if (json.actions?.length) await applyActions(json.actions)
       if (json.say) {
         setLog((l) => [...l, { who: 'agent', text: json.say }])
         speak(json.say)
@@ -237,7 +296,7 @@ export default function InspectAgent() {
       busyRef.current = false
       setThinking(false)
     }
-  }, [inspection, issues, history, covered, applyActions])
+  }, [callAgent, applyActions])
 
   // --------------------------------------------------------------- listening
   function startListening() {
@@ -352,18 +411,44 @@ export default function InspectAgent() {
         )}
       </div>
 
-      {/* The one control. Big, fixed, reachable with a thumb and greasy hands. */}
-      <div className="fixed inset-x-0 bottom-0 p-4 bg-gradient-to-t from-slate-950 via-slate-950/95 to-transparent"
-        style={{ paddingBottom: 'calc(1rem + var(--safe-bottom, 0px))' }}>
+      {/* The one control. Big, fixed, reachable with a thumb and greasy hands.
+          The text box under it is not a nicety: a denied microphone, a loud
+          shop, or a word the recogniser will never get right all leave somebody
+          standing at a car with no way to record what he is looking at. Talking
+          is the fast path, not the only path. */}
+      <div className="fixed inset-x-0 bottom-0 px-4 pt-4 bg-gradient-to-t from-slate-950 via-slate-950/95 to-transparent"
+        style={{ paddingBottom: 'calc(0.75rem + var(--safe-bottom, 0px))' }}>
         <button
           onClick={listening ? stopListening : startListening}
-          className={`w-full py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 ${
+          disabled={!canSpeak}
+          className={`w-full py-5 rounded-2xl font-bold text-lg flex items-center justify-center gap-3 disabled:opacity-40 ${
             listening
               ? 'bg-red-500 text-slate-900 animate-pulse'
               : 'bg-emerald-500 text-slate-900 active:bg-emerald-600'}`}>
           {listening ? <Square size={22} /> : <Mic size={24} />}
           {listening ? 'Listening — tap to stop' : 'Talk to it'}
         </button>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            const t = typed.trim()
+            if (!t || thinking) return
+            setTyped('')
+            send(t)
+          }}
+          className="flex gap-2 mt-2">
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder="…or type it"
+            className="text-sm !py-2.5"
+          />
+          <button type="submit" disabled={!typed.trim() || thinking}
+            className="shrink-0 px-4 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 font-semibold text-sm disabled:opacity-40">
+            Send
+          </button>
+        </form>
       </div>
     </div>
   )

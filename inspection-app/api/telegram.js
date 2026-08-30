@@ -12,6 +12,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 import { createClient } from '@supabase/supabase-js';
+import { extractProblems, looksLikeReport } from './_lib/mechanicChat.js';
 import { parseVehicleEntry, extractVin6, extractAllVin6 } from './_lib/parse.js';
 import { storePhoto, bucketForStation } from './_lib/photos.js';
 import {
@@ -264,6 +265,10 @@ async function processUpdate(update) {
         for (const v of vins) await ensureBodyShopJob(db, v, eventIso);
       } else if (chat.station === 'mechanic') {
         for (const v of vins) await ensureMechanicJob(db, v, eventIso);
+        // And read what he actually wrote. "No A/C / Suspension squeaking /
+        // 114843" is two real diagnoses and a VIN; taking only the VIN opened a
+        // job card with nothing on it and threw the rest away.
+        await recordChatProblems(db, vins, text, msg.message_id, eventIso);
       }
       // Claim photos this sender parked before sending the VIN. The intake
       // branch has always done this; the shop groups never did, so a photo that
@@ -473,6 +478,53 @@ async function ensureBodyShopJob(db, vin6, eventIso) {
 async function ensureMechanicJob(db, vin6, eventIso) {
   const { error } = await db.rpc('ensure_mechanic_job', { p_vin6: vin6, p_event: eventIso });
   if (error) console.error('ensure_mechanic_job failed for', vin6, error.message || error);
+}
+
+// Turn the words in a mechanic-group message into lines on the car's job.
+//
+// Never throws into the webhook: a model call that fails must not cost us the
+// VIN, the location move or the photos, all of which already happened. The
+// message stays in wa_inbound_messages either way, so a failed read is
+// recoverable; a 500 back to Telegram is not.
+//
+// source_ref makes it idempotent — Telegram retries deliveries, and a redelivery
+// must not double a car's work list.
+async function recordChatProblems(db, vins, text, messageId, eventIso) {
+  if (!vins.length || !process.env.ANTHROPIC_API_KEY) return;
+  if (!looksLikeReport(text)) return;
+
+  let problems = [];
+  try {
+    problems = await extractProblems(text, { apiKey: process.env.ANTHROPIC_API_KEY });
+  } catch (e) {
+    console.error('mechanic chat extract failed', e.message || e);
+    return;
+  }
+  if (!problems.length) return;
+
+  // One car in the message is the normal case. When somebody lists several VINs
+  // AND a fault, we cannot know which car the fault belongs to, so it is
+  // recorded against each — a line on the wrong card is visible and gets
+  // declined; a line on no card is invisible and gets forgotten.
+  for (const vin6 of vins) {
+    const { data: jobId } = await db.rpc('ensure_mechanic_job',
+      { p_vin6: vin6, p_event: eventIso, p_source: 'telegram' });
+    if (!jobId) continue;
+
+    const rows = problems.map((p, i) => ({
+      job_id: jobId,
+      system: p.system,
+      description: p.description,
+      severity: p.severity,
+      status: 'open',
+      source_ref: `tg:${messageId}:${vin6}:${i}`,
+    }));
+
+    const { error } = await db.from('mechanic_lines')
+      .upsert(rows, { onConflict: 'source_ref', ignoreDuplicates: true });
+    if (error) console.error('mechanic chat lines failed for', vin6, error.message || error);
+    else console.log(`recorded ${rows.length} problem(s) for ${vin6} from chat`);
+  }
 }
 
 // Bind a reply to the single photo the bot asked about, and file it. Returns

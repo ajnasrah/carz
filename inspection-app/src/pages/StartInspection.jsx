@@ -35,13 +35,15 @@ export default function StartInspection() {
     // a higher mileage reading than the one the inspector just entered,
     // flag it as a likely typo and let them confirm before creating the
     // inspection. Mileage can only go up in real life.
+    let invVehicle = null
     try {
       const { data: invRows } = await supabase
         .from('inventory')
-        .select('mileage, vehicle_year, vehicle_make, vehicle_model, stock_number')
+        .select('mileage, vehicle_year, vehicle_make, vehicle_model, vehicle_vin, stock_number')
         .eq('last_6_vin', last6)
         .limit(1)
       const inv = invRows?.[0]
+      invVehicle = inv || null
       if (inv) {
         const invMiles = parseInt(String(inv.mileage || '').replace(/,/g, ''), 10)
         if (Number.isFinite(invMiles) && Number.isFinite(newMiles) && newMiles < invMiles) {
@@ -123,7 +125,16 @@ export default function StartInspection() {
       .insert({
         user_id: user.id,
         vin_last6: last6,
-        vin: last6,
+        // The full VIN and the vehicle, when inventory knows them. The agent's
+        // whole value depends on knowing WHICH car it is — what this model is
+        // known to fail, which test to describe — and without these it opens
+        // with "104,500 miles on it" instead of naming the car. The lookup
+        // already happened above for the odometer check; it was just thrown away.
+        vin: invVehicle?.vehicle_vin || last6,
+        year: invVehicle?.vehicle_year ? parseInt(invVehicle.vehicle_year, 10) || null : null,
+        make: invVehicle?.vehicle_make || null,
+        model: invVehicle?.vehicle_model || null,
+        stock_number: invVehicle?.stock_number || last6,
         mileage: newMiles,
         checklist,
         status: 'in_progress',

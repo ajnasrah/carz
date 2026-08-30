@@ -316,16 +316,20 @@ function lastKnownFromHistory(history) {
   return {
     physical_location: e.new_location,
     source: e.location_source || e.event_type,
-    updated_at: e.created_at,
+    updated_at: e.event_at || e.created_at,
     last_known: true,
   }
 }
 
 async function loadHistory({ vin, stock }) {
+  // event_at, not created_at: when the move happened rather than when the row
+  // was written. 27 Super Dispatch moves sat more than an hour apart on those
+  // two, which is enough to order a timeline wrongly. The timeline re-sorts on
+  // the same field; this only decides which 100 rows come back.
   let q = supabase
     .from('vehicle_location_history')
     .select('*')
-    .order('created_at', { ascending: false })
+    .order('event_at', { ascending: false })
     .limit(100)
   if (vin) q = q.eq('vin', vin)
   else if (stock) q = q.eq('stock_number', stock)
