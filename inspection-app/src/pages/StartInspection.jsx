@@ -198,9 +198,14 @@ export default function StartInspection() {
 
         {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
+        {/* Enabled even when incomplete, on purpose. Disabling it meant tapping
+            Start did nothing and said nothing — the validation below never ran,
+            so the message explaining what was missing could never appear. A
+            green button that silently ignores you is the worst thing to hand
+            somebody on their first day. */}
         <button
           type="submit"
-          disabled={loading || vin6.length !== 6 || !odometer}
+          disabled={loading}
           className="btn-primary text-lg"
         >
           {loading ? 'Creating...' : 'Start'}

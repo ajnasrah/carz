@@ -26,6 +26,7 @@ import {
   addDamage, matchPanel, OTHER_SECTION,
 } from '../services/mechanicalFindings'
 import { fetchRepairHistory } from '../services/mechanic'
+import { markTrackComplete } from '../services/tracks'
 
 // Which section a check id belongs to, so an agent action lands in the right
 // branch without the agent needing to know the shape of the JSON.
@@ -109,6 +110,7 @@ export default function InspectAgent() {
   const [error, setError] = useState('')
   const [canSpeak, setCanSpeak] = useState(true)
   const [typed, setTyped] = useState('')
+  const [finished, setFinished] = useState('')
 
   const sessionRef = useRef(null)
   const historyRef = useRef([])               // the Claude message list
@@ -241,6 +243,14 @@ export default function InspectAgent() {
             panelId || `spoken_${String(panel || 'other').toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
             { type, size, note })
           done.push([type, `on the ${label}`, size && `(${size})`].filter(Boolean).join(' '))
+        } else if (a.name === 'finish_walk') {
+          // Closing the walk completes the inspection, which is what fires the
+          // work order router and opens the tickets. Every track is marked so
+          // the tap screens and this one agree the car is finished.
+          for (const track of ['quick', 'condition', 'drive']) {
+            await markTrackComplete(id, track)
+          }
+          setFinished(a.input?.summary || 'Inspection complete.')
         } else if (a.name === 'mark_good') {
           for (const check of a.input?.checks || []) {
             const section = SECTION_OF[check]
@@ -268,13 +278,19 @@ export default function InspectAgent() {
     historyRef.current = [...historyRef.current, { role: 'user', content: said }]
 
     try {
+      // Recording is only half a turn: when the model calls tools it STOPS, so
+      // the results have to go back before it can say the next thing. And it
+      // can call tools AGAIN on the way back — record two problems, then ask
+      // for a photo — so this is a loop, not one round trip.
+      //
+      // Handling only one round left a tool_use with no tool_result in the
+      // history, and the API rejects the NEXT message with a 400 that kills the
+      // whole conversation. The bug does not show up until the third turn.
       let json = await callAgent(historyRef.current)
-      historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
-
-      // Recording is only half a turn. When the model calls tools it STOPS, so
-      // handing back the results is what lets it actually say the next thing —
-      // without this it files the problem and goes quiet, which reads as broken.
-      if (json.actions?.length) {
+      let guard = 0
+      while (json.actions?.length && guard < 5) {
+        guard += 1
+        historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
         await applyActions(json.actions)
         historyRef.current = [...historyRef.current, {
           role: 'user',
@@ -283,8 +299,8 @@ export default function InspectAgent() {
           })),
         }]
         json = await callAgent(historyRef.current)
-        historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
       }
+      historyRef.current = [...historyRef.current, { role: 'assistant', content: json.content }]
 
       if (json.say) {
         setLog((l) => [...l, { who: 'agent', text: json.say }])
@@ -358,6 +374,18 @@ export default function InspectAgent() {
 
       {error && (
         <div className="card border-red-500/40 bg-red-500/10 text-red-300 text-sm mb-3">{error}</div>
+      )}
+
+      {finished && (
+        <div className="card border-emerald-500/40 bg-emerald-500/10 mb-3">
+          <p className="text-emerald-300 text-sm font-semibold">Inspection complete</p>
+          <p className="text-[11px] text-slate-300 mt-1">{finished}</p>
+          <p className="text-[11px] text-slate-400 mt-1">
+            The work orders are open — anything for the shops is on their boards now.
+          </p>
+          <button onClick={() => navigate(`/inspect/${id}/review`)}
+            className="btn-primary mt-2 text-sm">See the report</button>
+        </div>
       )}
 
       {!canSpeak && (

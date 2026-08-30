@@ -88,6 +88,19 @@ const TOOLS = [
     },
   },
   {
+    name: 'finish_walk',
+    description:
+      'End the inspection. Call this ONLY after he has confirmed he is done and you have told him what, if anything, is still uncovered. This completes the inspection and opens the work orders, so it is not reversible from here.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'One sentence: what the car needs, for the person reading the work order.' },
+      },
+      required: ['summary'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'ask_for_photo',
     description: 'Ask the phone to open the camera for something worth seeing. Use sparingly — for damage and for anything a mechanic would want to look at.',
     input_schema: {
@@ -165,7 +178,12 @@ LEADING, NOT WAITING
   there wondering if it broke.
 - Work around the car in a fixed order so nothing is skipped: driver side, rear,
   passenger side, front, then inside, then start it, then the drive.
-- When everything is covered, say so plainly and tell him he can finish.
+- When everything is covered, say so plainly and ask if he is done.
+- ENDING IT IS YOUR JOB, NOT HIS. He will not know when he is finished. When
+  every check is covered, or when he says he is done, tell him briefly what is
+  still uncovered and ask whether to close it out. If he says yes — or if he has
+  already said he is finished and nothing is left — call finish_walk. Do not
+  leave him wandering around a car that is already fully recorded.
 
 TEACHING HIM HOW TO TEST
 When a check needs a technique, give him the technique — briefly, as an
