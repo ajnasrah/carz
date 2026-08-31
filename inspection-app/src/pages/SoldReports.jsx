@@ -5,6 +5,16 @@ import {
   BarChart, Bar, Line, ComposedChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend,
 } from 'recharts'
+// recharts animates a bar UP FROM HEIGHT ZERO and a line in via stroke-dash.
+// Rectangle returns null while its height is 0, so if the animation never ticks
+// the mark is never drawn at all — which is exactly what was happening: every
+// chart in the app rendered its axes, its grid and its legend, and then an
+// EMPTY <g class="recharts-inactive-bar"> where the bar should be. Not a data
+// problem; the numbers were always correct.
+//
+// Animation is off everywhere for that reason. It also happens to be the right
+// call for these screens: they are read, not watched, and a lot of them are
+// read on a phone.
 import {
   fetchSoldClean, filterByPeriod, summarize, groupByMonth, groupByDaysOnLot,
   groupByMake, groupByModel, findModelSweetSpot,
@@ -662,8 +672,8 @@ export default function SoldReports({ embedded = false }) {
                 formatter={(v, name) => name === 'count' ? [v, 'sold'] : [fmt.money(v), 'avg profit']}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="right" dataKey="count" fill="#334155" name="sold" />
-              <Line yAxisId="left" type="monotone" dataKey="avgProfit" stroke="#10b981" strokeWidth={2} dot={{ fill: '#10b981', r: 3 }} name="avg profit" />
+              <Bar yAxisId="right" dataKey="count" fill="#334155" name="sold" isAnimationActive={false} />
+              <Line yAxisId="left" type="monotone" dataKey="avgProfit" stroke="#10b981" strokeWidth={2} dot={{ fill: '#10b981', r: 3 }} name="avg profit" isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -685,7 +695,7 @@ export default function SoldReports({ embedded = false }) {
                   return `${l} · ${b?.count || 0} sold · ${fmt.pct(b?.pctWinners || 0)} winners`
                 }}
               />
-              <Bar dataKey="avgProfit">
+              <Bar dataKey="avgProfit" isAnimationActive={false}>
                 {daysBands.map((entry, i) => (
                   <Cell key={i} fill={profitColor(entry.avgProfit)} />
                 ))}
@@ -710,7 +720,7 @@ export default function SoldReports({ embedded = false }) {
                   contentStyle={{ background: '#0f172a', border: '1px solid #334155', fontSize: 11 }}
                   formatter={(v) => [fmt.money(v), 'avg profit']}
                 />
-                <Bar dataKey="avgProfit">
+                <Bar dataKey="avgProfit" isAnimationActive={false}>
                   {yearBands.map((entry, i) => (
                     <Cell key={i} fill={profitColor(entry.avgProfit)} />
                   ))}
@@ -729,7 +739,7 @@ export default function SoldReports({ embedded = false }) {
                   contentStyle={{ background: '#0f172a', border: '1px solid #334155', fontSize: 11 }}
                   formatter={(v) => [fmt.money(v), 'avg profit']}
                 />
-                <Bar dataKey="avgProfit">
+                <Bar dataKey="avgProfit" isAnimationActive={false}>
                   {mileageBands.map((entry, i) => (
                     <Cell key={i} fill={profitColor(entry.avgProfit)} />
                   ))}
@@ -960,8 +970,7 @@ export default function SoldReports({ embedded = false }) {
                     stroke={['#10b981','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#eab308'][i % 7]}
                     strokeWidth={2}
                     dot={{ r: 2 }}
-                    activeDot={{ r: 4 }}
-                  />
+                    activeDot={{ r: 4 }} isAnimationActive={false} />
                 ))}
               </ComposedChart>
             </ResponsiveContainer>

@@ -2,6 +2,16 @@ import { useMemo, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell, CartesianGrid,
 } from 'recharts'
+// recharts animates a bar UP FROM HEIGHT ZERO and a line in via stroke-dash.
+// Rectangle returns null while its height is 0, so if the animation never ticks
+// the mark is never drawn at all — which is exactly what was happening: every
+// chart in the app rendered its axes, its grid and its legend, and then an
+// EMPTY <g class="recharts-inactive-bar"> where the bar should be. Not a data
+// problem; the numbers were always correct.
+//
+// Animation is off everywhere for that reason. It also happens to be the right
+// call for these screens: they are read, not watched, and a lot of them are
+// read on a phone.
 import { TrendingUp, TrendingDown, Minus, Sparkle, ChevronDown, ChevronUp, Copy, Mail, Phone, Check } from 'lucide-react'
 import { computeBuyerAnalytics, buyerMonthlySeries } from '../services/buyerAnalytics'
 import { computeBuyerTrends } from '../services/buyerTrends'
@@ -93,9 +103,9 @@ export default function BuyerAnalytics({ sold }) {
             <Legend wrapperStyle={{ fontSize: 11, color: INK2 }} iconType="circle" iconSize={8}
               formatter={(v) => <span style={{ color: INK2 }}>{String(v).length > 18 ? String(v).slice(0, 17) + '…' : v}</span>} />
             {a.seriesDefs.map((sd) => (
-              <Bar key={sd.id} dataKey={sd.id} stackId="m" fill={SERIES[sd.colorIndex]} stroke={SURFACE} strokeWidth={1} maxBarSize={48} />
+              <Bar key={sd.id} dataKey={sd.id} stackId="m" fill={SERIES[sd.colorIndex]} stroke={SURFACE} strokeWidth={1} maxBarSize={48} isAnimationActive={false} />
             ))}
-            <Bar dataKey="Other" stackId="m" fill={OTHER} stroke={SURFACE} strokeWidth={1} radius={[3, 3, 0, 0]} maxBarSize={48} />
+            <Bar dataKey="Other" stackId="m" fill={OTHER} stroke={SURFACE} strokeWidth={1} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </Card>
@@ -123,7 +133,7 @@ export default function BuyerAnalytics({ sold }) {
               <YAxis type="category" dataKey="label" width={140} tick={<BuyerTick />} axisLine={false} tickLine={false} />
               <Tooltip cursor={{ fill: 'rgba(148,163,184,0.08)' }} content={<BarTip />} />
               <Bar dataKey="count" fill={SERIES[0]} radius={[0, 4, 4, 0]} barSize={16}
-                label={{ position: 'right', fill: INK2, fontSize: 11 }}>
+                label={{ position: 'right', fill: INK2, fontSize: 11 }} isAnimationActive={false}>
                 {chartTop.map((b) => <Cell key={b.key} cursor="pointer" onClick={() => setOpenKey(openKey === b.key ? null : b.key)} />)}
               </Bar>
             </BarChart>
@@ -183,7 +193,7 @@ function BuyerDetail({ analytics, b, m, copied, copy }) {
           <XAxis dataKey="month" tick={{ fill: INK2, fontSize: 10 }} axisLine={{ stroke: AXIS }} tickLine={false} />
           <YAxis tick={{ fill: INK2, fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
           <Tooltip cursor={{ fill: 'rgba(148,163,184,0.08)' }} content={<BarTip single />} />
-          <Bar dataKey="cars" fill={SERIES[0]} radius={[3, 3, 0, 0]} maxBarSize={34} />
+          <Bar dataKey="cars" fill={SERIES[0]} radius={[3, 3, 0, 0]} maxBarSize={34} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
       {/* Contact + momentum sentence */}
