@@ -17,9 +17,15 @@ export const PRIMARY_LINKS = [
   { to: '/', emoji: '🏠', label: 'Home', end: true },
   { to: '/lot', emoji: '🚶', label: 'Walk Lot' },
   { to: '/inventory', emoji: '🚗', label: 'Cars' },
-  // The sold list, sitting directly under Cars because it's the other half of
-  // the same question — what we're holding, and what left.
-  { to: '/sold', emoji: '💰', label: 'Sold' },
+  // "Sold Cars", not "Sold" — the car list, sitting directly under Cars because
+  // it's the other half of the same question: what we're holding, and what left.
+  //
+  // The name matters. The phone's bottom bar has a 💰 Sold tab that goes to
+  // /sold-reports, so for a long time two different pages were both called
+  // "Sold" with the same icon, and tapping the one in this list got you
+  // somewhere you didn't ask for. Two destinations may share a subject; they
+  // may not share a name.
+  { to: '/sold', emoji: '💰', label: 'Sold Cars' },
   { to: '/body-shop', emoji: '🎨', label: 'Body Shop' },
   // Next to the body shop because they're the same question asked of the two
   // shops: what's in there, and how long have we owned it.
