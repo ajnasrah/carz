@@ -340,8 +340,19 @@
     return byStock;
   }
 
-  // Mark any vehicle_locations row currently at `source` that is NOT in
-  // `keepStocks` as physical_location='unknown'. Splits stale cars into:
+  // A car that is no longer on `source`'s run list has NOT MOVED. It is still
+  // sitting at DAA; this week's list just didn't mention it. This used to write
+  // physical_location='unknown' and null the source, which is how 228 of 1,497
+  // location changes came to read "daa → unknown" — an arrow pointing at a
+  // place that doesn't exist, on the timeline of a car that never went
+  // anywhere.
+  //
+  // So the location stands and the GAP IN TRACKING is recorded instead, via
+  // mark_off_run_list(). location_updated_at is left alone deliberately: the
+  // last time we actually laid eyes on the car is exactly what the aging
+  // numbers need, and bumping it would restart that clock every upload.
+  //
+  // Splits stale cars into:
   //   - Sold (per Frazer) → clear silently, no prompt. They're gone; tracker is moot.
   //   - Still in inventory → this is the real signal; prompt with a preview.
   async function clearStaleForSource(source, keepStocks) {
@@ -383,23 +394,16 @@
       if (!stocks.length) return 0;
       const CHUNK = 50;
       let done = 0;
-      const payload = {
-        physical_location: 'unknown',
-        physical_source: null,
-        location_updated_at: new Date().toISOString(),
-      };
       for (let i = 0; i < stocks.length; i += CHUNK) {
         const batch = stocks.slice(i, i + CHUNK);
-        const patchUrl = `${config.supabaseUrl}/rest/v1/vehicle_locations?stock_number=in.(${batch.map(encodeURIComponent).join(',')})`;
-        const res = await fetch(patchUrl, {
-          method: 'PATCH',
+        const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/mark_off_run_list`, {
+          method: 'POST',
           headers: {
             apikey: config.supabaseKey,
             Authorization: `Bearer ${config.supabaseKey}`,
             'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
           },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ p_stocks: batch, p_source: source }),
         });
         if (res.ok) done += batch.length;
       }
@@ -409,7 +413,7 @@
     // Silent clear for sold cars — tracker cleanup, no user attention needed.
     if (soldStale.length) {
       const silentlyCleared = await patchStocks(soldStale.map((s) => s.stock_number));
-      config.log(`Auto-cleared ${silentlyCleared} sold car(s) from ${source.toUpperCase()} tracker`, 'ok');
+      config.log(`Noted ${silentlyCleared} sold car(s) off the ${source.toUpperCase()} list`, 'ok');
     }
 
     if (activeStale.length === 0) return soldStale.length;
@@ -424,11 +428,11 @@
       '',
       `(${soldStale.length} already-sold cars were auto-cleared — not in this count.)`,
       '',
-      `→ OK: mark these as "unknown location" (use if today's list is a full ${source.toUpperCase()} run)`,
-      `→ Cancel: leave them marked "at ${source.toUpperCase()}" (use if today's list is a partial subset)`,
+      `→ OK: note that they went untracked this week (they stay marked at ${source.toUpperCase()}; the gap shows on each car's history)`,
+      `→ Cancel: record nothing (use if today's list is a partial subset)`,
     ].join('\n');
     if (!confirm(msg)) {
-      config.log(`Stale flip cancelled — ${activeStale.length} active cars left at ${source}`, 'warn');
+      config.log(`Skipped — nothing recorded for ${activeStale.length} car(s) at ${source}`, 'warn');
       return soldStale.length;
     }
     const activeCleared = await patchStocks(activeStale.map((s) => s.stock_number));
