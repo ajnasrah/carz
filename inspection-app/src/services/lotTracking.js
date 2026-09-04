@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { isSamePlace } from './locationLabels'
 
 export async function fetchSections() {
   const { data, error } = await supabase
@@ -33,17 +34,37 @@ export async function recordScan({ stock_number, vin, section, input_method, not
   // physical_location is slugified from the raw section name.
   const slug = String(section || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   if (slug) {
-    await supabase
+    // Scanning a car in the section it is already in is not a move, and must
+    // not restamp location_updated_at. That column answers "how long has it
+    // stood there" — it drives the stuck-21d warning, the front-lot aging
+    // report, and the body shop's re-open guard, and a lot walk rewriting it
+    // every pass told all three the car had just arrived. Two finished body
+    // shop jobs were resurrected that way: a walk restamped cars that had not
+    // moved since July, so signing the work off dropped them straight back
+    // into Intake, backdated to the day of the walk.
+    //
+    // Freshness does not depend on this write — Inventory takes last-seen as
+    // max(lot_scans.last_seen_at, location_updated_at), and the scan row above
+    // has already recorded that the car was laid eyes on today.
+    const { data: current } = await supabase
       .from('vehicle_locations')
-      .upsert({
-        stock_number,
-        vin: vin || '',
-        physical_location: slug,
-        physical_source: 'lot_scan',
-        location_updated_at: nowIso,
-        updated_at: nowIso,
-        notes: { section, input_method, scanned_by: user.id },
-      }, { onConflict: 'stock_number' })
+      .select('physical_location')
+      .eq('stock_number', stock_number)
+      .maybeSingle()
+
+    if (!isSamePlace(current?.physical_location, slug)) {
+      await supabase
+        .from('vehicle_locations')
+        .upsert({
+          stock_number,
+          vin: vin || '',
+          physical_location: slug,
+          physical_source: 'lot_scan',
+          location_updated_at: nowIso,
+          updated_at: nowIso,
+          notes: { section, input_method, scanned_by: user.id },
+        }, { onConflict: 'stock_number' })
+    }
   }
   return data
 }

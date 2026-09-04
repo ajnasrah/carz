@@ -86,3 +86,19 @@ export function formatLocationLabel(slug) {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+// Jorge's Shop IS the body shop — one physical place carrying two slugs,
+// depending on whether a lot scan, the Telegram bot or a bulk edit wrote the
+// row. Fold them before comparing two locations, or a car "moves" every time
+// the source changes and nothing about where it stands has.
+export function canonicalLocation(slug) {
+  return slug === "jorge" ? "body_shop" : slug;
+}
+
+// Did the car actually go somewhere? Compares two raw location slugs as PLACES,
+// so body_shop <-> jorge is not a move.
+export function isSamePlace(a, b) {
+  const ca = canonicalLocation(a || "");
+  const cb = canonicalLocation(b || "");
+  return !!ca && ca === cb;
+}

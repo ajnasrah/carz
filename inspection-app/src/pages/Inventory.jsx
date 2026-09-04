@@ -26,7 +26,7 @@ import VehicleHistoryModal from "../components/VehicleHistoryModal";
 import BulkLocationEdit from "../components/BulkLocationEdit";
 import { saveCsv } from "../native/files";
 import { copyText } from "../native/clipboard";
-import { LOCATION_LABELS, formatLocationLabel } from '../services/locationLabels';
+import { LOCATION_LABELS, formatLocationLabel, canonicalLocation } from '../services/locationLabels';
 
 // One key for the whole page: the four reads are fetched together and are only
 // ever used together, so caching them as one payload keeps them consistent with
@@ -102,9 +102,11 @@ function hasBeenLocated(physLoc) {
 // into "body_shop" so /inventory shows a single badge, Places chip, count, and
 // filter for them instead of two. Applied wherever a location row enters the
 // page's location map.
-function canonicalLoc(physLoc) {
-  return physLoc === "jorge" ? "body_shop" : physLoc;
-}
+//
+// The fold itself now lives in locationLabels.js, next to the names: the lot
+// walk needs the same answer to decide whether a scan is a move, and two copies
+// of "which slugs are the same place" is how they drift apart.
+const canonicalLoc = canonicalLocation;
 
 // How many cars the copy button puts on the clipboard, off the top of whatever
 // list is on screen. Five, because this gets pasted into a message and acted on
