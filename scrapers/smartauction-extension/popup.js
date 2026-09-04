@@ -153,7 +153,16 @@
     const mark = path.match(/^\/queue\/(mark-listed|mark-sold|hold|unhold|remove)\/(.+)$/);
     if (mark) {
       const map = { 'mark-listed': 'listed', 'mark-sold': 'sold', hold: 'hold', unhold: 'queued', remove: 'removed' };
-      await sbRpc('sa_queue_set_status', { p_vin6: decodeURIComponent(mark[2]).toUpperCase(), p_status: map[mark[1]] });
+      // Trim to the last 6, exactly as the /vehicle/ handler above does. The
+      // queue keys on the last 6 and this went in raw, so pressing a button on
+      // a car opened by its full VIN wrote a row keyed '1N6ED1EK8PN665426' that
+      // could never join the queue — the click reported success and changed
+      // nothing. 151 rows had piled up that way.
+      const markVin = decodeURIComponent(mark[2]).toUpperCase().replace(/[^0-9A-Z]/g, '');
+      await sbRpc('sa_queue_set_status', {
+        p_vin6: markVin.length > 6 ? markVin.slice(-6) : markVin,
+        p_status: map[mark[1]],
+      });
       return ok({ success: true });
     }
     return { ok: false, status: 404, json: async () => ({}) };

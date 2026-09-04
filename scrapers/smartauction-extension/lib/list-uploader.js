@@ -578,7 +578,7 @@
       try {
         for (const vin of yourSoldVins) {
           const last6 = vin.slice(-6);
-          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'sold' }) });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_sync_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'sold', p_sale_date: new Date().toISOString() }) });
           if (response.ok) {
             removedCount++;
             config.log(`Marked ${last6} as sold - removed from queue and deleted photos`, 'ok');
@@ -1031,7 +1031,7 @@
       try {
         for (const vin of yourSoldVins) {
           const last6 = vin.slice(-6);
-          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'sold' }) });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_sync_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'sold', p_sale_date: new Date().toISOString() }) });
           if (response.ok) {
             removedCount++;
             config.log(`Marked ${last6} as sold - removed from queue and deleted photos`, 'ok');
@@ -1823,7 +1823,7 @@
       try {
         for (const vehicle of activeVehicles) {
           const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'listed' }) });
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_sync_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'listed' }) });
           if (response.ok) {
             listedCount++;
             config.log(`Marked ${last6} as listed on SmartAuction`, 'ok');
@@ -1855,24 +1855,39 @@
 
     // Auto-mark sold vehicles as sold and remove from queue
     const soldVehicles = upserts.filter(u => u.sa_status === 'sold');
+    const staleSold = [];
     if (soldVehicles.length > 0) {
       let soldMarkedCount = 0;
       try {
         for (const vehicle of soldVehicles) {
           const last6 = vehicle.vin.slice(-6);
-          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_set_status`, {
+          // Hand over WHEN it sold. This feed carries a sold listing forever, so
+          // without the date every run re-applies every historical sale — which
+          // is how 665426, sold in July and re-shot on 9/3, got stamped sold
+          // again on 9/4 and dropped out of the queue the morning after it was
+          // photographed. sa_queue_sync_status refuses a sale that old on a car
+          // we still own; `applied === false` is that refusal, not a failure.
+          const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_sync_status`, {
             method: 'POST',
             headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ p_vin6: last6, p_status: 'sold' })
+            body: JSON.stringify({ p_vin6: last6, p_status: 'sold', p_sale_date: vehicle.sold_at || null })
           });
           if (response.ok) {
-            soldMarkedCount++;
-            config.log(`Marked ${last6} as sold and removed from queue`, 'ok');
+            const applied = await response.json().catch(() => true);
+            if (applied === false) {
+              staleSold.push(last6);
+            } else {
+              soldMarkedCount++;
+              config.log(`Marked ${last6} as sold and removed from queue`, 'ok');
+            }
           }
           // Skip 404s silently - vehicle not in queue
         }
         if (soldMarkedCount > 0) {
           config.log(`Auto-removed ${soldMarkedCount} sold vehicles from queue`, 'ok');
+        }
+        if (staleSold.length > 0) {
+          config.log(`${staleSold.length} car(s) left in the queue — SmartAuction still shows them sold, but we own them and they were re-shot more than two weeks after that sale: ${staleSold.join(', ')}`, 'ok');
         }
       } catch (err) {
         config.log(`Error marking vehicles as sold: ${err.message}`, 'warn');
