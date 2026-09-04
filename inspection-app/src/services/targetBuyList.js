@@ -615,6 +615,7 @@ export async function fetchSoldBook() {
   }
 
   const mapped = rows.map((r) => ({
+    dealership: 'carz',
     vin: String(r.vehicle_vin || '').trim().toUpperCase(),
     year: rpcNum(r.vehicle_year),
     make: r.vehicle_make,
@@ -637,6 +638,98 @@ export async function fetchSoldBook() {
     from: dates[0] || null,
     to: dates[dates.length - 1] || null,
   }
+}
+
+// ── Partner rooftops ─────────────────────────────────────────────────────────
+// A second dealership's sold history, read through list_partner_sold(). It is a
+// SEPARATE table from `sold` on purpose: `sold` is our profit book and every
+// report in the app reads it as "cars we sold". See the partner_sold migration.
+//
+// Columns come back already normalised and typed — the ingest does the mapping,
+// so unlike fetchSoldBook there is no Frazer text to coerce here.
+export async function fetchPartnerBook() {
+  const rows = []
+  const PAGE = 1000
+  for (let offset = 0; ; offset += PAGE) {
+    // limit/offset as query params, NOT .range() — same reason as the note in
+    // fetchSoldBook: the Range header is ignored and every page comes back as
+    // the first one, which no length check can detect.
+    const { data, error } = await rpcPage('list_partner_sold', PAGE, offset)
+    // A partner book is additive: if it cannot be read, our own book still
+    // scores and the page still works. But "no rooftop connected" and "the
+    // rooftop is connected and broken" must not look the same.
+    //
+    // PGRST202 is PostgREST for "no such function" — the state of every install
+    // until the partner_sold migration is applied, and the normal state for
+    // anyone running a single store. That is not an error to put on screen.
+    if (error) {
+      const missing = /PGRST202|Could not find the function|does not exist/i.test(error.message || '')
+      return { rows: [], total: 0, rooftops: [], error: missing ? null : error.message }
+    }
+    if (!data || !data.length) break
+    rows.push(...data)
+    if (data.length < PAGE) break
+    if (offset > 100000) break // safety stop
+  }
+
+  const mapped = rows.map((r) => ({
+    dealership: r.dealership,
+    vin: String(r.vin || '').trim().toUpperCase(),
+    year: rpcNum(r.year),
+    make: r.make,
+    model: r.model,
+    odometer: rpcNum(r.odometer),
+    sale_date: r.sale_date || null,
+    sale_price: rpcNum(r.sale_price),
+    total_cost: rpcNum(r.total_cost),
+    added_costs: rpcNum(r.added_costs),
+    net_profit: rpcNum(r.net_profit),
+    days_on_lot: rpcNum(r.days_on_lot),
+    vendor: r.vendor,
+    buyer: r.buyer,
+  }))
+
+  const rooftops = [...new Set(mapped.map((r) => r.dealership).filter(Boolean))].sort()
+  return { rows: mapped, total: mapped.length, rooftops, error: null }
+}
+
+// Both books, cleaned SEPARATELY and then merged.
+//
+// Cleaning separately is the whole point. cleanBook trims outliers by walking in
+// from each tail of the profit distribution — run that over two rooftops stacked
+// together and the smaller book's entire top end reads as one long gap and gets
+// trimmed away. The pass-through test ($0 profit, $0 recon) is likewise a
+// statement about one DMS's bookkeeping, not a universal rule. So each rooftop
+// is cleaned against its own distribution, and only then do the books combine.
+export async function fetchBooks() {
+  const [ours, partner] = await Promise.all([
+    fetchSoldBook(),
+    fetchPartnerBook(),
+  ])
+
+  const byDealership = new Map()
+  const add = (name, rows) => {
+    if (!rows.length) return
+    const cleaned = cleanBook(rows)
+    const dates = rows.map((r) => r.sale_date).filter(Boolean).sort()
+    byDealership.set(name, {
+      dealership: name,
+      rows: cleaned.book,
+      raw: rows.length,
+      size: cleaned.book.length,
+      from: dates[0] || null,
+      to: dates[dates.length - 1] || null,
+      removedOutliers: cleaned.removedOutliers,
+      removedPassthrough: cleaned.removedPassthrough,
+    })
+  }
+
+  add('carz', ours.rows)
+  for (const name of partner.rooftops) {
+    add(name, partner.rows.filter((r) => r.dealership === name))
+  }
+
+  return { byDealership, partnerError: partner.error }
 }
 
 // ── Clean the book ───────────────────────────────────────────────────────────
@@ -697,6 +790,10 @@ export function indexBook(book) {
       nmodel: normModel(r.model, r.make),
       vin: r.vin,
       saleDate: r.sale_date,
+      // Which rooftop sold it. Carried all the way to the cohort so a verdict
+      // can say whose history is behind it — a TARGET backed entirely by the
+      // other store's book is a different claim from one backed by ours.
+      dealership: r.dealership || 'carz',
     })
   }
   return byMake
@@ -704,10 +801,19 @@ export function indexBook(book) {
 
 // ── Scoring ──────────────────────────────────────────────────────────────────
 function cohortStats(cohort) {
-  if (!cohort.length) return { n: 0, meanProfit: null, medProfit: null, meanDays: null, hitRate: null, lossRate: null, medResale: null }
+  if (!cohort.length) return { n: 0, meanProfit: null, medProfit: null, meanDays: null, hitRate: null, lossRate: null, medResale: null, sources: {}, oursN: 0 }
   const profits = cohort.map((s) => s.profit)
   const days = cohort.map((s) => s.days).filter((d) => d != null)
   const prices = cohort.map((s) => s.price).filter((v) => v != null)
+  // Who actually sold these. A cohort of six that is six of THEIR cars supports
+  // a very different bid than six of ours: their recon rates, their retail
+  // market and their reconditioning standard are not ours. The verdict does not
+  // change, but the number is shown so it can be judged.
+  const sources = {}
+  for (const s of cohort) {
+    const d = s.dealership || 'carz'
+    sources[d] = (sources[d] || 0) + 1
+  }
   return {
     n: cohort.length,
     meanProfit: mean(profits),
@@ -716,7 +822,20 @@ function cohortStats(cohort) {
     hitRate: (profits.filter((v) => v > 1000).length / profits.length) * 100,
     lossRate: (profits.filter((v) => v <= 0).length / profits.length) * 100,
     medResale: median(prices),
+    sources,
+    oursN: sources.carz || 0,
   }
+}
+
+// "4 ours / 3 sycamore" — only when more than one rooftop is in play, so a
+// single-store book reads exactly as it always did.
+function sourceNote(st) {
+  const names = Object.keys(st.sources || {})
+  if (names.length < 2) return ''
+  const parts = names
+    .sort((a, b) => st.sources[b] - st.sources[a])
+    .map((d) => `${st.sources[d]} ${d === 'carz' ? 'ours' : d}`)
+  return ` (${parts.join(' / ')})`
 }
 
 // Cars of the same model within a tier's year and mileage band.
@@ -737,7 +856,7 @@ export function evaluateCar(car, byMake) {
     meanDays: null, hitRate: null, confidence: 'NONE', medResale: null,
     exactN: 0, exactProfit: null, exactMedProfit: null, exactDays: null,
     exactHit: null, exactLoss: null, sameYearN: 0, sameYearProfit: null,
-    compPool: '', compShared: 1,
+    compPool: '', compShared: 1, exactSources: '', exactOursN: 0,
   }
 
   if (!pool.length) return { ...base, verdict: 'NO DATA', why: 'No record of us selling this model' }
@@ -783,6 +902,7 @@ export function evaluateCar(car, byMake) {
     compPool,
     exactN: exact.n, exactProfit: exact.meanProfit, exactMedProfit: exact.medProfit,
     exactDays: exact.meanDays, exactHit: exact.hitRate, exactLoss: exact.lossRate,
+    exactSources: sourceNote(exact).replace(/^ \(|\)$/g, ''), exactOursN: exact.oursN,
     sameYearN: sameYear.n, sameYearProfit: sameYear.meanProfit,
     tier: context ? context.tier.label : null,
     n: context ? context.st.n : 0,
@@ -822,7 +942,7 @@ export function evaluateCar(car, byMake) {
   return {
     ...withStats, verdict,
     confidence: exact.n >= 5 ? 'HIGH' : exact.n >= 3 ? 'MEDIUM' : 'LOW',
-    why: `${exact.n} sold same year, ±${EXACT.miles / 1000}k mi · avg ${fmtMoney(exact.meanProfit)}, ` +
+    why: `${exact.n} sold same year, ±${EXACT.miles / 1000}k mi${sourceNote(exact)} · avg ${fmtMoney(exact.meanProfit)}, ` +
          `median ${fmtMoney(exact.medProfit)} · ${exact.meanDays == null ? '—' : Math.round(exact.meanDays)}d on lot · ` +
          `${Math.round(exact.hitRate)}% cleared $1k, ${Math.round(exact.lossRate)}% lost money.${veto}${contextNote}`,
   }

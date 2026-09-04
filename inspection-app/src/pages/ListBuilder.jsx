@@ -4,7 +4,7 @@ import { Upload, Download, ArrowLeft, Copy, Check, AlertTriangle, RefreshCw, Ext
 import XLSXWriter from '../services/xlsxWriter'
 import { copyText } from '../native/clipboard'
 import {
-  parseCSV, parseCarmaxPdf, detectFormat, fetchSoldBook, cleanBook, indexBook, scoreRunList,
+  parseCSV, parseCarmaxPdf, detectFormat, fetchBooks, indexBook, scoreRunList,
   TARGET_PROFIT, TARGET_DAYS, DIRECT_URL,
 } from '../services/targetBuyList'
 import {
@@ -60,7 +60,11 @@ const MONEY_KEYS = new Set(['meanProfit', 'medProfit', 'medResale', 'auctionValu
 const INT_KEYS = new Set(['odo', 'meanDays', 'hitRate', 'n', 'pics', 'rank', 'year', 'exactN', 'exactDays', 'exactHit', 'exactLoss', 'compShared', 'sameYearN'])
 
 export default function ListBuilder() {
-  const [book, setBook] = useState(null) // { byMake, size, autoCount, storedCount, removed }
+  const [books, setBooks] = useState(null)      // Map<dealership, cleaned book>
+  // Which rooftops' history is allowed to score. Everything that loaded, until
+  // the user says otherwise — more evidence is the reason the partner book is
+  // here at all, and only ~30% of a run list has enough of ours to judge.
+  const [rooftops, setRooftops] = useState(null) // Set<dealership> | null
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
@@ -75,6 +79,10 @@ export default function ListBuilder() {
   // scored list out of Postgres. Whichever the user asked for last wins, and
   // that is always the upload.
   const uploaded = useRef(false)
+  // The parsed run list, kept so toggling a rooftop re-scores in place. Without
+  // it a toggle would leave last upload's verdicts on screen, computed against
+  // a book that is no longer selected — the most misleading state this page has.
+  const lastParsed = useRef(null) // { raw, fmt, fileName }
 
   // The book and the last list are independent pulls — the list doesn't wait on
   // six thousand sold cars to come back before it's on screen.
@@ -92,6 +100,7 @@ export default function ListBuilder() {
       ])
       setSaved(recent)
       if (last && !uploaded.current) {
+        lastParsed.current = null
         setResult(last)
         setOpened(last.opened)
         setFilter('ACTION')
@@ -109,6 +118,8 @@ export default function ListBuilder() {
     try {
       const list = await loadRunList(id)
       if (!list) throw new Error('That list is no longer saved.')
+      lastParsed.current = null   // scored rows only; nothing to re-score from
+      scoredKey.current = ''; setStaleForBook(false)
       setResult(list)
       setOpened(list.opened)
       setFilter('ACTION'); setOpenNote('')
@@ -128,21 +139,53 @@ export default function ListBuilder() {
   async function loadBook() {
     setLoading(true); setErr('')
     try {
-      const { rows, total, from, to } = await fetchSoldBook()
-      if (!rows.length) throw new Error('Sold book is empty — list_all_sold() returned nothing.')
-      const { book: cleaned, removedOutliers, removedPassthrough } = cleanBook(rows)
-      setBook({
-        byMake: indexBook(cleaned),
-        size: cleaned.length,
-        raw: total,
-        from,
-        to,
-        removedOutliers,
-        removedPassthrough,
-      })
+      const { byDealership, partnerError } = await fetchBooks()
+      if (!byDealership.size) throw new Error('Sold book is empty — list_all_sold() returned nothing.')
+      setBooks(byDealership)
+      setRooftops(new Set(byDealership.keys()))
+      // A partner book that will not load is a smaller book, not a broken page.
+      // Say so quietly rather than blocking a sale on it.
+      if (partnerError) setErr(`Partner sold book unavailable (${partnerError}) — scoring on our book alone.`)
     } catch (e) {
       setErr(e.message || String(e))
     } finally { setLoading(false) }
+  }
+
+  // The scoring index, rebuilt from whichever rooftops are selected. Each book
+  // was already cleaned against its OWN profit distribution in fetchBooks, so
+  // merging here is a concatenation and nothing more.
+  const book = useMemo(() => {
+    if (!books || !rooftops || !rooftops.size) return null
+    const picked = [...books.values()].filter((b) => rooftops.has(b.dealership))
+    if (!picked.length) return null
+    const rows = picked.flatMap((b) => b.rows)
+    const froms = picked.map((b) => b.from).filter(Boolean).sort()
+    const tos = picked.map((b) => b.to).filter(Boolean).sort()
+    return {
+      byMake: indexBook(rows),
+      size: rows.length,
+      from: froms[0] || null,
+      to: tos[tos.length - 1] || null,
+      removedOutliers: picked.flatMap((b) => b.removedOutliers),
+      removedPassthrough: picked.flatMap((b) => b.removedPassthrough),
+      parts: picked,
+    }
+  }, [books, rooftops])
+
+  // Identifies the book a set of verdicts was produced from.
+  const bookKey = useMemo(
+    () => (book ? `${book.size}:${[...(rooftops || [])].sort().join(',')}` : ''),
+    [book, rooftops])
+
+  function toggleRooftop(name) {
+    setRooftops((prev) => {
+      const next = new Set(prev)
+      // Never let the last one off. An empty book scores nothing, and a disabled
+      // Upload button with no explanation is not a useful way to say that.
+      if (next.has(name)) { if (next.size > 1) next.delete(name) }
+      else next.add(name)
+      return next
+    })
   }
 
   async function onFile(file) {
@@ -164,6 +207,9 @@ export default function ListBuilder() {
       if (!fmt) {
         throw new Error('Unrecognised run list. Supported: Edge Pipeline, ADESA, Manheim, CarMax.')
       }
+      lastParsed.current = { raw, fmt, fileName: file.name }
+      scoredKey.current = bookKey
+      setStaleForBook(false)
       const { scored, duplicatesDropped } = scoreRunList(raw, fmt, book.byMake)
       setResult({ scored, fmt, fileName: file.name, duplicatesDropped })
       setFilter('ACTION')
@@ -185,6 +231,33 @@ export default function ListBuilder() {
       setErr(e.message || String(e))
     } finally { setBusy('') }
   }
+
+  // Re-score when the rooftop selection changes.
+  //
+  // scoredKey records WHICH book the verdicts on screen were computed against,
+  // and is set by every path that scores — including the upload — so the effect
+  // fires on a real selection change and never on its own output. Inferring it
+  // instead would have this effect re-score immediately after an upload and
+  // overwrite the row saveRunList had just stamped with an id.
+  //
+  // Re-scoring needs the raw auction rows. A list restored from Postgres is
+  // stored already scored, so there is nothing to run again: rather than leave
+  // verdicts from a book that is no longer selected sitting there looking
+  // current, say the list has to be re-uploaded to follow the change.
+  const scoredKey = useRef('')
+  const [staleForBook, setStaleForBook] = useState(false)
+  useEffect(() => {
+    if (!book || !result) return
+    if (scoredKey.current === bookKey) return
+    if (!lastParsed.current) { setStaleForBook(true); return }
+    const { raw, fmt, fileName } = lastParsed.current
+    scoredKey.current = bookKey
+    setStaleForBook(false)
+    const { scored, duplicatesDropped } = scoreRunList(raw, fmt, book.byMake)
+    // No id: these verdicts are not what is saved under the one it had. This is
+    // a local what-if; the next upload saves for real.
+    setResult({ scored, fmt, fileName, duplicatesDropped })
+  }, [bookKey, book, result])
 
   const counts = useMemo(() => {
     if (!result) return null
@@ -330,18 +403,59 @@ export default function ListBuilder() {
           {loading ? (
             <span className="text-slate-400">Loading sold book…</span>
           ) : book ? (
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-              <span className="text-slate-300">
-                Sold book: <span className="font-semibold text-slate-100">{book.size.toLocaleString()}</span> cars
-              </span>
-              <span className="text-slate-500 text-xs">
-                {book.from} → {book.to} · {book.removedOutliers.length} outliers and{' '}
-                {book.removedPassthrough.length} pass-throughs removed
-              </span>
-              <button onClick={loadBook} className="text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1">
-                <RefreshCw size={12} /> refresh
-              </button>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+                <span className="text-slate-300">
+                  Sold book: <span className="font-semibold text-slate-100">{book.size.toLocaleString()}</span> cars
+                </span>
+                <span className="text-slate-500 text-xs">
+                  {book.from} → {book.to} · {book.removedOutliers.length} outliers and{' '}
+                  {book.removedPassthrough.length} pass-throughs removed
+                </span>
+                <button onClick={loadBook} className="text-xs text-blue-400 hover:text-blue-300 inline-flex items-center gap-1">
+                  <RefreshCw size={12} /> refresh
+                </button>
+              </div>
 
+              {/* Rooftop selector. Only when there IS more than one book — a
+                  single-store setup should look exactly as it always did. */}
+              {books && books.size > 1 && (
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
+                  <span className="text-xs text-slate-500">Score against</span>
+                  {[...books.values()].map((b) => {
+                    const on = rooftops?.has(b.dealership)
+                    return (
+                      <button key={b.dealership} onClick={() => toggleRooftop(b.dealership)}
+                        title={`${b.size.toLocaleString()} cars · ${b.from || '—'} → ${b.to || '—'}`}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors
+                          ${on
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                            : 'border-slate-700 text-slate-500 hover:text-slate-300'}`}>
+                        {on ? <Check size={11} /> : null}
+                        {b.dealership === 'carz' ? 'Carz Inc' : b.dealership}
+                        <span className="opacity-60">{b.size.toLocaleString()}</span>
+                      </button>
+                    )
+                  })}
+                  <span className="text-[11px] text-slate-600">
+                    a cohort's split shows in Why
+                  </span>
+                </div>
+              )}
+
+              {/* A saved list is stored scored. It cannot follow a change of
+                  book, and pretending otherwise is the whole failure mode this
+                  selector could introduce. */}
+              {staleForBook && (
+                <div className="flex items-start gap-2 text-xs text-amber-300/90 pt-1">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>
+                    These verdicts were scored against a different book. Saved lists are stored
+                    already scored — re-upload the run list to score it against the rooftops
+                    selected now.
+                  </span>
+                </div>
+              )}
             </div>
           ) : null}
         </div>
