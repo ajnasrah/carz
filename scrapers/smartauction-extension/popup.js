@@ -965,6 +965,26 @@
         loadBtn.addEventListener('click', () => autoLoadPhotosFromFolder(vin6, note));
       }
 
+      // Damages + tires off the group chat. This runs for ANY vin typed into
+      // the wizard, not only cars sitting in the ready-to-list tab: a car that
+      // is already live on SmartAuction still has a damage line worth reading,
+      // and once the queue has moved on this is the only way back to it.
+      const dmgNote = document.createElement('div');
+      dmgNote.style.cssText = 'font-size:10px;color:#666;margin-top:4px;';
+      dmgNote.textContent = 'Reading the damage notes…';
+      msgLookupResult.appendChild(dmgNote);
+
+      const chat = await fetchChatDamages(vin6);
+      chatTireGrades = chat.tires || null;
+      const addedFromChat = mergeChatDamages(chat.damages || []);
+      const tirePart = chatTireGrades
+        ? `tires ${['lf', 'rf', 'lr', 'rr'].map((k) => chatTireGrades.corners[k]).join('/')}`
+        : 'no tire info — SmartAuction will block the post until you enter them';
+      dmgNote.textContent = chat.reason
+        ? `Damage notes unavailable (${chat.reason}) — enter them by hand`
+        : `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the chat · ${tirePart}`;
+      dmgNote.style.color = chat.reason ? '#c62828' : (addedFromChat > 0 ? '#2e7d32' : '#666');
+
       saveSession();
     } catch (err) {
       msgLookupResult.textContent = 'Scraper server not running';
@@ -1917,27 +1937,6 @@
       lookupVIN();
       await lookupFromMessages();
 
-      // Damages straight off the group chat, before the photos start
-      // downloading — it's one request and it decides what the form says.
-      statusDiv.textContent = `Reading ${vin6}'s damage notes…`;
-      const chat = await fetchChatDamages(vin6);
-      chatTireGrades = chat.tires || null;
-      const addedFromChat = mergeChatDamages(chat.damages || []);
-      const tireNote = chatTireGrades
-        ? ` · tires ${['lf', 'rf', 'lr', 'rr'].map((k) => chatTireGrades.corners[k]).join('/')}`
-        : ' · no tire info — SmartAuction will block the post until you enter them';
-      if (addedFromChat > 0) {
-        statusDiv.textContent = `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the group chat${tireNote}`;
-        statusDiv.className = 'status success';
-      } else if (chat.reason) {
-        statusDiv.textContent = `Damage notes unavailable (${chat.reason}) — enter them by hand`;
-        statusDiv.className = 'status';
-      } else {
-        statusDiv.textContent = chat.text
-          ? 'No damages found in the group chat for this car'
-          : 'No damage notes posted for this car';
-        statusDiv.className = 'status';
-      }
 
       // Show the photo count up front, then download the images to a folder so
       // you can upload them to SmartAuction via Add Photos.
