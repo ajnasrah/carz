@@ -1823,6 +1823,64 @@
   }
 
   // Global action handler
+  // The damage line the lot tech typed in the Ready-to-Sell group, read into
+  // SmartAuction damage rows.
+  //
+  // It goes through carzinc.ai rather than straight to the model: the extension
+  // only holds the anon key, which can neither read wa_inbound_messages (RLS)
+  // nor spend the Anthropic key. Same x-listing-secret the photo upload uses,
+  // so there is no second key to set up.
+  //
+  // Never throws. A car with no damage line, an unset key, or a model outage
+  // just means you fill the damages by hand, exactly as before.
+  const DAMAGE_API = 'https://www.carzinc.ai/api/parse-damages';
+
+  async function fetchChatDamages(vin6) {
+    try {
+      const { listingUploadSecret } = await chrome.storage.local.get(['listingUploadSecret']);
+      if (!listingUploadSecret) return { damages: [], reason: 'no key' };
+      const res = await fetch(DAMAGE_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-listing-secret': listingUploadSecret },
+        body: JSON.stringify({ vin: vin6 }),
+      });
+      if (!res.ok) return { damages: [], reason: `HTTP ${res.status}` };
+      const out = await res.json();
+      return { damages: Array.isArray(out.damages) ? out.damages : [], text: out.text, cached: out.cached };
+    } catch (e) {
+      return { damages: [], reason: e.message };
+    }
+  }
+
+  // Merge them in beside the standards, normalising to SA values at import the
+  // way the Manheim CR path does — so the list shows the same value SA gets
+  // instead of the words the model chose. Panel+type is the identity: two
+  // scratches on the same bumper are one row, and a standard already covering
+  // that pair wins (it carries the wording the team wants on every car).
+  function mergeChatDamages(rows) {
+    if (typeof DamageMapper === 'undefined') return 0;
+    const seen = new Set(damages.map((d) => `${d.panel}|${d.type}`));
+    let added = 0;
+    for (const r of rows) {
+      const m = DamageMapper.mapForSA({ panel: r.panel, type: r.type, description: r.description || '' });
+      const panel = m?.panel || r.panel;
+      const type = m?.type || r.type;
+      const key = `${panel}|${type}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      damages.push({
+        panel, type,
+        description: m?.description || r.description || '',
+        severity: 'Minor', chargeable: 'No', estimatedCost: 0, photos: [],
+        category: INTERIOR_SA_PANELS.has(panel) ? 'Interior' : 'Exterior',
+        fromChat: true,
+      });
+      added++;
+    }
+    if (added > 0) { renderDamages(); saveSession(); }
+    return added;
+  }
+
   window._queueAction = async function(action, vin6) {
     if (action === 'list') {
       // Clear old car data first. Standards auto-applied for every new car.
@@ -1847,6 +1905,24 @@
       goToStep(1);
       lookupVIN();
       await lookupFromMessages();
+
+      // Damages straight off the group chat, before the photos start
+      // downloading — it's one request and it decides what the form says.
+      statusDiv.textContent = `Reading ${vin6}'s damage notes…`;
+      const chat = await fetchChatDamages(vin6);
+      const addedFromChat = mergeChatDamages(chat.damages || []);
+      if (addedFromChat > 0) {
+        statusDiv.textContent = `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the group chat — check them before you fill`;
+        statusDiv.className = 'status success';
+      } else if (chat.reason) {
+        statusDiv.textContent = `Damage notes unavailable (${chat.reason}) — enter them by hand`;
+        statusDiv.className = 'status';
+      } else {
+        statusDiv.textContent = chat.text
+          ? 'No damages found in the group chat for this car'
+          : 'No damage notes posted for this car';
+        statusDiv.className = 'status';
+      }
 
       // Show the photo count up front, then download the images to a folder so
       // you can upload them to SmartAuction via Add Photos.

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "build:native": "VITE_NATIVE_BUILD=1 vite build && cap sync",
     "ios": "npm run build:native && cap open ios",
-    "android": "npm run build:native && cap open android"
+    "android": "npm run build:native && cap open android",
+    "check:damage-vocab": "node scripts/check-damage-vocab.mjs"
   },
   "dependencies": {
     "@capacitor-community/speech-recognition": "^7.0.1",
