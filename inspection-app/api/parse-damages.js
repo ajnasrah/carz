@@ -80,8 +80,12 @@ async function latestDamageText(db, vin6) {
     .eq('vin6', vin6)
     .in('station', ['ready', 'seller'])
     .not('body', 'is', null)
+    // Not 25. A car's intake is one text message and forty photos, and the
+    // photo rows are the NEWER ones — 917397 has 42 rows and its damage line
+    // sat at position 26, so a 25-row window returned "nothing to read" for a
+    // car whose damage sentence was sitting right there.
     .order('received_at', { ascending: false })
-    .limit(25);
+    .limit(250);
   if (error) throw new Error(`wa_inbound_messages: ${error.message}`);
   const hit = (data || []).find((r) => readableDamageText(r.body));
   return hit ? hit.body.trim() : null;

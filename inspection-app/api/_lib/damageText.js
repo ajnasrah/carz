@@ -51,7 +51,11 @@ export const PANELS = [
   'tailgate', 'liftgate',
   'interior', 'dashboard', 'steering wheel', 'headliner', 'carpet', 'console',
   'driver seat', 'passenger seat', 'rear seat',
+  // All four door panels, not two. "All 4 interior door panels have scratches
+  // and scuffs" is a real and common line, and with only the fronts in the list
+  // it could only ever produce half the rows.
   'driver door panel', 'passenger door panel',
+  'rear door panel - left', 'rear door panel - right',
   'warning light',
 ];
 
