@@ -1816,8 +1816,17 @@
       config.log(`sa_sold_sales / GHL sync failed: ${e.message}`, 'warn');
     }
 
-    // Auto-mark active vehicles as listed in the queue
-    const activeVehicles = upserts.filter(u => u.sa_status === 'active');
+    // Auto-mark active vehicles as listed in the queue.
+    //
+    // Includes the ones Frazer has never heard of. Matching to a stock number is
+    // what the LOCATION upsert needs; the queue stamp keys on the last 6 alone,
+    // so skipping unmatched cars here meant a car live on SmartAuction that
+    // Frazer doesn't carry was never stamped listed and sat in the ready-to-list
+    // tab forever, asking to be listed a second time.
+    const activeVehicles = [
+      ...upserts.filter(u => u.sa_status === 'active'),
+      ...activeNotInInv,
+    ];
     if (activeVehicles.length > 0) {
       let listedCount = 0;
       try {

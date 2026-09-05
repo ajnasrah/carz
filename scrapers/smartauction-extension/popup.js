@@ -1209,7 +1209,14 @@
       }
     }
 
-    crossCheckData = { notOnSA, properlyListed, soldButOnSA, onSANotInv, readyToList, removedInInv };
+    // Keep the live-on-SA set around: the tabs below filter against it, and it
+    // is the only thing that actually knows what SmartAuction is showing right
+    // now. sa_queue_status is a stamp somebody wrote earlier, which is a
+    // different question and drifts from this one.
+    crossCheckData = {
+      notOnSA, properlyListed, soldButOnSA, onSANotInv, readyToList, removedInInv,
+      saActiveVins: new Set(saActive.keys()),
+    };
 
     // Update stats
     document.getElementById('statQueued').textContent = inventory.length;
@@ -1243,8 +1250,18 @@
     let cols = [];
 
     if (activeFilter === 'ready') {
-      // Show queued vehicles with photos from WhatsApp queue
-      items = queueData.filter(v => v.status === 'queued' && v.photo_count > 0) || [];
+      // Use the cross-checked list when we have one. runCrossCheck() already
+      // drops cars SmartAuction is showing LIVE, and this tab was throwing that
+      // away and re-filtering the raw queue — which is why cars that were
+      // already listed kept appearing here asking to be listed again.
+      //
+      // The raw queue can't answer the question on its own: a car is only
+      // stamped 'listed' if an upload matched it to Frazer inventory, so
+      // anything on SA that Frazer doesn't know about was never stamped at all
+      // and sat here forever. The SA feed is the authority; use it when loaded.
+      items = crossCheckData
+        ? (r.readyToList || [])
+        : queueData.filter(v => v.status === 'queued' && v.photo_count > 0) || [];
       cols = ['vin6', 'miles', 'condition', 'tire_condition', 'photo_count', 'notes'];
     } else if (activeFilter === 'hold') {
       // Show held cars from server queue
@@ -1254,8 +1271,12 @@
       items = r.removedInInv || [];
       cols = ['Stock #', 'Vehicle Year', 'Vehicle Make', 'Vehicle Model', 'Last 6 VIN', 'Mileage', 'Buyer'];
     } else if (activeFilter === 'not-on-sa') {
-      // Show all queued vehicles from WhatsApp
-      items = queueData.filter(v => v.status === 'queued') || [];
+      // Queued cars that are genuinely not on SmartAuction. Same correction as
+      // the Ready tab, minus the photo requirement — this tab exists to show
+      // what still owes a listing, and a car already live on SA does not.
+      const live = crossCheckData?.saActiveVins;
+      items = queueData.filter(v => v.status === 'queued'
+        && !(live && live.has((v.vin6 || '').toUpperCase()))) || [];
       cols = ['vin6', 'miles', 'condition', 'tire_condition', 'notes', 'message_date'];
     } else if (activeFilter === 'sold-on-sa') {
       // Show sold vehicles from WhatsApp queue
