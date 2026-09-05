@@ -63,9 +63,27 @@ export const TYPES = [
   'Hail Damage', 'Water Damage', 'Other',
 ];
 
+// Tires come back as a GRADE per corner, not a tread depth. The model's job is
+// reading English; what "good" is worth in 32nds is a commercial decision that
+// changes without the prompt changing (content.js TIRE_TREAD holds the
+// numbers). Same split as the damage vocabulary.
+const TIRE_GRADES = ['good', 'ok', 'bad'];
+
 const SCHEMA = {
   type: 'object',
   properties: {
+    tires: {
+      type: ['object', 'null'],
+      description: 'Null when the message says nothing about tires at all.',
+      properties: {
+        lf: { type: 'string', enum: TIRE_GRADES },
+        rf: { type: 'string', enum: TIRE_GRADES },
+        lr: { type: 'string', enum: TIRE_GRADES },
+        rr: { type: 'string', enum: TIRE_GRADES },
+      },
+      required: ['lf', 'rf', 'lr', 'rr'],
+      additionalProperties: false,
+    },
     damages: {
       type: 'array',
       items: {
@@ -87,7 +105,7 @@ const SCHEMA = {
       },
     },
   },
-  required: ['damages'],
+  required: ['tires', 'damages'],
   additionalProperties: false,
 };
 
@@ -124,6 +142,23 @@ CHOOSING THE TYPE:
   hail                           -> Hail Damage
 If a part is described as damaged but no word fits, use Other and say what it is in the description.
 
+TIRES ARE A SEPARATE FIELD, NOT A DAMAGE. The message usually carries a tire line — "Tires Good", "Tires bad except 1", "Back Tires Great Front poor". Never emit a damage row for it. Grade each of the four corners instead: lf (left/driver front), rf (right/passenger front), lr (left/driver rear), rr (right/passenger rear).
+
+  good  great, good, new, "new tires", "tires are great"
+  ok    ok, okay, medium, fair, "not bad", low, worn, "little worn", "almost bad"
+  bad   bad, poor, bald, "needs tires"
+
+The tire line often names an AXLE or a single corner, and the axle words are the opposite way round from the damage sentence — read it carefully:
+  "Tires Good on Rear Front Poor"    -> lr/rr good,  lf/rf bad
+  "Back Tires Great Front poor"      -> lr/rr good,  lf/rf bad
+  "Tires Good front Poor on back"    -> lf/rf good,  lr/rr bad
+  "Rear tires bald"                  -> lr/rr bad,   lf/rf ok
+  "Tires great except driver front tire. It's bald." -> lf bad, rf/lr/rr good
+
+WHEN ONLY SOME CORNERS ARE CALLED OUT, grade the rest 'ok' — not 'good'. "Front tires bad" tells you the fronts are bad and that he did not think the rears worth mentioning; it is not a measurement of the rears, and this number is shown to buyers. 'ok' is the honest floor.
+
+A condition grade is not a tire grade: in "7/10 tires is good" the 7/10 is the car and the tires are good. If the message says nothing about tires at all, return null for tires — do not guess.
+
 WHAT NOT TO DO. Do not invent damage the message doesn't state. Do not split one damage into several rows for emphasis. If the message says the car is clean, or names no damage at all, return an empty list. If a panel named isn't in the list you're allowed to use, pick the closest one that is, and keep the original words in the description.`;
 
 // Never throws: the damage read is an assist. A model outage must not stop
@@ -134,7 +169,7 @@ export async function readDamages(text) {
     return null;
   }
   const body = String(text || '').trim();
-  if (!body) return [];
+  if (!body) return { tires: null, damages: [] };
 
   try {
     const httpRes = await fetch(API, {
@@ -167,9 +202,18 @@ export async function readDamages(text) {
     try { parsed = JSON.parse(out); } catch { return null; }
     if (!Array.isArray(parsed?.damages)) return null;
 
+    const t = parsed.tires;
+    const tires = t && TIRE_GRADES.includes(t.lf) && TIRE_GRADES.includes(t.rf)
+      && TIRE_GRADES.includes(t.lr) && TIRE_GRADES.includes(t.rr)
+      ? { corners: { lf: t.lf, rf: t.rf, lr: t.lr, rr: t.rr } }
+      : null;
+
     // The enum is enforced server-side, but a row that somehow arrives outside
     // it would map to the wrong panel rather than fail loudly — drop it instead.
-    return parsed.damages.filter((d) => PANELS.includes(d.panel) && TYPES.includes(d.type));
+    return {
+      tires,
+      damages: parsed.damages.filter((d) => PANELS.includes(d.panel) && TYPES.includes(d.type)),
+    };
   } catch (e) {
     console.error('damageText failed:', e?.message || e);
     return null;

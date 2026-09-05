@@ -665,22 +665,7 @@ async function fillDamagesAndTires(data) {
     }
 
     // ── TIRES ──
-    addLog('Navigating to Tires...');
-    await clickSidebarLink('Tires');
-    await delay(500);
-
-    // Simple approach: just check the "certify tire info" checkbox
-    // This tells SA all tires meet minimum tread depth requirements
-    // Avoids complex accordion form filling that can cause page refresh
-    const certifyCb = document.getElementById('certify-tire-info');
-    if (certifyCb && !certifyCb.checked) {
-      certifyCb.click();
-      addLog('Checked tire certification checkbox', 'log-ok');
-    } else if (!certifyCb) {
-      addLog('Tire certification checkbox not found', 'log-warn');
-    } else {
-      addLog('Tire certification already checked', 'log-ok');
-    }
+    await fillTires(data.tireGrades);
 
     addLog('Fill complete!', 'log-ok');
     return { success: true, log };
@@ -827,21 +812,144 @@ async function fillFromInspection(payload) {
     }
   }
 
-  // ── Step 3: Tires certification ──
+  // ── Step 3: Tires ──
   try {
-    await clickSidebarLink('Tires');
-    await delay(500);
-    const certifyCb = document.getElementById('certify-tire-info');
-    if (certifyCb && !certifyCb.checked) {
-      certifyCb.click();
-      addLog('Checked tire certification', 'log-ok');
-    }
+    await fillTires(data.tireGrades);
   } catch (err) {
     addLog('Tires error: ' + err.message, 'log-warn');
   }
 
   addLog('Fill complete', 'log-ok');
   return { success: true, log, stockPhotoUrls: data.stockPhotoUrls };
+}
+
+// ───────────────────────────────────────────────────────────────────
+// ── TIRES ──
+// ───────────────────────────────────────────────────────────────────
+// SmartAuction's tire section is a five-row per-corner table (Left Front,
+// Right Front, Left Rear, Right Rear, Spare) hidden behind a certify checkbox.
+// Expanding a row reveals #manufacturer / #size / #tread / #comments /
+// #damageCost — and the ids are REUSED, because only one corner is open at a
+// time. So filling is expand -> set -> collapse -> next.
+//
+// CERTIFY AND THE TABLE ARE EXCLUSIVE. SA's own wording: "By checking this box,
+// you're certifying that the tires meet minimum tread depth measurements (at
+// least 4/32) ... Any previously entered values in the table will be
+// overridden." So we do one or the other, never both.
+//
+// THE BOX IS NEVER TICKED. It used to be ticked on every car, which is a
+// representation to buyers that all four tires measure 4/32 or better — made on
+// cars whose intake said "Tires bad except 1", "Rear tires bald", "tires almost
+// bad", and on cars nobody had looked at the tires on at all. We report the
+// real tread instead, per corner, from what the group actually said.
+//
+// When the intake says nothing about tires, this fills nothing and leaves the
+// box clear, so SA's own validation ("You must either provide all tire
+// information or check the box") stops the post until a human enters them. That
+// block is the point: a car with unknown tires should not go out claiming any.
+const TIRE_TREAD = {           // grade -> what SA gets. Owner's numbers, 2026-09-05.
+  good: { tread: '7/32' },
+  ok:   { tread: '4/32' },
+  bad:  { tread: '1/32', cost: '100', comments: 'worn' },
+};
+const TIRE_CORNERS = [
+  ['lf', 'Left Front'], ['rf', 'Right Front'],
+  ['lr', 'Left Rear'],  ['rr', 'Right Rear'],
+];
+
+// Open one corner's accordion row and wait for the shared fields to appear.
+async function openTireRow(label) {
+  const row = [...document.querySelectorAll('button,a,[role=button],summary,td,div,span')]
+    .find((e) => (e.textContent || '').replace(/\s+/g, ' ').trim() === label
+                 && e.offsetParent !== null);
+  if (!row) return false;
+  safeClick(row);
+  return await waitUntil(() => document.getElementById('tread'), { timeoutMs: 2500, intervalMs: 100 });
+}
+
+async function closeTireRow(label) {
+  const row = [...document.querySelectorAll('button,a,[role=button],summary,td,div,span')]
+    .find((e) => (e.textContent || '').replace(/\s+/g, ' ').trim() === label
+                 && e.offsetParent !== null);
+  if (row) { safeClick(row); await delay(250); }
+}
+
+function fillOpenTireRow(grade) {
+  const spec = TIRE_TREAD[grade];
+  if (!spec) return false;
+  const tread = document.getElementById('tread');
+  if (!tread) return false;
+  setSelectValue(tread, spec.tread);
+  // Only the bad grade carries these — a good tire has no cost and needs no note.
+  if (spec.comments) {
+    const c = document.getElementById('comments');
+    if (c) setFieldValue(c, spec.comments.slice(0, 50));   // maxlength is 50
+  }
+  if (spec.cost) {
+    const cost = document.getElementById('damageCost');
+    if (cost) setFieldValue(cost, spec.cost);
+  }
+  return true;
+}
+
+// `tireGrades`, not `tires` — popup.js already sends a legacy `data.tires`
+// array from an old manual tire-row UI that the filler never read. Reusing that
+// key would have made two different shapes mean the same thing.
+async function fillTires(tireGrades) {
+  addLog('Navigating to Tires...');
+  await clickSidebarLink('Tires');
+  await delay(500);
+
+  const certifyCb = document.getElementById('certify-tire-info');
+  const corners = tireGrades && tireGrades.corners;
+
+  // Nothing was reported about this car's tires. Do NOT certify — that is a
+  // claim about tread depth nobody measured. SA shows the car with no tire
+  // information, which is the honest state, and the log says so.
+  if (!corners) {
+    if (certifyCb && certifyCb.checked) { certifyCb.click(); }
+    addLog('No tire info in the intake message — left uncertified. Enter tires by hand.', 'log-warn');
+    return;
+  }
+
+  const grades = TIRE_CORNERS.map(([key]) => corners[key]).filter(Boolean);
+  if (grades.length !== 4) {
+    addLog(`Only ${grades.length}/4 corners reported — filling what we have`, 'log-warn');
+  }
+
+  // The table is only reachable with certify OFF, and ticking it later would
+  // wipe everything we are about to enter.
+  if (certifyCb && certifyCb.checked) {
+    certifyCb.click();
+    await waitUntil(() => document.querySelector('body'), { timeoutMs: 500, intervalMs: 100 });
+    await delay(300);
+  }
+
+  const allSame = grades.length === 4 && grades.every((g) => g === grades[0]);
+
+  if (allSame) {
+    // One fill plus "mark all the same" instead of four expansions.
+    if (await openTireRow('Left Front')) {
+      fillOpenTireRow(grades[0]);
+      const markAll = document.getElementById('mark-all-tires-the-same');
+      if (markAll && !markAll.checked) { markAll.click(); await delay(300); }
+      addLog(`All four tires ${grades[0]} — ${TIRE_TREAD[grades[0]].tread}`, 'log-ok');
+      await closeTireRow('Left Front');
+    } else {
+      addLog('Could not open the Left Front tire row', 'log-err');
+    }
+  } else {
+    for (const [key, label] of TIRE_CORNERS) {
+      const grade = corners[key];
+      if (!grade || !TIRE_TREAD[grade]) continue;
+      if (!(await openTireRow(label))) { addLog(`Could not open ${label}`, 'log-warn'); continue; }
+      fillOpenTireRow(grade);
+      addLog(`  ${label}: ${grade} — ${TIRE_TREAD[grade].tread}`, 'log-ok');
+      await closeTireRow(label);
+      await delay(200);
+    }
+  }
+  addLog('Tires filled from the group chat', 'log-ok');
 }
 
 // Make sure the blank add-damage form is visible; click "+ Add Damage Information" if needed.

@@ -10,6 +10,11 @@
   let exteriorPhotos = []; // { dataUrl, resizedBase64 } — walk-around, interior, tires
   let damagePhotos = [];   // { dataUrl, resizedBase64 } — close-ups + panel shots, sent to AI
   let damages = [];
+  // Per-corner tire grades read off the group chat ({corners:{lf,rf,lr,rr}}), or
+  // null when the intake said nothing about tires. Deliberately NOT folded into
+  // the legacy `tires` array gathered from the manual tire-row UI below — that
+  // is a different shape and the filler never read it.
+  let chatTireGrades = null;
   let inventory = [];
   let matchedVehicle = null;
   let manheimOdoSet = false; // true when odometer came from Manheim import
@@ -1838,17 +1843,20 @@
   async function fetchChatDamages(vin6) {
     try {
       const { listingUploadSecret } = await chrome.storage.local.get(['listingUploadSecret']);
-      if (!listingUploadSecret) return { damages: [], reason: 'no key' };
+      if (!listingUploadSecret) return { damages: [], tires: null, reason: 'no key' };
       const res = await fetch(DAMAGE_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-listing-secret': listingUploadSecret },
         body: JSON.stringify({ vin: vin6 }),
       });
-      if (!res.ok) return { damages: [], reason: `HTTP ${res.status}` };
+      if (!res.ok) return { damages: [], tires: null, reason: `HTTP ${res.status}` };
       const out = await res.json();
-      return { damages: Array.isArray(out.damages) ? out.damages : [], text: out.text, cached: out.cached };
+      return {
+        damages: Array.isArray(out.damages) ? out.damages : [],
+        tires: out.tires || null, text: out.text, cached: out.cached,
+      };
     } catch (e) {
-      return { damages: [], reason: e.message };
+      return { damages: [], tires: null, reason: e.message };
     }
   }
 
@@ -1884,7 +1892,10 @@
   window._queueAction = async function(action, vin6) {
     if (action === 'list') {
       // Clear old car data first. Standards auto-applied for every new car.
+      // chatTireGrades too — carrying the previous car's tires onto this one
+      // would report a tread depth nobody measured on it.
       damages = [];
+      chatTireGrades = null;
       addStandardDamages();
       renderDamages();
       exteriorPhotos = [];
@@ -1910,9 +1921,13 @@
       // downloading — it's one request and it decides what the form says.
       statusDiv.textContent = `Reading ${vin6}'s damage notes…`;
       const chat = await fetchChatDamages(vin6);
+      chatTireGrades = chat.tires || null;
       const addedFromChat = mergeChatDamages(chat.damages || []);
+      const tireNote = chatTireGrades
+        ? ` · tires ${['lf', 'rf', 'lr', 'rr'].map((k) => chatTireGrades.corners[k]).join('/')}`
+        : ' · no tire info — SmartAuction will block the post until you enter them';
       if (addedFromChat > 0) {
-        statusDiv.textContent = `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the group chat — check them before you fill`;
+        statusDiv.textContent = `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the group chat${tireNote}`;
         statusDiv.className = 'status success';
       } else if (chat.reason) {
         statusDiv.textContent = `Damage notes unavailable (${chat.reason}) — enter them by hand`;
@@ -4529,6 +4544,7 @@
       odometer: odometerInput.value.trim(),
       vehicle: matchedVehicle || null,
       tires,
+      tireGrades: chatTireGrades,
       damages: filledDamages,
       photoCount: allPhotos.length,
       photoVin6: vin6Input.value.trim(),

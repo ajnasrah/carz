@@ -7,7 +7,8 @@
 //   { "vin": "627672", "refresh": true }  → re-read it, ignoring the cache
 //   { "text": "Scratch on ..." }   → parse this text, no cache (for trying wording)
 //
-//   → { vin6, damages: [{ panel, type, description }], text, cached, model }
+//   → { vin6, damages: [{ panel, type, description }],
+//       tires: { corners: { lf, rf, lr, rr } } | null, text, cached, model }
 //
 // The extension holds the anon key, and anon cannot read wa_inbound_messages
 // (RLS) or spend the Anthropic key. So the read and the model call both happen
@@ -86,9 +87,12 @@ export default async function handler(request) {
   // Ad-hoc: parse the text we were handed and return. Nothing is read or
   // written, so this is the safe way to try a wording without touching a car.
   if (body?.text && !body?.vin) {
-    const damages = await readDamages(String(body.text));
-    if (damages === null) return json({ error: 'damage read failed' }, 502);
-    return json({ vin6: null, damages, text: String(body.text), cached: false, model: MODEL });
+    const read = await readDamages(String(body.text));
+    if (read === null) return json({ error: 'damage read failed' }, 502);
+    return json({
+      vin6: null, damages: read.damages, tires: read.tires,
+      text: String(body.text), cached: false, model: MODEL,
+    });
   }
 
   const vinRaw = String(body?.vin || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
@@ -103,25 +107,33 @@ export default async function handler(request) {
   let text;
   try { text = await latestDamageText(db, vin6); }
   catch (e) { return json({ error: String(e.message || e) }, 500); }
-  if (!text) return json({ vin6, damages: [], text: null, cached: false, model: MODEL });
+  if (!text) return json({ vin6, damages: [], tires: null, text: null, cached: false, model: MODEL });
 
   const sourceSha = await sha256Hex(text);
 
   if (!body?.refresh) {
     const { data: hit } = await db.from('intake_damages')
-      .select('damages, model').eq('vin6', vin6).eq('source_sha', sourceSha).maybeSingle();
-    if (hit) return json({ vin6, damages: hit.damages || [], text, cached: true, model: hit.model });
+      .select('damages, tires, model').eq('vin6', vin6).eq('source_sha', sourceSha).maybeSingle();
+    if (hit) {
+      return json({
+        vin6, damages: hit.damages || [], tires: hit.tires || null,
+        text, cached: true, model: hit.model,
+      });
+    }
   }
 
-  const damages = await readDamages(text);
-  if (damages === null) return json({ error: 'damage read failed' }, 502);
+  const read = await readDamages(text);
+  if (read === null) return json({ error: 'damage read failed' }, 502);
 
   // Best-effort cache. A write failure costs one re-parse next time, which is
   // not a reason to fail a read the caller already has an answer for.
   await db.from('intake_damages').upsert(
-    { vin6, source_sha: sourceSha, damages, model: MODEL, updated_at: new Date().toISOString() },
+    {
+      vin6, source_sha: sourceSha, damages: read.damages, tires: read.tires,
+      model: MODEL, updated_at: new Date().toISOString(),
+    },
     { onConflict: 'vin6' },
   ).then(() => {}, (e) => console.error('intake_damages cache write:', e?.message || e));
 
-  return json({ vin6, damages, text, cached: false, model: MODEL });
+  return json({ vin6, damages: read.damages, tires: read.tires, text, cached: false, model: MODEL });
 }
