@@ -853,6 +853,10 @@ const TIRE_TREAD = {           // grade -> what SA gets. Owner's numbers, 2026-0
   bad:  { tread: '1/32', cost: '100', comments: 'worn' },
 };
 const TIRE_SIZE = '13';
+// SA requires a manufacturer before it will accept a row, and nobody is reading
+// brands off sidewalls in a photo. "Other" is the honest answer — owner's call,
+// 2026-09-05 — rather than naming a brand we did not look at.
+const TIRE_MANUFACTURER = 'Other';
 const TIRE_CORNERS = [
   ['lf', 'Left Front'], ['rf', 'Right Front'],
   ['lr', 'Left Rear'],  ['rr', 'Right Rear'],
@@ -883,12 +887,21 @@ async function openTireRow(label) {
   return ok ? btn : null;
 }
 
-async function closeTireRow(btn) {
-  if (!btn) return;
+// Typing into the fields is not entering a tire. Each expanded row ends in an
+// "Add Changes" button and the row is DISCARDED without it — the values sit in
+// the inputs, the row collapses empty, and SA still says "you must either
+// provide all tire information or check the box". This is the same commit step
+// the damages section has; the tire step was missing it entirely, which is why
+// the form looked filled and saved nothing.
+async function commitTireRow() {
+  const btn = [...document.querySelectorAll('button')].find(
+    (b) => b.textContent.trim() === 'Add Changes' && b.offsetParent !== null);
+  if (!btn) return false;
   safeClick(btn);
-  // Only one corner's fields exist at a time — they share ids — so the next
-  // row must not be opened until these are gone.
-  await waitUntil(() => !document.getElementById('tread'), { timeoutMs: 2000, intervalMs: 100 });
+  // A committed row collapses, taking the shared ids with it. That is also the
+  // signal the next corner may be opened.
+  return await waitUntil(() => !document.getElementById('tread'),
+    { timeoutMs: 3000, intervalMs: 120 });
 }
 
 function fillOpenTireRow(grade) {
@@ -902,6 +915,8 @@ function fillOpenTireRow(grade) {
   // sidewall in a photo.
   const size = document.getElementById('size');
   if (size) setSelectValue(size, TIRE_SIZE);
+  const mfr = document.getElementById('manufacturer');
+  if (mfr) setSelectValue(mfr, TIRE_MANUFACTURER);
   // Only the bad grade carries these — a good tire has no cost and needs no note.
   if (spec.comments) {
     const c = document.getElementById('comments');
@@ -959,9 +974,12 @@ async function fillTires(tireGrades, addLog = () => {}) {
     if (btn) {
       fillOpenTireRow(grades[0]);
       const markAll = document.getElementById('mark-all-tires-the-same');
-      if (markAll && !markAll.checked) { markAll.click(); await delay(300); }
-      addLog(`All four tires ${grades[0]} — ${TIRE_TREAD[grades[0]].tread}, size ${TIRE_SIZE}`, 'log-ok');
-      await closeTireRow(btn);
+      if (markAll && !markAll.checked) { markAll.click(); await delay(400); }
+      const saved = await commitTireRow();
+      addLog(saved
+        ? `All four tires ${grades[0]} — ${TIRE_TREAD[grades[0]].tread}, size ${TIRE_SIZE}`
+        : `Filled Left Front but "Add Changes" did not commit — check the row`,
+        saved ? 'log-ok' : 'log-warn');
     } else {
       addLog('Could not open the Left Front tire row', 'log-err');
     }
@@ -972,9 +990,10 @@ async function fillTires(tireGrades, addLog = () => {}) {
       const btn = await openTireRow(label);
       if (!btn) { addLog(`Could not open ${label}`, 'log-warn'); continue; }
       fillOpenTireRow(grade);
-      addLog(`  ${label}: ${grade} — ${TIRE_TREAD[grade].tread}, size ${TIRE_SIZE}`, 'log-ok');
-      await closeTireRow(btn);
-      await delay(200);
+      const saved = await commitTireRow();
+      addLog(`  ${label}: ${grade} — ${TIRE_TREAD[grade].tread}, size ${TIRE_SIZE}`
+        + (saved ? '' : ' (Add Changes did not commit)'), saved ? 'log-ok' : 'log-warn');
+      await delay(250);
     }
   }
   addLog('Tires filled from the group chat', 'log-ok');
