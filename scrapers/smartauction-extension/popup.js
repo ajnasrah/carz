@@ -977,13 +977,14 @@
       const chat = await fetchChatDamages(vin6);
       chatTireGrades = chat.tires || null;
       const addedFromChat = mergeChatDamages(chat.damages || []);
-      const tirePart = chatTireGrades
-        ? `tires ${['lf', 'rf', 'lr', 'rr'].map((k) => chatTireGrades.corners[k]).join('/')}`
-        : 'no tire info — SmartAuction will block the post until you enter them';
-      dmgNote.textContent = chat.reason
-        ? `Damage notes unavailable (${chat.reason}) — enter them by hand`
-        : `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the chat · ${tirePart}`;
-      dmgNote.style.color = chat.reason ? '#c62828' : (addedFromChat > 0 ? '#2e7d32' : '#666');
+      if (chat.reason) {
+        dmgNote.textContent = `Damage notes unavailable (${chat.reason}) — enter them by hand`;
+        dmgNote.style.color = '#c62828';
+      } else {
+        dmgNote.textContent = `${addedFromChat} damage${addedFromChat === 1 ? '' : 's'} read from the chat`;
+        dmgNote.style.color = addedFromChat > 0 ? '#2e7d32' : '#666';
+      }
+      renderTirePicker(msgLookupResult);
 
       saveSession();
     } catch (err) {
@@ -1848,6 +1849,65 @@
   }
 
   // Global action handler
+  // Tires the group never mentioned.
+  //
+  // SmartAuction will not accept a post with an empty tire table and the
+  // certify box clear — deliberately, and we no longer tick that box for a car
+  // nobody looked at. But telling somebody "go read the chat again" when the
+  // chat never said is a dead end, so a human sets it here instead. Two clicks,
+  // and the person clicking is the one making the representation to the buyer,
+  // which is where that decision belongs.
+  const TIRE_PRESETS = [
+    ['All good', { lf: 'good', rf: 'good', lr: 'good', rr: 'good' }],
+    ['All ok',   { lf: 'ok',   rf: 'ok',   lr: 'ok',   rr: 'ok' }],
+    ['All bad',  { lf: 'bad',  rf: 'bad',  lr: 'bad',  rr: 'bad' }],
+    ['Front bad', { lf: 'bad',  rf: 'bad',  lr: 'good', rr: 'good' }],
+    ['Rear bad',  { lf: 'good', rf: 'good', lr: 'bad',  rr: 'bad' }],
+  ];
+
+  function renderTirePicker(host) {
+    const old = host.querySelector('.tire-picker');
+    if (old) old.remove();
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tire-picker';
+    wrap.style.cssText = 'font-size:10px;margin-top:5px;padding-top:5px;border-top:1px solid #eee;';
+
+    const line = document.createElement('div');
+    line.style.cssText = 'margin-bottom:3px;';
+    wrap.appendChild(line);
+
+    const paint = () => {
+      if (chatTireGrades) {
+        const c = chatTireGrades.corners;
+        line.innerHTML = `<span class="lookup-label">Tires:</span> `
+          + `LF ${c.lf} · RF ${c.rf} · LR ${c.lr} · RR ${c.rr}`;
+        line.style.color = '#2e7d32';
+      } else {
+        line.textContent = 'No tire info in the chat — SmartAuction will not accept the post until you set them:';
+        line.style.color = '#c62828';
+      }
+    };
+    paint();
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:3px;flex-wrap:wrap;';
+    for (const [label, corners] of TIRE_PRESETS) {
+      const b = document.createElement('button');
+      b.className = 'btn btn-small';
+      b.textContent = label;
+      b.style.cssText = 'margin:0;padding:2px 7px;font-size:10px;background:#546e7a;';
+      b.addEventListener('click', () => {
+        chatTireGrades = { corners: { ...corners }, source: 'manual' };
+        paint();
+        saveSession();
+      });
+      row.appendChild(b);
+    }
+    wrap.appendChild(row);
+    host.appendChild(wrap);
+  }
+
   // The damage line the lot tech typed in the Ready-to-Sell group, read into
   // SmartAuction damage rows.
   //

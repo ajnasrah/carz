@@ -852,26 +852,43 @@ const TIRE_TREAD = {           // grade -> what SA gets. Owner's numbers, 2026-0
   ok:   { tread: '4/32' },
   bad:  { tread: '1/32', cost: '100', comments: 'worn' },
 };
+const TIRE_SIZE = '13';
 const TIRE_CORNERS = [
   ['lf', 'Left Front'], ['rf', 'Right Front'],
   ['lr', 'Left Rear'],  ['rr', 'Right Rear'],
 ];
 
-// Open one corner's accordion row and wait for the shared fields to appear.
-async function openTireRow(label) {
-  const row = [...document.querySelectorAll('button,a,[role=button],summary,td,div,span')]
-    .find((e) => (e.textContent || '').replace(/\s+/g, ' ').trim() === label
-                 && e.offsetParent !== null);
-  if (!row) return false;
-  safeClick(row);
-  return await waitUntil(() => document.getElementById('tread'), { timeoutMs: 2500, intervalMs: 100 });
+// The chevron that opens one corner.
+//
+// It is `button.expand-btn`, and it lives inside `td.cdk-column-tire-toggle` in
+// an Angular CDK table row. Matching elements by their text instead returns the
+// TD first — it has the same text as the button it contains — and clicking a
+// table cell does nothing at all. That is why the rows never opened and every
+// tire came back blank.
+function tireExpandButton(label) {
+  const row = [...document.querySelectorAll('tr.cdk-row, tr')].find((tr) =>
+    (tr.textContent || '').replace(/\s+/g, ' ').trim().startsWith(label));
+  if (!row) return null;
+  return row.querySelector('button.expand-btn') || row.querySelector('button');
 }
 
-async function closeTireRow(label) {
-  const row = [...document.querySelectorAll('button,a,[role=button],summary,td,div,span')]
-    .find((e) => (e.textContent || '').replace(/\s+/g, ' ').trim() === label
-                 && e.offsetParent !== null);
-  if (row) { safeClick(row); await delay(250); }
+// Returns the button so the caller can collapse the exact row it opened, rather
+// than looking it up again once the DOM has moved underneath it.
+async function openTireRow(label) {
+  const btn = tireExpandButton(label);
+  if (!btn) return null;
+  safeClick(btn);
+  const ok = await waitUntil(() => document.getElementById('tread'),
+    { timeoutMs: 2500, intervalMs: 100 });
+  return ok ? btn : null;
+}
+
+async function closeTireRow(btn) {
+  if (!btn) return;
+  safeClick(btn);
+  // Only one corner's fields exist at a time — they share ids — so the next
+  // row must not be opened until these are gone.
+  await waitUntil(() => !document.getElementById('tread'), { timeoutMs: 2000, intervalMs: 100 });
 }
 
 function fillOpenTireRow(grade) {
@@ -880,6 +897,11 @@ function fillOpenTireRow(grade) {
   const tread = document.getElementById('tread');
   if (!tread) return false;
   setSelectValue(tread, spec.tread);
+  // Wheel diameter. Owner's call, 2026-09-05: 13 on everything. It is a
+  // required part of "all tire information" and is not worth reading off the
+  // sidewall in a photo.
+  const size = document.getElementById('size');
+  if (size) setSelectValue(size, TIRE_SIZE);
   // Only the bad grade carries these — a good tire has no cost and needs no note.
   if (spec.comments) {
     const c = document.getElementById('comments');
@@ -929,12 +951,13 @@ async function fillTires(tireGrades) {
 
   if (allSame) {
     // One fill plus "mark all the same" instead of four expansions.
-    if (await openTireRow('Left Front')) {
+    const btn = await openTireRow('Left Front');
+    if (btn) {
       fillOpenTireRow(grades[0]);
       const markAll = document.getElementById('mark-all-tires-the-same');
       if (markAll && !markAll.checked) { markAll.click(); await delay(300); }
-      addLog(`All four tires ${grades[0]} — ${TIRE_TREAD[grades[0]].tread}`, 'log-ok');
-      await closeTireRow('Left Front');
+      addLog(`All four tires ${grades[0]} — ${TIRE_TREAD[grades[0]].tread}, size ${TIRE_SIZE}`, 'log-ok');
+      await closeTireRow(btn);
     } else {
       addLog('Could not open the Left Front tire row', 'log-err');
     }
@@ -942,10 +965,11 @@ async function fillTires(tireGrades) {
     for (const [key, label] of TIRE_CORNERS) {
       const grade = corners[key];
       if (!grade || !TIRE_TREAD[grade]) continue;
-      if (!(await openTireRow(label))) { addLog(`Could not open ${label}`, 'log-warn'); continue; }
+      const btn = await openTireRow(label);
+      if (!btn) { addLog(`Could not open ${label}`, 'log-warn'); continue; }
       fillOpenTireRow(grade);
-      addLog(`  ${label}: ${grade} — ${TIRE_TREAD[grade].tread}`, 'log-ok');
-      await closeTireRow(label);
+      addLog(`  ${label}: ${grade} — ${TIRE_TREAD[grade].tread}, size ${TIRE_SIZE}`, 'log-ok');
+      await closeTireRow(btn);
       await delay(200);
     }
   }
