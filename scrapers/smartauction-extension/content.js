@@ -966,7 +966,18 @@ async function fillTires(tireGrades, addLog = () => {}) {
     await delay(300);
   }
 
-  const allSame = grades.length === 4 && grades.every((g) => g === grades[0]);
+  // "Mark all the tires the same" is a shortcut, and only for a grade that
+  // carries nothing per-corner. `bad` brings a damage description and a cost
+  // with it, and SA does not propagate those across the other three — tick it
+  // on a bad tire and you get one entered corner and three blanks. So the
+  // shortcut is limited to grades with no per-corner detail; everything else
+  // gets all four rows entered properly.
+  const spec0 = TIRE_TREAD[grades[0]] || {};
+  const uniform = grades.length === 4 && grades.every((g) => g === grades[0]);
+  const allSame = uniform && !spec0.comments && !spec0.cost;
+  if (uniform && !allSame) {
+    addLog(`All four tires ${grades[0]} — entering each corner (a ${grades[0]} tire carries its own description and cost)`);
+  }
 
   if (allSame) {
     // One fill plus "mark all the same" instead of four expansions.
