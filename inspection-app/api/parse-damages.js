@@ -57,8 +57,23 @@ async function sha256Hex(s) {
 // derived, and until 2026-09-05 it was sliced to 100 characters, so every note
 // in the queue is cut mid-word. `body` is what the tech actually sent.
 //
-// Newest first, and only messages long enough to be a damage report — a bare
-// "086793" or a photo caption is the same car and carries nothing to read.
+// Newest first, skipping messages that carry nothing to read — a bare "917397",
+// a photo caption, an odometer on its own line.
+//
+// The test is WORDS, not length. A 40-character floor looked reasonable and
+// would have thrown away "Front bumper scratched" (22) while keeping a stock
+// number typed twice. So: at least three whitespace-separated tokens, and at
+// least two of them mostly letters — that is the shape of a sentence about a
+// car, and no shape a VIN or a mileage can take.
+function readableDamageText(body) {
+  const t = String(body || '').trim();
+  if (!t) return false;
+  const tokens = t.split(/\s+/);
+  if (tokens.length < 3) return false;
+  const wordy = tokens.filter((w) => (w.match(/[A-Za-z]/g) || []).length >= 3);
+  return wordy.length >= 2;
+}
+
 async function latestDamageText(db, vin6) {
   const { data, error } = await db.from('wa_inbound_messages')
     .select('body, received_at')
@@ -68,7 +83,7 @@ async function latestDamageText(db, vin6) {
     .order('received_at', { ascending: false })
     .limit(25);
   if (error) throw new Error(`wa_inbound_messages: ${error.message}`);
-  const hit = (data || []).find((r) => String(r.body || '').trim().length >= 40);
+  const hit = (data || []).find((r) => readableDamageText(r.body));
   return hit ? hit.body.trim() : null;
 }
 
