@@ -665,7 +665,7 @@ async function fillDamagesAndTires(data) {
     }
 
     // ── TIRES ──
-    await fillTires(data.tireGrades);
+    await fillTires(data.tireGrades, addLog);
 
     addLog('Fill complete!', 'log-ok');
     return { success: true, log };
@@ -814,7 +814,7 @@ async function fillFromInspection(payload) {
 
   // ── Step 3: Tires ──
   try {
-    await fillTires(data.tireGrades);
+    await fillTires(data.tireGrades, addLog);
   } catch (err) {
     addLog('Tires error: ' + err.message, 'log-warn');
   }
@@ -917,7 +917,11 @@ function fillOpenTireRow(grade) {
 // `tireGrades`, not `tires` — popup.js already sends a legacy `data.tires`
 // array from an old manual tire-row UI that the filler never read. Reusing that
 // key would have made two different shapes mean the same thing.
-async function fillTires(tireGrades) {
+// `addLog` is a LOCAL closure inside each fill function — `const addLog = ... =>
+// log.push(...)` over that call's own log array — not a global. Referencing it
+// from out here threw "addLog is not defined" and took the whole fill down with
+// it before the tires were touched. It comes in as an argument instead.
+async function fillTires(tireGrades, addLog = () => {}) {
   addLog('Navigating to Tires...');
   await clickSidebarLink('Tires');
   await delay(500);
