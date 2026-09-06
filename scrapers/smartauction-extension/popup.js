@@ -101,6 +101,34 @@
     return results.filter(Boolean).length;
   }
 
+  // ready_to_sell_queue() returns every intake car — 466 rows, 104KB, ~350ms
+  // warm and over two seconds cold. The shim below asked for all of it FOUR
+  // separate times per interaction: /queue, /queue/stats, and /vehicle/<vin6>
+  // twice, the last of which downloads the whole thing to find() one row.
+  // Pressing List paid for that repeatedly before a single photo moved.
+  //
+  // One fetch, shared. The TTL is short because the queue changes when you
+  // press the buttons on it — and those paths clear the cache outright, so the
+  // window only ever covers reads inside one interaction.
+  const QUEUE_TTL_MS = 20_000;
+  let queueCache = { at: 0, rows: null, inflight: null };
+
+  function invalidateQueueCache() { queueCache = { at: 0, rows: null, inflight: null }; }
+
+  async function queueRows() {
+    const fresh = queueCache.rows && (Date.now() - queueCache.at) < QUEUE_TTL_MS;
+    if (fresh) return queueCache.rows;
+    // Collapse concurrent callers onto one request rather than starting four.
+    if (queueCache.inflight) return queueCache.inflight;
+    queueCache.inflight = sbRpc('ready_to_sell_queue')
+      .then((rows) => {
+        queueCache = { at: Date.now(), rows: rows || [], inflight: null };
+        return queueCache.rows;
+      })
+      .catch((e) => { queueCache.inflight = null; throw e; });
+    return queueCache.inflight;
+  }
+
   async function serverFetch(url) {
     const after = url.replace(SCRAPER_URL, '');
     const path = after.split('?')[0];
@@ -110,7 +138,7 @@
     if (path === '/status') return ok({ online: true, connected: true });
 
     if (path === '/queue/all' || path === '/queue') {
-      const rows = (await sbRpc('ready_to_sell_queue')) || [];
+      const rows = await queueRows();
       const vehicles = (path === '/queue' ? rows.filter((r) => r.status === 'queued') : rows)
         .map((r) => ({ vin6: r.vin6, miles: r.miles, condition: r.condition, notes: r.notes,
                        photo_count: r.photo_count, status: r.status, message_date: r.message_date,
@@ -118,7 +146,7 @@
       return ok({ vehicles, updated_at: new Date().toISOString() });
     }
     if (path === '/queue/stats') {
-      const rows = (await sbRpc('ready_to_sell_queue')) || [];
+      const rows = await queueRows();
       const stats = { queued: 0, listed: 0, sold: 0, removed: 0, hold: 0 };
       rows.forEach((r) => { if (stats[r.status] != null) stats[r.status]++; });
       return ok(stats);
@@ -139,17 +167,32 @@
         const urls = ((await sbRpc('ready_to_sell_photos', { p_vin6: vin6 })) || []).map((r) => r.url);
         const limit = parseInt(query.get('limit') || String(urls.length), 10);
         const offset = parseInt(query.get('offset') || '0', 10);
-        const photos = [];
-        for (const u of urls.slice(offset, offset + limit)) {
-          try {
-            const blob = await fetch(u).then((r) => r.blob());
-            const dataUrl = await new Promise((res2) => { const fr = new FileReader(); fr.onload = () => res2(fr.result); fr.readAsDataURL(blob); });
-            photos.push({ dataUrl, base64: String(dataUrl).split(',')[1] });
-          } catch { /* skip unreadable */ }
-        }
-        return ok({ photos });
+        // Six at a time, not one. These were fetched and base64'd strictly in
+        // series — forty photos at ~150ms each is six seconds of staring at a
+        // spinner for work that is entirely network-bound. Order is preserved
+        // by writing into a slot rather than pushing, because the gallery order
+        // is meaningful.
+        const wanted = urls.slice(offset, offset + limit);
+        const slots = new Array(wanted.length).fill(null);
+        const CONCURRENCY = 6;
+        let next = 0;
+        const worker = async () => {
+          for (;;) {
+            const i = next++;
+            if (i >= wanted.length) return;
+            try {
+              const blob = await fetch(wanted[i]).then((r) => r.blob());
+              const dataUrl = await new Promise((res2) => {
+                const fr = new FileReader(); fr.onload = () => res2(fr.result); fr.readAsDataURL(blob);
+              });
+              slots[i] = { dataUrl, base64: String(dataUrl).split(',')[1] };
+            } catch { /* skip unreadable */ }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, wanted.length) }, worker));
+        return ok({ photos: slots.filter(Boolean) });
       }
-      const rows = (await sbRpc('ready_to_sell_queue')) || [];
+      const rows = await queueRows();
       const v = rows.find((r) => (r.vin6 || '').toUpperCase() === vin6);
       return v ? ok({ vin6: v.vin6, miles: v.miles, condition: v.condition, notes: v.notes, photo_count: v.photo_count })
                : { ok: false, status: 404, json: async () => ({}) };
@@ -168,6 +211,7 @@
         p_vin6: markVin.length > 6 ? markVin.slice(-6) : markVin,
         p_status: map[mark[1]],
       });
+      invalidateQueueCache();   // the thing we just cached is now wrong
       return ok({ success: true });
     }
     return { ok: false, status: 404, json: async () => ({}) };

@@ -9,6 +9,23 @@
 // "List Uploader" <details> block (luSaInput, luManheimInput, etc.).
 
 (function () {
+
+// Run `fn` over `items` with at most `limit` in flight, summing what each
+// returns. Order does not matter for these — they are independent writes — so
+// a worker pool rather than a batched map.
+async function mapLimit(items, limit, fn) {
+  let next = 0, total = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      try { total += (await fn(items[i])) || 0; } catch { /* one failure is not the batch */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return total;
+}
+
   'use strict';
 
   // RFC4180-ish CSV parser that handles quoted fields with commas, embedded
@@ -1830,17 +1847,21 @@
     if (activeVehicles.length > 0) {
       let listedCount = 0;
       try {
-        for (const vehicle of activeVehicles) {
+        // Eight at a time, and one summary line instead of one per car.
+        //
+        // This ran strictly in series — a round trip per vehicle, and an active
+        // SmartAuction feed is well over a hundred of them, so the upload spent
+        // half a minute here on requests that have nothing to do with each
+        // other. The per-car log line cost too: config.log writes to the DOM,
+        // so a hundred of them is a hundred synchronous re-renders inside the
+        // loop that is already blocking the popup.
+        listedCount = await mapLimit(activeVehicles, 8, async (vehicle) => {
           const last6 = vehicle.vin.slice(-6);
           const response = await fetch(`${config.supabaseUrl}/rest/v1/rpc/sa_queue_sync_status`, { method: 'POST', headers: { apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_vin6: last6, p_status: 'listed' }) });
-          if (response.ok) {
-            listedCount++;
-            config.log(`Marked ${last6} as listed on SmartAuction`, 'ok');
-          }
-          // Skip 404s silently - vehicle not in queue
-        }
+          return response.ok ? 1 : 0;   // 404 = not in the queue, nothing to say
+        });
         if (listedCount > 0) {
-          config.log(`Auto-marked ${listedCount} vehicles as listed in queue`, 'ok');
+          config.log(`Auto-marked ${listedCount} of ${activeVehicles.length} vehicles as listed in queue`, 'ok');
         }
       } catch (err) {
         config.log(`Error marking vehicles as listed: ${err.message}`, 'warn');
