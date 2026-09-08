@@ -1677,6 +1677,19 @@ async function mapLimit(items, limit, fn) {
         sa_updated_at: now,
         updated_at: now,
       };
+      // A car SmartAuction is showing ACTIVE is not sold, whatever this row
+      // used to say. Re-stocking carries the previous sale forward — 08-264-26
+      // inherited 07-010-26's 2026-07-25 sale, 08-175-26 inherited
+      // 06-296-26's — and marketplace_listings() drops anything marked sold, so
+      // both cars were live on SA with the auction ending that afternoon and
+      // invisible on our own site. Clearing it here is the same correction
+      // sa_queue_sync_status makes for the intake queue, on the other table.
+      if (saStatus === 'active') {
+        row.sold_on = null;
+        row.sold_at = null;
+        row.sold_price = null;
+        row.buyer_name = null;
+      }
       // SmartAuction is just the online listing platform
       // Physical location is set separately when uploading UAX/ADESA run lists
       if (saStatus === 'sold') {
