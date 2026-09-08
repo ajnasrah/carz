@@ -2300,7 +2300,33 @@
         damages.push({ panel, type: dtype });
       }
     }
-    return { info, damages };
+    return { info, damages, tires: parseSummaryTires(text) };
+  }
+
+  // The scraper writes a "TIRES AND WHEELS" block into _summary.txt, one line
+  // per corner: "Left Front: 7/32\" (245/65R17)". Nothing on this side ever
+  // read it — the CR import took damages and stopped — so a condition report
+  // carrying four measured tread depths still reached SmartAuction with an
+  // empty tire table.
+  //
+  // A measured tread is passed through as-is rather than collapsed to a grade;
+  // somebody put a gauge on that tire and 6/32 is not 7/32.
+  function parseSummaryTires(text) {
+    if (!text || !/TIRES AND WHEELS/i.test(text)) return null;
+    const block = text.slice(text.search(/TIRES AND WHEELS/i));
+    const KEY = {
+      'left front': 'lf', 'right front': 'rf',
+      'left rear': 'lr', 'right rear': 'rr',
+    };
+    const corners = {};
+    for (const line of block.split('\n').slice(0, 12)) {
+      const m = line.match(/^\s*(Left Front|Right Front|Left Rear|Right Rear)\s*:\s*(\d{1,2}\/\d{1,2})/i);
+      if (m) corners[KEY[m[1].toLowerCase()]] = m[2].replace(/\/\d+$/, '/32');
+    }
+    // Anything short of all four goes back as null. A part-filled table is
+    // rejected by SA the same as an empty one, and guessing the corners nobody
+    // measured is the thing this whole change exists to stop.
+    return ['lf', 'rf', 'lr', 'rr'].every((k) => corners[k]) ? { corners } : null;
   }
 
   async function loadManheimFiles(fileList) {
@@ -2332,7 +2358,10 @@
       // Parse summary
       if (summaryFile) {
         const text = await summaryFile.text();
-        const { info, damages: parsedDamages } = parseManheimSummary(text);
+        const { info, damages: parsedDamages, tires: crTires } = parseManheimSummary(text);
+        // Measured beats inferred: a CR's gauge readings replace whatever the
+        // group chat said about this car's tires.
+        if (crTires) chatTireGrades = { ...crTires, source: 'condition report' };
 
         if (info.vin) {
           vin6Input.value = info.vin;

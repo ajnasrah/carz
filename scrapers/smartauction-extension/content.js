@@ -904,8 +904,18 @@ async function commitTireRow() {
     { timeoutMs: 3000, intervalMs: 120 });
 }
 
+// A corner is either a GRADE from the group chat ('good'/'ok'/'bad') or a
+// MEASURED tread off a condition report ('7/32'). The CR wins wherever it
+// exists — somebody put a gauge on that tire, which beats reading an adjective
+// out of a sentence.
+function treadSpec(value) {
+  const v = String(value || '');
+  if (/^\d{1,2}\/32$/.test(v)) return { tread: v, measured: true };
+  return TIRE_TREAD[v] || null;
+}
+
 function fillOpenTireRow(grade) {
-  const spec = TIRE_TREAD[grade];
+  const spec = treadSpec(grade);
   if (!spec) return false;
   const tread = document.getElementById('tread');
   if (!tread) return false;
@@ -972,7 +982,7 @@ async function fillTires(tireGrades, addLog = () => {}) {
   // on a bad tire and you get one entered corner and three blanks. So the
   // shortcut is limited to grades with no per-corner detail; everything else
   // gets all four rows entered properly.
-  const spec0 = TIRE_TREAD[grades[0]] || {};
+  const spec0 = treadSpec(grades[0]) || {};
   const uniform = grades.length === 4 && grades.every((g) => g === grades[0]);
   const allSame = uniform && !spec0.comments && !spec0.cost;
   if (uniform && !allSame) {
@@ -988,7 +998,7 @@ async function fillTires(tireGrades, addLog = () => {}) {
       if (markAll && !markAll.checked) { markAll.click(); await delay(400); }
       const saved = await commitTireRow();
       addLog(saved
-        ? `All four tires ${grades[0]} — ${TIRE_TREAD[grades[0]].tread}, size ${TIRE_SIZE}`
+        ? `All four tires ${grades[0]} — ${treadSpec(grades[0]).tread}, size ${TIRE_SIZE}`
         : `Filled Left Front but "Add Changes" did not commit — check the row`,
         saved ? 'log-ok' : 'log-warn');
     } else {
@@ -997,12 +1007,12 @@ async function fillTires(tireGrades, addLog = () => {}) {
   } else {
     for (const [key, label] of TIRE_CORNERS) {
       const grade = corners[key];
-      if (!grade || !TIRE_TREAD[grade]) continue;
+      if (!grade || !treadSpec(grade)) continue;
       const btn = await openTireRow(label);
       if (!btn) { addLog(`Could not open ${label}`, 'log-warn'); continue; }
       fillOpenTireRow(grade);
       const saved = await commitTireRow();
-      addLog(`  ${label}: ${grade} — ${TIRE_TREAD[grade].tread}, size ${TIRE_SIZE}`
+      addLog(`  ${label}: ${grade} — ${treadSpec(grade).tread}, size ${TIRE_SIZE}`
         + (saved ? '' : ' (Add Changes did not commit)'), saved ? 'log-ok' : 'log-warn');
       await delay(250);
     }
