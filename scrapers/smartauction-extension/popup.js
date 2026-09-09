@@ -18,6 +18,8 @@
   let inventory = [];
   let matchedVehicle = null;
   let manheimOdoSet = false; // true when odometer came from Manheim import
+  let chatOdoSet = false;    // true when odometer came from the group chat
+  let typedVin6 = '';        // last 6 the user typed, to notice a car change
   let queueData = [];
   let activeFilter = 'ready';
   let saListings = [];
@@ -960,7 +962,7 @@
       // set on VIN match. Respect a Manheim listing odometer if one was set.
       if (miles && !manheimOdoSet) {
         const numericMiles = miles.replace(/[^0-9]/g, '');
-        if (numericMiles) odometerInput.value = numericMiles;
+        if (numericMiles) { odometerInput.value = numericMiles; chatOdoSet = true; }
       }
 
       // Auto-fill tire condition if we can map it
@@ -1581,10 +1583,11 @@
           if (tgRes.ok) {
             const tg = await tgRes.json();
             const tgMiles = (tg.miles != null ? String(tg.miles) : '').replace(/[^0-9]/g, '');
-            if (tgMiles) odo = tgMiles;
+            if (tgMiles) { odo = tgMiles; chatOdoSet = true; }
           }
         } catch { /* Telegram queue unavailable — keep inspection mileage */ }
         odometerInput.value = odo;
+        typedVin6 = (last6 || '').toUpperCase();
 
         // Matched vehicle — used by fillVINOnPage as a fallback VIN source
         matchedVehicle = {
@@ -2832,6 +2835,19 @@
     inventoryInput.addEventListener('change', handleInventoryUpload);
     vin6Input.addEventListener('input', () => {
       const val = vin6Input.value.trim().toUpperCase();
+      // Typing a different VIN is moving to a different car. The odometer in
+      // the box, and the flags recording where it came from, belong to the
+      // previous car. Carrying them over listed car B at car A's mileage
+      // whenever the new car had nothing to fill the box with, and left one
+      // Manheim import blocking the chat odometer on every car after it — the
+      // flag only ever cleared on the New Vehicle button, which nobody presses.
+      const last6 = val.length > 6 ? val.slice(-6) : val;
+      if (last6 !== typedVin6) {
+        typedVin6 = last6;
+        manheimOdoSet = false;
+        chatOdoSet = false;
+        odometerInput.value = '';
+      }
       if (val.length > 6) {
         // Full VIN entered — show it and use last 6 for inventory lookup
         fullVinDisplay.value = val;
@@ -4043,8 +4059,12 @@
       fullVinDisplay.value = fullVin;
       fullVinRow.style.display = 'block';
 
-      // Auto-fill odometer from inventory — but don't override Manheim listing miles
-      if (mileage && !manheimOdoSet) {
+      // Auto-fill odometer from inventory — but don't override a Manheim
+      // listing odometer, or the group chat's, which is read off the dash at
+      // intake and beats Frazer's last-known number. lookupFromMessages() is
+      // async, so without this flag the two writes raced: on a warm queue cache
+      // the chat landed first and this line put the stale Frazer miles back.
+      if (mileage && !manheimOdoSet && !chatOdoSet) {
         odometerInput.value = String(mileage).replace(/[^0-9]/g, '');
       }
 
@@ -4057,6 +4077,9 @@
       const list = matches.slice(0, 3).map(v => `${v.year} ${v.make} ${v.model}`).join(', ');
       const extra = matches.length > 3 ? ` +${matches.length - 3} more` : '';
       inventoryMatch.innerHTML = `<span class="match-multi">${matches.length} matches: ${list}${extra}</span>`;
+      // Ambiguous in the spreadsheet, not ambiguous in the queue — it keys on
+      // the last 6, which is the same for every one of these matches.
+      if (input.length >= 6) lookupFromMessages();
     } else {
       // No local match — try Supabase
       lookupVINFromSupabase(input, isFullVin);
@@ -4091,6 +4114,13 @@
         vehicleDisplay.value = '';
         if (!isFullVin) fullVinRow.style.display = 'none';
         inventoryMatch.innerHTML = '<span class="match-none">Not found in inventory</span>';
+        // Not in Frazer is not "nothing to read". Frazer is a manual export, so
+        // a car bought and photographed this week is routinely absent from it —
+        // and a car already sold has been removed from it. Both are still in the
+        // intake queue with the odometer, the damage line and the photos on
+        // them. Returning here is why the odometer never arrived for those cars:
+        // the ONLY caller of the chat lookup was the inventory-match path.
+        if (last6.length >= 6) lookupFromMessages();
         return;
       }
 
