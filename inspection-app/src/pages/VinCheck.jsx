@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useRef, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Search, Loader, Package, ChevronRight } from 'lucide-react'
 import { searchVin } from '../services/vinSearch'
 import VehicleQuickInfo from '../components/VehicleQuickInfo'
@@ -9,6 +9,7 @@ import VehicleQuickInfo from '../components/VehicleQuickInfo'
 // and shares searchVin + VehicleQuickInfo so the two never drift.
 export default function VinCheck() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
@@ -27,6 +28,26 @@ export default function VinCheck() {
     setNotFound(!r)
     setLoading(false)
   }
+
+  // Deep link: /vin-check?vin=… fills the box AND runs the search, so a link
+  // from another screen (Sold Reports hands one over for a VIN that isn't in
+  // the sold book) lands on the answer rather than on a prefilled form.
+  //
+  // The work is pushed off the effect's synchronous body on purpose — setting
+  // state there is a cascading render, and the whole point of this effect is
+  // the async lookup that follows it. Keyed on the query string alone: `lookup`
+  // is redefined every render, so depending on it would re-search on each one.
+  const deepLinkVin = (searchParams.get('vin') || '').toUpperCase().replace(/[^A-HJ-NPR-Z0-9-]/g, '')
+  useEffect(() => {
+    if (deepLinkVin.length < 4) return
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (cancelled) return
+      setInput(deepLinkVin)
+      lookup(deepLinkVin)
+    })
+    return () => { cancelled = true }
+  }, [deepLinkVin])
 
   async function handleSearch(e) {
     e?.preventDefault()

@@ -15,6 +15,17 @@ export async function fetchSoldWithBuyers() {
       // Through the RPC, not the table: `sold`'s cost columns are no longer
       // granted to anyone, and this applies the sold-reports check per caller.
       .rpc('sold_rows'),
+    1000,
+    // Three at a time, not selectAll's default eight. Every .range() page
+    // re-executes sold_rows() over all ~6,600 sold cars and then throws away
+    // everything but its own thousand, so a batch of eight is eight full scans
+    // racing each other — and this page starts fetchSoldClean() at the same
+    // time, for sixteen. pg_stat_statements had these two statements pinned at
+    // 7.9s against an 8s statement_timeout, mean 2.4-4.4s, while the same
+    // queries run serially in 26-180ms. The work was never the problem; the
+    // pile-up was. Three keeps most of the round-trip saving and takes the
+    // contention off the instance.
+    3,
   )
   return all.map((r) => ({
     ...r,
@@ -146,6 +157,8 @@ export async function fetchSoldClean() {
       .from('sold_clean')
       .select('stock_number, year, make, model, mileage, sale_date, days_on_lot, original_cost, total_cost, sales_price, profit')
       .order('sale_date', { ascending: false }),
+    1000,
+    3,  // see fetchSoldWithBuyers — the two of these run together
   )
   return all.map((r) => ({
     ...r,
@@ -490,4 +503,65 @@ export function profitColor(p) {
   if (p >= 0)   return '#facc15'   // yellow-400
   if (p >= -400) return '#fb923c'  // orange-400
   return '#ef4444'                 // red-500
+}
+
+// ── VIN lookup ──
+// The VIN lives ONLY on the raw `sold` table (reached through `sold_rows()` —
+// see fetchSoldWithBuyers). `sold_clean` carries no VIN at all, so anything
+// VIN-keyed has to search the buyer rows and join sold_clean back by stock
+// number for mileage / original cost.
+
+// Split whatever got pasted into VIN tokens. The crew pastes all sorts of
+// shapes — one VIN per line, a comma list, a run-list row with the VIN buried
+// in it — so split on everything that isn't a VIN character (I, O and Q are not
+// VIN characters either) and keep the tokens long enough to mean something.
+// 4 is the same floor the global VIN search uses.
+export function parseVinTokens(raw) {
+  return [...new Set(
+    String(raw || '')
+      .toUpperCase()
+      .split(/[^A-HJ-NPR-Z0-9]+/)
+      .filter((t) => t.length >= 4),
+  )]
+}
+
+// One token against one sold row. A full 17 is matched EXACTLY — never as a
+// tail — because at that length there is no ambiguity to resolve. Anything
+// shorter is a tail match, since a short VIN in this business is always the
+// last N off a windshield or a key tag, never the middle of one.
+//
+// A short token CAN collide across cars (which is why run-list uploads refuse
+// last-6 entirely — see the ingest path). Here that's fine and deliberate:
+// this is a human reading a list of results, not a job writing to a row, so
+// every colliding car is shown and the person picks.
+function vinMatchesToken(row, token) {
+  const vin = String(row.vehicle_vin || '').toUpperCase()
+  if (token.length === 17) return vin === token
+  if (vin && vin.endsWith(token)) return true
+  const last6 = String(row.last_6_vin || '').toUpperCase()
+  return Boolean(last6) && (last6 === token || last6.endsWith(token))
+}
+
+// Search sold rows by a list of VIN tokens.
+// Returns { rows, misses }: every sold row any token matched (deduped, newest
+// sale first) and the tokens that matched nothing. `misses` is the half of the
+// answer that a filtered list can't show — "these three of the twenty I pasted
+// never sold" is usually the reason for pasting them in the first place.
+//
+// One VIN can legitimately return several rows: a car we bought back and sold
+// again has a sold row per sale, and both are true.
+export function searchSoldByVins(rows, tokens) {
+  if (!tokens.length) return { rows: [], misses: [] }
+  const hit = new Set()
+  const misses = []
+  for (const t of tokens) {
+    let any = false
+    for (let i = 0; i < rows.length; i++) {
+      if (vinMatchesToken(rows[i], t)) { hit.add(i); any = true }
+    }
+    if (!any) misses.push(t)
+  }
+  const found = [...hit].map((i) => rows[i])
+  found.sort((a, b) => String(b.sale_date || '').localeCompare(String(a.sale_date || '')))
+  return { rows: found, misses }
 }

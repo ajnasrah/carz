@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X, Copy, Check, Lock, Clock, Send } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Download, TrendingUp, TrendingDown, Award, AlertTriangle, Target, Ban, ChevronDown, ChevronRight, Filter, X, Copy, Check, Lock, Clock, Send, Search } from 'lucide-react'
 import {
   BarChart, Bar, Line, ComposedChart, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Cell, Legend,
@@ -20,6 +20,7 @@ import {
   groupByMake, groupByModel, findModelSweetSpot,
   groupByYearBand, groupByMileageBand, findSweetSpots,
   fetchSoldWithBuyers, groupByBuyer, groupByField, dailyProfitByBuyer,
+  parseVinTokens, searchSoldByVins,
   fmt, profitColor, PERIODS,
 } from '../services/soldReports'
 import XLSXWriter from '../services/xlsxWriter'
@@ -30,12 +31,17 @@ import {
   requestSoldReportsAccess, fetchMyAccessRequest,
 } from '../services/soldReportAccess'
 import CompareBox from '../components/CompareBox'
+import HistoryButton from '../components/HistoryButton'
 import InventoryVsSold from '../components/InventoryVsSold'
 import BuySellPace from '../components/BuySellPace'
 import { compareGroups, COMPARE_COLUMNS } from '../services/compare'
 
 // How many cars the By Profit list paints before you ask for more.
 const CARS_PAGE = 150
+
+// And how many a VIN search paints. Lower on purpose: a VIN search that comes
+// back with hundreds of cars is a half-typed VIN, not an answer.
+const VIN_RESULTS_MAX = 60
 
 // One row per car, in the order you'd read it: what it was, how long it sat,
 // who moved it, what it cost, what it made. Buyer/vendor/customer come off the
@@ -83,6 +89,10 @@ export default function SoldReports({ embedded = false }) {
   const [lastRefreshed, setLastRefreshed] = useState(null)
   
   // Filter states
+  // VIN search deliberately sits OUTSIDE the filter set below: it answers
+  // "what happened to this car", which the period and make/model pickers can
+  // only get in the way of. See vinResults.
+  const [vinQuery, setVinQuery] = useState('')
   const [filterMake, setFilterMake] = useState('')
   const [filterModel, setFilterModel] = useState('')
   const [filterBuyer, setFilterBuyer] = useState('')
@@ -135,7 +145,15 @@ export default function SoldReports({ embedded = false }) {
       if (!cancelled) setLoading(false)
     }
     load()
-    const interval = setInterval(load, 5 * 60 * 1000)  // 5 minutes
+    // Every five minutes was re-pulling ~6,600 sold rows twice over for as long
+    // as the tab existed, whether or not anyone was looking at it — and
+    // pg_stat_statements counted these statements in the thousands of calls.
+    // A profit report on cars that already sold does not go stale in five
+    // minutes. Fifteen, and only while the tab is actually on screen; opening
+    // it again reloads on mount anyway.
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') load()
+    }, 15 * 60 * 1000)
     return () => {
       cancelled = true
       clearInterval(interval)
@@ -198,6 +216,29 @@ export default function SoldReports({ embedded = false }) {
     () => new Map(buyerRows.map((b) => [b.stock_number, b])),
     [buyerRows],
   )
+
+  // The other direction: sold_clean rows by stock number, so a VIN hit (which
+  // can only come off the raw sold rows) can pick up mileage and original cost.
+  const cleanByStock = useMemo(
+    () => new Map(allRows.map((r) => [r.stock_number, r])),
+    [allRows],
+  )
+
+  // ── VIN search ──
+  // Searching by VIN means one thing: this exact car, whenever it sold. So it
+  // runs against the WHOLE sold book — not filterByPeriod's slice and not the
+  // make/model/buyer/vendor pickers. A search that answered "not sold" because
+  // the period happened to say MTD would be worse than no search at all.
+  const vinTokens = useMemo(() => parseVinTokens(vinQuery), [vinQuery])
+  const vinSearching = vinTokens.length > 0
+  const vinResults = useMemo(() => {
+    if (!vinSearching) return null
+    const { rows, misses } = searchSoldByVins(buyerRows, vinTokens)
+    return {
+      cars: rows.map((b) => ({ b, clean: cleanByStock.get(b.stock_number) || null })),
+      misses,
+    }
+  }, [vinSearching, vinTokens, buyerRows, cleanByStock])
 
   // Every car the filters are showing, worst deal first. A car with no profit
   // recorded sorts to the BOTTOM rather than the top — unknown is not the same
@@ -398,6 +439,57 @@ export default function SoldReports({ embedded = false }) {
   return (
     <div className="page pb-12">
       {!embedded && <Header navigate={navigate} />}
+
+      {/* VIN search. Its own bar above the filters, because it is not one: it
+          reads the whole sold book regardless of the period and the pickers
+          below, and while it's active it replaces the report with the answer. */}
+      <div className="bg-slate-800 rounded-lg p-3 mb-3">
+        <div className="flex items-center gap-2">
+          <Search className="text-emerald-400 shrink-0" size={16} />
+          <input
+            value={vinQuery}
+            onChange={(e) => setVinQuery(e.target.value)}
+            placeholder="Find sold cars by VIN — full VIN, last 6, or paste a list"
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="characters"
+            className="flex-1 min-w-0 bg-transparent text-white text-xs font-mono placeholder:font-sans placeholder:text-slate-500 focus:outline-none"
+          />
+          {vinQuery && (
+            <button
+              onClick={() => setVinQuery('')}
+              title="Clear VIN search"
+              className="p-1 rounded text-slate-400 hover:text-white shrink-0"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        {vinSearching && (
+          <p className="text-[10px] text-slate-500 mt-1.5">
+            {vinTokens.length} {vinTokens.length === 1 ? 'VIN' : 'VINs'} · searching all time,
+            ignoring the period and filters
+          </p>
+        )}
+      </div>
+
+      {/* VIN results. Deliberately not the tab views: an average and a
+          %-winners bar over three cars says nothing, so this shows each car
+          whole instead — what it cost, what it made, who sold it. */}
+      {vinSearching && vinResults && (
+        <VinResults
+          results={vinResults}
+          copiedVin={copiedVin}
+          onCopyVin={copyVin}
+          navigate={navigate}
+        />
+      )}
+
+      {/* Everything below is the report proper. A VIN search stands in for it
+          rather than filtering it: the period pills, the filter pickers and the
+          eight aggregate tabs all answer questions about a POPULATION, and the
+          population here is the one car you typed. */}
+      {!vinSearching && (<>
 
       {/* Filter Panel */}
       <div className="bg-slate-800 rounded-lg p-3 mb-4">
@@ -1128,6 +1220,8 @@ export default function SoldReports({ embedded = false }) {
       </Section>
       )}
 
+      </>)}
+
       <p className="text-[10px] text-slate-600 text-center mt-6">
         Source: <code>sold_clean</code> view · IQR-trimmed · {fmt.count(allRows.length)} rows
         {lastRefreshed && (
@@ -1139,6 +1233,135 @@ export default function SoldReports({ embedded = false }) {
 }
 
 // ── Sub-components ──
+
+// The answer to "did this car sell, and what did it do". One card per sold
+// row — not per VIN — because a car we bought back and sold again has a sold
+// row per sale and both of them are true.
+function VinResults({ results, copiedVin, onCopyVin, navigate }) {
+  const { cars, misses } = results
+  // A short tail typed mid-VIN can match a lot of cars. Paint a readable number
+  // of them and say how many are behind it, rather than 400 cards deep.
+  const shown = cars.slice(0, VIN_RESULTS_MAX)
+  return (
+    <div className="mb-4 space-y-2">
+      {shown.map(({ b, clean }) => {
+        const vin = b.vehicle_vin || ''
+        const last6 = b.last_6_vin || vin.slice(-6)
+        // Two sales of the same car share a stock number, so the copy tick and
+        // the React key both have to carry the sale date as well.
+        const id = `${b.stock_number}-${b.sale_date || ''}`
+        const profit = b.profit_on_sale ?? clean?.profit ?? null
+        const cost = b.total_cost ?? clean?.total_cost ?? null
+        const title = [b.vehicle_year ?? clean?.year, b.vehicle_make ?? clean?.make, b.vehicle_model ?? clean?.model]
+          .filter(Boolean).join(' ') || b.stock_number
+        return (
+          <div key={id} className="rounded-lg bg-slate-900/60 border border-emerald-500/20 p-3">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-white font-bold text-sm truncate">{title}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  #{b.stock_number}
+                  {b.sale_date && ` · sold ${b.sale_date}`}
+                  {b.days_on_lot != null && ` · ${b.days_on_lot}d on lot`}
+                  {clean?.mileage != null && ` · ${fmt.count(clean.mileage)} mi`}
+                  {b.type_of_sale && ` · ${b.type_of_sale}`}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                {/* No profit recorded is its own state — not a zero, and not a
+                    loss. Same rule the By Profit list follows. */}
+                <p className={`text-sm font-bold ${profit == null ? 'text-slate-600' : profitColor(profit)}`}>
+                  {profit == null ? 'no profit data' : fmt.money(profit)}
+                </p>
+                <p className="text-[10px] text-slate-500">profit</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 mt-2">
+              {(vin || last6) && (
+                <button
+                  onClick={() => onCopyVin(vin || last6, id)}
+                  title={vin ? `Copy ${vin}` : 'Copy VIN'}
+                  className="inline-flex items-center gap-1 px-1.5 py-1 rounded bg-slate-800 text-[10px] font-mono text-slate-300 active:bg-slate-700"
+                >
+                  {copiedVin === id
+                    ? <><Check size={10} className="text-emerald-400" /> copied</>
+                    : <><Copy size={10} /> {vin || last6}</>}
+                </button>
+              )}
+              <HistoryButton
+                stockNumber={b.stock_number}
+                vin={vin || null}
+                size={12}
+                label="History"
+                className="px-1.5 py-1 rounded bg-slate-800 text-slate-300 active:bg-slate-700 inline-flex items-center gap-1 text-[10px]"
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5 mt-2">
+              <MoneyTile label="Cost" value={cost} />
+              <MoneyTile label="Recon" value={b.added_costs} />
+              <MoneyTile label="Sold for" value={b.sales_price} />
+            </div>
+
+            {(b.buyer || b.vendor || b.customer) && (
+              <p className="text-[10px] text-slate-500 mt-2 truncate">
+                {[b.buyer && `Buyer: ${b.buyer}`, b.vendor && `Vendor: ${b.vendor}`,
+                  b.customer && b.customer !== 'UNKNOWN' && `Customer: ${b.customer}`]
+                  .filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </div>
+        )
+      })}
+
+      {/* The misses are half the answer. Pasting twenty VINs is usually a way
+          of asking which ones we still have — so say it plainly, and hand each
+          one to the VIN check, which looks past the sold book. */}
+      {misses.length > 0 && (
+        <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
+          <p className="text-xs font-semibold text-slate-300">
+            {misses.length} not in the sold book
+          </p>
+          <p className="text-[10px] text-slate-500 mt-0.5">
+            Still in inventory, or never ours. Tap one to check where it is.
+          </p>
+          <div className="flex flex-wrap gap-1 mt-2">
+            {misses.map((t) => (
+              <button
+                key={t}
+                onClick={() => navigate(`/vin-check?vin=${encodeURIComponent(t)}`)}
+                className="px-1.5 py-1 rounded bg-slate-800 text-[10px] font-mono text-slate-400 active:bg-slate-700"
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {cars.length > shown.length && (
+        <p className="text-[10px] text-slate-500 text-center">
+          {cars.length - shown.length} more match — type more of the VIN to narrow it.
+        </p>
+      )}
+
+      {cars.length === 0 && misses.length === 0 && (
+        <p className="text-xs text-slate-500 text-center py-3">Type a VIN or a last 6.</p>
+      )}
+    </div>
+  )
+}
+
+function MoneyTile({ label, value }) {
+  return (
+    <div className="rounded bg-slate-800/60 px-2 py-1.5">
+      <p className="text-[9px] text-slate-500 uppercase tracking-wide">{label}</p>
+      <p className="text-xs font-bold text-white">{fmt.money(value)}</p>
+    </div>
+  )
+}
+
 // What someone without access sees instead of the sold book: what this page is,
 // and one button that asks for it.
 //
