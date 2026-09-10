@@ -17,15 +17,14 @@ export const PRIMARY_LINKS = [
   { to: '/', emoji: '🏠', label: 'Home', end: true },
   { to: '/lot', emoji: '🚶', label: 'Walk Lot' },
   { to: '/inventory', emoji: '🚗', label: 'Cars' },
-  // "Sold Cars", not "Sold" — the car list, sitting directly under Cars because
-  // it's the other half of the same question: what we're holding, and what left.
-  //
-  // The name matters. The phone's bottom bar has a 💰 Sold tab that goes to
-  // /sold-reports, so for a long time two different pages were both called
-  // "Sold" with the same icon, and tapping the one in this list got you
-  // somewhere you didn't ask for. Two destinations may share a subject; they
-  // may not share a name.
-  { to: '/sold', emoji: '💰', label: 'Sold Cars' },
+  // 💰 Sold is the SAME destination here as it is on the phone's bottom bar:
+  // /sold-reports, the profit trends. It used to be the car list, and renaming
+  // it "Sold Cars" was not enough — on a desktop the rail is always open, so the
+  // money icon under Cars is the one you reach for when you want the sold
+  // numbers, and it kept landing you on a table of cars instead. The phone and
+  // the rail now agree on where 💰 Sold goes, which is the only version of this
+  // nobody has to learn.
+  { to: '/sold-reports', emoji: '💰', label: 'Sold' },
   { to: '/body-shop', emoji: '🎨', label: 'Body Shop' },
   // Next to the body shop because they're the same question asked of the two
   // shops: what's in there, and how long have we owned it.
@@ -37,9 +36,11 @@ export const PRIMARY_LINKS = [
   { to: '/marketplace', emoji: '🏪', label: 'Marketplace' },
   { to: '/front-lot-aging', emoji: '⏰', label: 'Lot Aging' },
   { to: '/buyer-match', emoji: '🎯', label: 'Buyers' },
-  // Two different things with similar names, both kept: the profit trends on
-  // what sold, and the reports hub. The bottom bar's Sold tab is the former.
-  { to: '/sold-reports', emoji: '📉', label: 'Sold Reports' },
+  // The car list itself — every car that left, searchable, with its history.
+  // It lives down here with the other look-it-up screens rather than under Cars,
+  // and it is called a list because that is what distinguishes it from the
+  // numbers: two destinations may share a subject, they may not share a name.
+  { to: '/sold', emoji: '🗂️', label: 'Sold Car List' },
   { to: '/reports', emoji: '📈', label: 'Reports' },
 ]
 
