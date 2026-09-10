@@ -33,6 +33,13 @@
 
 const API = 'https://api.anthropic.com/v1/messages';
 
+// The caller (api/parse-damages.js) runs with maxDuration 120. Stop a little
+// short of that: a model call that never comes back should surface as this
+// function's own "damage read failed" — which the extension prints — and not as
+// the platform killing the request out from under it, which is what the lister
+// saw when this ran on the edge and got 25 seconds.
+const READ_TIMEOUT_MS = 105_000;
+
 // The natural-language half of DamageMapper.PANEL_MAP (scrapers/
 // smartauction-extension/lib/damage-mapper.js). Its Manheim abbreviations
 // ("lf door", "r qtr panel") are deliberately left out — those exist to read
@@ -183,6 +190,7 @@ export async function readDamages(text) {
         'x-api-key': process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
       body: JSON.stringify({
         model: 'claude-opus-5',
         max_tokens: 4000,
