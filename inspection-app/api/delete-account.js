@@ -132,9 +132,17 @@ export default async function handler(req, res) {
   const summary = await purge.json().catch(() => null)
 
   // Step 2 — the login itself.
+  //
+  // should_soft_delete:false is stated rather than left to the default, for two
+  // reasons. GoTrue's own SDK always sends this body on this call
+  // (GoTrueAdminApi.deleteUser), so a bodyless DELETE is an untested shape, and
+  // this is the request that must not fail — step 1 has already run by now. And
+  // a soft delete is precisely the thing App Review rejected: the row would
+  // survive, banned rather than gone. Say which one we mean.
   const del = await fetch(`${process.env.SUPABASE_URL}/auth/v1/admin/users/${user.id}`, {
     method: 'DELETE',
     headers: svcHeaders(),
+    body: JSON.stringify({ should_soft_delete: false }),
   })
   if (!del.ok) {
     const detail = await del.text().catch(() => '')

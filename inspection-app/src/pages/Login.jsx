@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
-import { takeAccountDeletedFlag } from '../services/account'
+import { clearAccountDeletedFlag, readAccountDeletedFlag } from '../services/account'
 
 export default function Login() {
   const [phone, setPhone] = useState('')
@@ -13,7 +13,10 @@ export default function Login() {
   // is gone by then, along with the session and the profile. Reading it in the
   // initializer (and clearing it there) means it shows once and never comes
   // back on a later visit to the login screen.
-  const [justDeleted] = useState(takeAccountDeletedFlag)
+  const [justDeleted] = useState(readAccountDeletedFlag)
+  // Cleared once it has been shown, so it doesn't reappear on the next visit to
+  // the login screen.
+  useEffect(() => { if (justDeleted) clearAccountDeletedFlag() }, [justDeleted])
 
   function formatPhone(value) {
     const digits = value.replace(/\D/g, '')

@@ -21,12 +21,18 @@ export function markAccountDeleted() {
   try { sessionStorage.setItem(DELETED_FLAG, '1') } catch { /* private mode */ }
 }
 
-export function takeAccountDeletedFlag() {
-  try {
-    const was = sessionStorage.getItem(DELETED_FLAG) === '1'
-    if (was) sessionStorage.removeItem(DELETED_FLAG)
-    return was
-  } catch { return false }
+// Reading and clearing are separate on purpose. Doing both in one call, from a
+// useState initializer, breaks under StrictMode: React deliberately invokes
+// initializers twice in development, the first call eats the flag and the
+// second returns false, so the confirmation never appears while you're working
+// on it. Read is pure; the clearing happens in an effect, where running twice
+// costs nothing.
+export function readAccountDeletedFlag() {
+  try { return sessionStorage.getItem(DELETED_FLAG) === '1' } catch { return false }
+}
+
+export function clearAccountDeletedFlag() {
+  try { sessionStorage.removeItem(DELETED_FLAG) } catch { /* private mode */ }
 }
 
 // Deletes the account for good and resolves with what went (see

@@ -37,8 +37,23 @@ export default function Account() {
   const phone = profile?.phone || user?.phone || ''
   const isBuyer = profile?.account_type === 'buyer'
   const accountLabel = isBuyer ? 'Buyer' : 'Employee'
-  const roleLabel = isAdminProfile(profile) ? 'Admin' : (profile?.role || '').replace(/_/g, ' ')
   const armed = typed.trim().toUpperCase() === 'DELETE'
+
+  // What this person actually does here, as chips.
+  //
+  // Not profile.role. That column is legacy and constrained to admin|inspector,
+  // so Setup can't write a real job into it — it leaves every non-admin at
+  // 'inspector' and puts the truth in roles[]. Reading the old column labelled
+  // a buyer "INSPECTOR" next to "BUYER", and a body shop tech the same. Admin
+  // is the one thing the column still means, and a buyer has no internal role
+  // at all (Setup empties roles[] for them), so they get nothing here.
+  const roleChips = isAdminProfile(profile)
+    ? ['Admin']
+    : isBuyer
+      ? []
+      : (profile?.roles?.length ? profile.roles : [profile?.role])
+          .filter(Boolean)
+          .map((r) => r.replace(/_/g, ' '))
 
   // 'default' is react-router's key for the entry a tab opened on, i.e. nothing
   // behind us to go back to. The native shell has no browser back button, so
@@ -51,18 +66,30 @@ export default function Account() {
     setError('')
     try {
       await deleteMyAccount()
-      // Order matters: the flag is set before the sign-out, because the
-      // sign-out is what unmounts this screen — the login page reads it and
-      // shows the confirmation.
-      markAccountDeleted()
-      await signOut()
-      navigate('/login', { replace: true })
     } catch (e) {
       // Every throw from deleteMyAccount means nothing was deleted, so saying
       // "try again" is honest rather than hopeful.
       setError(e?.message || 'Could not delete your account. Try again.')
       setBusy(false)
+      return
     }
+
+    // Past this line the account is GONE, so nothing below may report a
+    // failure — telling someone their deletion failed when it didn't is the
+    // one wrong answer this screen can give. signOut talks to the network to
+    // revoke the session, and it is now revoking a session whose user no
+    // longer exists; supabase-js treats 401/403/404 there as success and
+    // clears the local session anyway, but a lock timeout or a dead connection
+    // could still throw, and that must not land in the catch above.
+    //
+    // Order matters: the flag is set first, because the sign-out is what
+    // unmounts this screen — the login page reads it and shows the
+    // confirmation.
+    markAccountDeleted()
+    try {
+      await signOut()
+    } catch { /* the account is deleted either way */ }
+    navigate('/login', { replace: true })
   }
 
   return (
@@ -91,11 +118,11 @@ export default function Account() {
               {accountLabel}
             </span>
           )}
-          {roleLabel && (
-            <span className="text-[11px] uppercase tracking-wide bg-slate-900 text-slate-400 border border-slate-700 rounded-full px-2.5 py-1">
-              {roleLabel}
+          {roleChips.map((r) => (
+            <span key={r} className="text-[11px] uppercase tracking-wide bg-slate-900 text-slate-400 border border-slate-700 rounded-full px-2.5 py-1">
+              {r}
             </span>
-          )}
+          ))}
           {profile?.approval_status && profile.approval_status !== 'approved' && (
             <span className="text-[11px] uppercase tracking-wide bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded-full px-2.5 py-1">
               {profile.approval_status}
