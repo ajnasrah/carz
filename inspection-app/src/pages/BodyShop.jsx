@@ -19,8 +19,44 @@ import {
   ageStyle, ownedStyle, jobAge, isOnHold, vehicleLabel, lastSix,
   isBodyShopManager, isBodyShopTech, canSeeShopMoney, isBodyShopOnly,
 } from '../services/bodyShop'
+import {
+  etaState, etaMatters, byEta, formatEta, etaRelative, ETA_STYLES,
+} from '../services/partsEta'
 
 const money = (n) => (n == null ? null : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
+
+// The stage the delivery dates are FOR. Parts Ordered is the only lane where a
+// car is waiting on somebody else, so it is the only one that sorts by when
+// that somebody says he'll turn up — every other lane still sorts by how long
+// we've owned the car, which is what the rest of the board is about.
+const ETA_LANE = 'waiting_parts'
+const LANDED_LANE = 'parts_in'
+
+// The three piles inside Parts Ordered, in the order they matter. Sorting by
+// date alone produces exactly this grouping — overdue dates are simply earlier
+// dates — so the headings are labels on a sorted list, not a second sort.
+const ETA_GROUPS = {
+  late: {
+    label: 'Late',
+    hint: 'The date has gone by and nothing is checked in — either the vendor is sitting on it, or it was dropped off and nobody marked it. Both start with a phone call or a walk through the parts room.',
+    tone: 'text-red-300 bg-red-500/10 border-red-500/40',
+  },
+  today: {
+    label: 'Landing today',
+    hint: 'Promised for today. Check it in when it lands and the car moves itself to Parts In.',
+    tone: 'text-amber-300 bg-amber-500/10 border-amber-500/40',
+  },
+  coming: {
+    label: 'Coming',
+    hint: 'Soonest first — nothing to do but wait.',
+    tone: 'text-sky-300 bg-sky-500/10 border-sky-500/40',
+  },
+  none: {
+    label: 'No date',
+    hint: 'Nothing in the notes says when. Type the date into the car\u2019s notes \u2014 "eta 9/15", "due friday", "coming in 3 days" \u2014 and it shows up here.',
+    tone: 'text-slate-400 bg-slate-800 border-slate-700',
+  },
+}
 
 export default function BodyShop() {
   const navigate = useNavigate()
@@ -84,8 +120,42 @@ export default function BodyShop() {
         [j.stock_number, j.vin6, j.vin, vehicleLabel(j), j.tech_name]
           .filter(Boolean).some((f) => String(f).toLowerCase().includes(q)))
     }
+
+    // Parts Ordered is the one lane that doesn't sort by age. What matters
+    // about a car waiting on a bumper is when the bumper comes, so it sorts by
+    // the date in the notes: the most overdue promise at the top, then today,
+    // then the next delivery, then the cars nobody wrote a date on.
+    if (statusFilter === ETA_LANE) {
+      const now = new Date()
+      rows = [...rows].sort((a, b) => byEta(a, b, now))
+    }
+
+    // And Parts In sorts by how long the parts have been sitting, because that
+    // lane is a pile of boxes somebody has to go and find. The longest-landed
+    // car is the one whose parts have had the most time to get lost.
+    if (statusFilter === LANDED_LANE) {
+      rows = [...rows].sort((a, b) =>
+        (a.parts_in_at || a.entered_at || '').localeCompare(b.parts_in_at || b.entered_at || ''))
+    }
+
     return rows
   }, [jobs, doneJobs, techOnly, profile?.id, statusFilter, search])
+
+  // The list, cut into labelled piles — only in Parts Ordered, where the piles
+  // mean something. Everywhere else it's one run of cards with no heading.
+  const sections = useMemo(() => {
+    if (statusFilter !== ETA_LANE) return [{ key: 'all', jobs: visible }]
+    const now = new Date()
+    const out = []
+    for (const job of visible) {
+      const { bucket } = etaState(job, now)
+      if (!out.length || out[out.length - 1].key !== bucket) {
+        out.push({ key: bucket, ...ETA_GROUPS[bucket], jobs: [] })
+      }
+      out[out.length - 1].jobs.push(job)
+    }
+    return out
+  }, [visible, statusFilter])
 
   // Counts always reflect what this user is allowed to see.
   const scoped = useMemo(
@@ -103,7 +173,12 @@ export default function BodyShop() {
     // Cars with a part still marked Needed — the ordering queue's size. COUNT
     // arrives as a bigint, so it's compared as a number, not for truthiness.
     const toOrder = open.filter((j) => Number(j.parts_needed) > 0).length
-    return { count: open.length, unpriced, oldest, pending, toOrder,
+    // Cars whose parts were promised for a date that has been and gone. The one
+    // number on this board that is somebody else's fault and still our problem.
+    const now = new Date()
+    const late = open.filter((j) => j.status === ETA_LANE
+      && etaState(j, now).bucket === 'late').length
+    return { count: open.length, unpriced, oldest, pending, toOrder, late,
              held: scoped.filter(isOnHold).length }
   }, [scoped])
 
@@ -186,6 +261,7 @@ export default function BodyShop() {
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-2">
         {JOB_STATUSES.filter((s) => s.key !== 'done').map((s) => (
           <StageTile key={s.key} stage={s} count={byStage[s.key]}
+            late={s.key === ETA_LANE ? stats.late : 0}
             active={statusFilter === s.key}
             onClick={() => setStatusFilter(statusFilter === s.key ? 'open' : s.key)} />
         ))}
@@ -202,6 +278,12 @@ export default function BodyShop() {
         <span className={ownedStyle(stats.oldest)}>
           ⏰ oldest {stats.oldest == null ? '—' : `${stats.oldest}d owned`}
         </span>
+        {stats.late > 0 && (
+          <button onClick={() => setStatusFilter(ETA_LANE)}
+            className="text-red-400 font-semibold underline underline-offset-2">
+            ⚠️ {stats.late} parts late
+          </button>
+        )}
       </div>
 
       {stats.pending > 0 && (
@@ -254,14 +336,24 @@ export default function BodyShop() {
           )}
         </div>
       ) : (
-        <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2 lg:grid-cols-3">
-          {/* The ids ride along so the job screen can swipe between exactly the
-              cars on screen here, in this order — the same filter, the same
-              search, the same oldest-first sort. */}
-          {visible.map((job) => (
-            <JobCard key={job.id} job={job} showPrice={seeMoney}
-              onClick={() => navigate(`/body-shop/${job.id}`,
-                { state: { siblings: visible.map((j) => j.id) } })} />
+        <div className="space-y-3">
+          {sections.map((sec) => (
+            <div key={sec.key}>
+              {sec.label && <GroupHeader section={sec} />}
+              <div className="space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-2 lg:grid-cols-3">
+                {/* The ids ride along so the job screen can swipe between exactly
+                    the cars on screen here, in this order — the same filter, the
+                    same search, the same sort. Siblings span every group, not
+                    just this one: the swipe is through the list you are looking
+                    at, and the headings are labels on it, not walls in it. */}
+                {sec.jobs.map((job) => (
+                  <JobCard key={job.id} job={job} showPrice={seeMoney}
+                    lane={statusFilter}
+                    onClick={() => navigate(`/body-shop/${job.id}`,
+                      { state: { siblings: visible.map((j) => j.id) } })} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -288,12 +380,21 @@ const STAGE_TONES = {
   final_check:   { on: 'bg-violet-500/30 border-violet-400',   num: 'text-violet-300' },
 }
 
-function StageTile({ stage, count, active, onClick }) {
+function StageTile({ stage, count, active, onClick, late = 0 }) {
   const tone = STAGE_TONES[stage.key] || STAGE_TONES.intake
   return (
-    <button onClick={onClick} title={stage.hint}
-      className={`rounded-xl p-2 text-center border transition-colors ${
+    <button onClick={onClick}
+      title={late > 0 ? `${stage.hint} — ${late} past the promised date` : stage.hint}
+      className={`relative rounded-xl p-2 text-center border transition-colors ${
         active ? tone.on : 'bg-slate-800 border-slate-700 active:bg-slate-700'}`}>
+      {/* Cars whose date has gone by. On the tile rather than only inside the
+          lane, because the whole point is that nobody has to open the lane to
+          find out something is being sat on. */}
+      {late > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-slate-900 text-[10px] font-bold leading-4">
+          {late}
+        </span>
+      )}
       <div className="text-base leading-none">{stage.emoji}</div>
       <div className={`text-xl font-bold mt-1 ${count ? tone.num : 'text-slate-600'}`}>{count}</div>
       <div className="text-[9px] uppercase tracking-wide text-slate-400 mt-0.5 leading-tight">
@@ -319,13 +420,55 @@ function FilterChip({ active, onClick, label, count, tone }) {
   )
 }
 
-function JobCard({ job, onClick, showPrice = true }) {
+// A pile's heading inside Parts Ordered: what it is, how many, and — the part
+// that stops it being decoration — what to do about it.
+function GroupHeader({ section }) {
+  return (
+    <div className={`mb-1.5 px-2.5 py-1.5 rounded-lg border ${section.tone}`}>
+      <div className="flex items-baseline gap-2">
+        <span className="text-xs font-bold uppercase tracking-wide">{section.label}</span>
+        <span className="text-[11px] opacity-70">{section.jobs.length}</span>
+      </div>
+      <p className="text-[10px] opacity-80 leading-snug mt-0.5">{section.hint}</p>
+    </div>
+  )
+}
+
+// The delivery date, as read out of the car's notes. The phrase it came from is
+// in the tooltip — a date the board made up out of a sentence has to be
+// checkable against the sentence, or nobody will believe the ones that matter.
+function EtaChip({ job, now }) {
+  const st = etaState(job, now)
+  if (!st.date) return null
+  return (
+    <span
+      title={job.parts_eta_text ? `From the note: “${job.parts_eta_text}”` : undefined}
+      className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${ETA_STYLES[st.bucket]}`}>
+      {st.bucket === 'late' ? '⚠️' : '📦'} {formatEta(st.date)} · {etaRelative(st.date, now)}
+      {/* A car waiting on two parts can start only when the second one lands.
+          The first date is what gets chased; this is when the car actually
+          moves, and leaving it off made one-part and five-part cars look alike. */}
+      {st.last && <span className="opacity-70"> → last {formatEta(st.last)}</span>}
+    </span>
+  )
+}
+
+function JobCard({ job, onClick, showPrice = true, lane = 'open' }) {
   // The headline is how long we've OWNED the car — the number the sort uses. A
   // fresh buy has no purchase date to subtract, so it falls back to the shop's
   // own clock and labels itself "in shop" so the two are never confused.
   const age = jobAge(job)
   const status = isOnHold(job) ? HOLD_STATUS : JOB_STATUSES.find((s) => s.key === job.status)
   const partsOpen = (job.parts_needed || 0) + (job.parts_ordered || 0)
+
+  const now = new Date()
+
+  // Parts In is a stack of boxes with a car's name on it. How long they have
+  // been sitting is how long somebody has had to put them somewhere nobody can
+  // find — which is the whole reason this lane stalls.
+  const landedDays = job.status === 'parts_in' && job.parts_in_at
+    ? Math.max(0, Math.round((now.getTime() - new Date(job.parts_in_at).getTime()) / 86400000))
+    : null
 
   // The last 6 leads the second line: it's the name the car goes by in the
   // Telegram group and on the key tag, so it's what someone holding a phone
@@ -390,6 +533,23 @@ function JobCard({ job, onClick, showPrice = true }) {
           {partsOpen > 0 && (
             <span className="text-orange-300">
               📦 {job.parts_received || 0}/{job.parts_total} parts
+            </span>
+          )}
+          {etaMatters(job) && <EtaChip job={job} now={now} />}
+          {/* Only inside the lane it's about. "No date" on a car in Final Check
+              is noise; on a car sitting in Parts Ordered it is the reason
+              nobody can tell whether it's late. */}
+          {lane === ETA_LANE && !job.parts_eta && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-md text-slate-500 border border-slate-700">
+              📦 no date in notes
+            </span>
+          )}
+          {landedDays != null && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${
+              landedDays >= 7 ? 'bg-red-500/15 text-red-300 border border-red-500/40'
+                : landedDays >= 3 ? 'bg-amber-500/15 text-amber-300 border border-amber-500/40'
+                : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40'}`}>
+              📬 landed {landedDays === 0 ? 'today' : `${landedDays}d ago`}
             </span>
           )}
         </div>

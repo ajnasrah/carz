@@ -28,6 +28,9 @@ import {
 import {
   fetchVehiclePhotos, uploadVehiclePhoto, deleteVehiclePhoto, photoSourceLabel,
 } from '../services/vehiclePhotos'
+import {
+  findEtas, etaState, etaMatters, formatEta, etaRelative, ETA_STYLES, ETA_TEXT_STYLES,
+} from '../services/partsEta'
 import { copyText } from '../native/clipboard'
 
 const money = (n) => (n == null ? '—' : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
@@ -318,6 +321,7 @@ export default function BodyShopJob() {
 
       {/* Parts */}
       <Section title={`Parts Needed${parts.length ? ` (${parts.filter((p) => p.status === 'received').length}/${parts.length})` : ''}`}>
+        <EtaBanner job={job} />
         <PartsList jobId={id} parts={parts} setParts={setParts} showCost={seeMoney}
           vehicle={job}
           onError={setError} onChanged={() => fetchJob(id).then(setJob)} />
@@ -330,7 +334,9 @@ export default function BodyShopJob() {
 
       {/* Notes */}
       <Section title="Notes">
-        <NotesEditor key={job.notes || ''} value={job.notes} onSave={(notes) => patch({ notes })} />
+        <NotesEditor key={job.notes || ''} value={job.notes}
+          waiting={job.status === 'waiting_parts' || job.status === 'need_parts'}
+          onSave={(notes) => patch({ notes })} />
       </Section>
 
       {manager && (
@@ -651,17 +657,79 @@ function ChargeCard({ job, profile, onDone, onError }) {
 
 // Keyed on the saved note by the parent, so a value that changes underneath us
 // remounts with a clean draft instead of syncing through an effect.
-function NotesEditor({ value, onSave }) {
+// The delivery date, above the parts checklist it explains.
+//
+// The board sorts Parts Ordered by this, so the car screen has to show the same
+// date and say where it got it. A read that can't be checked against the
+// sentence it came from is a read nobody acts on.
+function EtaBanner({ job }) {
+  // etaMatters, not just "is there a date": a finished car keeps whatever its
+  // notes said, and a red overdue banner on a car whose parts are all checked
+  // in is how a board teaches people to ignore red.
+  if (!etaMatters(job)) return null
+  const st = etaState(job)
+  return (
+    <div className={`mb-3 px-2.5 py-2 rounded-lg text-[11px] ${ETA_STYLES[st.bucket]}`}>
+      <div className="font-bold">
+        {st.bucket === 'late' ? '⚠️ Parts are late — ' : '📦 Parts due '}
+        {formatEta(st.date)} · {etaRelative(st.date)}
+        {st.last && <span className="font-normal opacity-80"> · last part {formatEta(st.last)}</span>}
+      </div>
+      {job.parts_eta_text && (
+        <div className="opacity-70 mt-0.5">read from the notes: “{job.parts_eta_text}”</div>
+      )}
+      {st.bucket === 'late' && (
+        <div className="opacity-80 mt-1 leading-snug">
+          Still not all checked in. Either the vendor is sitting on it, or it was
+          dropped off and nobody marked it received — worth a look in the parts
+          room before the phone call.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NotesEditor({ value, onSave, waiting = false }) {
   const [draft, setDraft] = useState(value || '')
   const [dirty, setDirty] = useState(false)
+
+  // Read as you type, before it is saved. Somebody writing "eta tues" needs to
+  // see that the board understood it — and, more to the point, needs to see
+  // when it did NOT, while the sentence is still in front of him and easy to
+  // fix. Every date in the note is shown, not just the first.
+  const read = useMemo(() => findEtas(draft), [draft])
 
   return (
     <div>
       <textarea
         rows={3} value={draft}
         onChange={(e) => { setDraft(e.target.value); setDirty(true) }}
-        placeholder="What's being done, what to watch out for…"
+        placeholder="What's being done, what to watch out for… “bumper eta 9/15”"
       />
+
+      {read.length > 0 ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="text-slate-500">📦 Parts due</span>
+          {read.map((r) => (
+            <span key={r.date}
+              className={`px-1.5 py-0.5 rounded-md font-semibold ${ETA_TEXT_STYLES[etaState({ parts_eta: r.date }).bucket]}`}
+              title={`read from “${r.text}”`}>
+              {formatEta(r.date)} · {etaRelative(r.date)}
+            </span>
+          ))}
+          <span className="text-slate-600">— the board sorts Parts Ordered by this</span>
+        </div>
+      ) : waiting && (
+        // Only nagged about on a car that is actually waiting on something.
+        <p className="mt-1.5 text-[11px] text-slate-600 leading-snug">
+          Put the delivery date in here and the board can sort by it —
+          {' '}<span className="text-slate-400">eta 9/15</span>,
+          {' '}<span className="text-slate-400">due friday</span>,
+          {' '}<span className="text-slate-400">coming in 3 days</span>,
+          {' '}<span className="text-slate-400">arriving end of week</span>.
+        </p>
+      )}
+
       {dirty && (
         <button onClick={() => { onSave(draft.trim() || null); setDirty(false) }}
           className="btn-primary mt-2 !py-2 text-sm">Save note</button>

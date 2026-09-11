@@ -9,6 +9,7 @@
 
 import { supabase, selectAll } from './supabase'
 import { isPrimaryAdmin } from './adminSetup'
+import { partsEtaPatch, notesKey } from './partsEta'
 
 // ---------------------------------------------------------------- constants
 
@@ -158,6 +159,68 @@ export async function fetchBoard({ includeDone = false } = {}) {
       .order('entered_at', { ascending: true })
       .order('id', { ascending: true })
   })
+  return syncPartsEta(rows)
+}
+
+// A handful, not the whole board: a first load with a hundred noted cars is a
+// hundred writes for something nobody is waiting on. The rest catch up next time.
+const ETA_WRITES_PER_LOAD = 25
+
+// Reads a row's note in place and says whether that changed anything. Used by
+// the board's catch-up below and by the job screen, so a car opened directly
+// from a link shows the same date the board would have shown it.
+//
+// `updated_at` stands in for when the note was written — the best anchor we
+// have for "eta monday" on a note that predates this feature. Absolute dates,
+// which are most of them, don't care either way.
+function readPartsEta(job) {
+  if (!job) return false
+  // Nothing to say and nothing stored: leave the row alone rather than writing
+  // an empty answer onto every car in the shop.
+  if (!job.notes && !job.parts_eta && !job.parts_eta_key) return false
+  if (notesKey(job.notes) === job.parts_eta_key) return false
+  const anchor = job.updated_at ? new Date(job.updated_at) : new Date()
+  Object.assign(job, partsEtaPatch(job.notes, anchor))
+  return true
+}
+
+// Notes whose delivery date nobody has read yet.
+//
+// updateJob reads a note the moment it is saved, so everything typed from now
+// on arrives with its date already on it. This is for the rest: the notes that
+// were already in the database when the board learned to read them, and any
+// written by a path that doesn't go through updateJob. It is the backfill —
+// there is no one-off script, and when a phrasing gets better later every note
+// is simply read again on the next load.
+//
+// A job is stale when the fingerprint of its note doesn't match the one stored
+// beside the answer. The read is done for EVERY stale row, so the board on
+// screen is right immediately whether or not the write lands.
+async function syncPartsEta(rows) {
+  const stale = []
+
+  for (const job of rows) {
+    if (!readPartsEta(job)) continue
+    stale.push({
+      id: job.id,
+      patch: {
+        parts_eta: job.parts_eta,
+        parts_eta_last: job.parts_eta_last,
+        parts_eta_text: job.parts_eta_text,
+        parts_eta_key: job.parts_eta_key,
+      },
+    })
+  }
+
+  if (stale.length) {
+    // Never block the board on this, and never let it surface an error: a
+    // failed write just means the same note is read again next load.
+    await Promise.all(stale.slice(0, ETA_WRITES_PER_LOAD).map(({ id, patch }) =>
+      supabase.from('body_shop_jobs').update(patch).eq('id', id)
+        .then(({ error }) => { if (error) console.error('parts eta:', error.message) })
+        .catch(() => {})))
+  }
+
   return rows
 }
 
@@ -177,12 +240,29 @@ export async function fetchJob(id) {
   const { data, error } = await supabase
     .from('body_shop_board').select('*').eq('id', id).maybeSingle()
   if (error) throw error
+  // In memory only — the board's pass does the writing. A car opened straight
+  // from a link must not show yesterday's read of a note edited since.
+  readPartsEta(data)
   return data
 }
 
+// Any write to a job, with one thing added: when the NOTES change, the delivery
+// date is read out of them in the same write. Jorge types "bumper eta monday"
+// and the board can sort by it a second later — he is never asked to fill in a
+// date field he would not have filled in, and there is no second step to forget.
+//
+// "monday" is resolved against now, which is the moment he typed it. That is the
+// whole reason the answer is stored rather than re-read every time the board
+// draws: a note saying "eta monday" written three weeks ago means THAT Monday,
+// and the car is late.
 export async function updateJob(id, patch) {
+  // `!== undefined`, not `'notes' in patch`: a caller that names the key but
+  // passes nothing is not editing the note, and must not wipe the date off it.
+  const body = patch?.notes !== undefined
+    ? { ...patch, ...partsEtaPatch(patch.notes) }
+    : patch
   const { data, error } = await supabase
-    .from('body_shop_jobs').update(patch).eq('id', id).select().single()
+    .from('body_shop_jobs').update(body).eq('id', id).select().single()
   if (error) throw error
   return data
 }
