@@ -53,6 +53,10 @@
       "schedule": "0 16 * * *"
     },
     {
+      "path": "/api/sms-checklist",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/intake-sweep",
       "schedule": "0 3 * * *"
     },

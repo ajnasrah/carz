@@ -15,6 +15,8 @@
 // (sms_nudges.every_days + last_sent_at), which is what makes "every 3 days"
 // hold even if a run is missed, and lets the schedule change without a deploy.
 
+import { sendSms } from './_lib/sms.js'
+
 const BUCKETS = {
   mechanic: 'at the mechanic',
   body_shop: 'in the body shop',
@@ -56,32 +58,6 @@ function buildMessage(name, bucket, cars) {
     `Carz Inc — ${name}, your ${cars.length} oldest ${BUCKETS[bucket] || bucket}:`,
     ...lines,
   ].join('\n')
-}
-
-async function sendSms(to, body) {
-  const sid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-  const from = process.env.TWILIO_FROM
-  if (!sid || !token || !from) return { sent: false, reason: 'twilio_not_configured' }
-
-  // TWILIO_FROM takes either a plain number or a Messaging Service SID. An
-  // A2P-10DLC-registered account (the BN… bundle) usually sends through a
-  // Messaging Service, and that goes in a different field — passing an MG SID
-  // as From is rejected outright, with an error that doesn't say why.
-  const route = from.startsWith('MG')
-    ? { MessagingServiceSid: from }
-    : { From: from }
-
-  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({ To: to, ...route, Body: body }),
-  })
-  if (!res.ok) return { sent: false, reason: (await res.text()).slice(0, 300) }
-  return { sent: true }
 }
 
 export default async function handler(req, res) {
@@ -157,7 +133,7 @@ export default async function handler(req, res) {
         continue
       }
 
-      const out = await sendSms(person.phone, body)
+      const out = await sendSms(person.phone, body, { name: person.name, source: 'nudge' })
       results.push({ name: person.name, to: person.phone, ...out })
       await sb(`sms_nudges?id=eq.${person.id}`, {
         method: 'PATCH',

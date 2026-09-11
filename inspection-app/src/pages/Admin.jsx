@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { openReservations, decideReservation } from '../services/reservations'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X, FileSpreadsheet } from 'lucide-react'
+import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X, FileSpreadsheet, MessageSquare } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
@@ -247,6 +247,29 @@ export default function Admin() {
           <p className="text-sm text-slate-400">Buyers</p>
         </div>
       </div>
+
+      {/* The daily reminder texts. Its own screen: it is about hours and
+          sentences, not about accounts, and it would bury the user list. */}
+      <button
+        onClick={() => navigate('/checklists')}
+        className="card w-full flex items-center justify-between mb-6 text-left"
+      >
+        <span className="flex items-center gap-2 font-semibold text-white">
+          <MessageSquare size={18} className="text-emerald-400" /> Daily Checklists
+        </span>
+        <span className="text-sm text-slate-400">Texts that go out on their own</span>
+      </button>
+
+      {/* Every text that went out and every reply that came back. */}
+      <button
+        onClick={() => navigate('/messages')}
+        className="card w-full flex items-center justify-between mb-6 text-left"
+      >
+        <span className="flex items-center gap-2 font-semibold text-white">
+          <MessageSquare size={18} className="text-emerald-400" /> Messages
+        </span>
+        <span className="text-sm text-slate-400">Who got texted, what failed, who answered</span>
+      </button>
 
       {/* Pending Approval — new signups waiting for admin review */}
       {(() => {
