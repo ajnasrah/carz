@@ -34,3 +34,10 @@ supabase/.temp
 carzinc_backfill.session
 __pycache__/
 *.pyc
+
+# Capacitor writes a fresh copy of config.xml on every `cap sync`, and macOS
+# names each one "config 2.xml", "config 3.xml"… Three of them are already
+# tracked; these are byte-identical to config.xml and pure noise, so every sync
+# was leaving a dirty tree behind. The real file (config.xml) is not matched.
+ios/App/App/config [0-9]*.xml
+android/app/src/main/res/xml/config [0-9]*.xml
