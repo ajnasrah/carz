@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../services/supabase'
+import { takeAccountDeletedFlag } from '../services/account'
 
 export default function Login() {
   const [phone, setPhone] = useState('')
@@ -7,6 +8,12 @@ export default function Login() {
   const [step, setStep] = useState('phone') // 'phone' | 'verify'
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // The last thing a deleted account sees. Read once, on the first render after
+  // the sign-out that follows the deletion — the screen that could have said it
+  // is gone by then, along with the session and the profile. Reading it in the
+  // initializer (and clearing it there) means it shows once and never comes
+  // back on a later visit to the login screen.
+  const [justDeleted] = useState(takeAccountDeletedFlag)
 
   function formatPhone(value) {
     const digits = value.replace(/\D/g, '')
@@ -68,6 +75,16 @@ export default function Login() {
           <h1 className="text-3xl font-bold text-emerald-400 mb-2">CARZ INC</h1>
           <p className="text-slate-400">Inventory Management System</p>
         </div>
+
+        {justDeleted && (
+          <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
+            <p className="font-bold text-emerald-400">Your account has been deleted</p>
+            <p className="text-sm text-slate-300 mt-1">
+              Your sign-in and personal details have been removed. Nothing here will get you back in —
+              signing in again starts a brand new account.
+            </p>
+          </div>
+        )}
 
         {step === 'phone' ? (
           <form onSubmit={sendOtp} className="space-y-4">

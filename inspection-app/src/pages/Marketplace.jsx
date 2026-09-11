@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal, Send, AlertTriangle } from 'lucide-react'
+import { Search, ChevronDown, Copy, Check, ArrowLeft, SlidersHorizontal, Send, AlertTriangle, UserRound } from 'lucide-react'
 import { logSearch, logFilter } from '../services/listingEvents'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
@@ -335,6 +335,16 @@ export default function Marketplace() {
               <ArrowLeft size={18} /> <span className="hidden sm:inline">Back</span>
             </button>
           ) : null}
+          {/* A buyer's whole app is this page — ProtectedRoute sends him back
+              here from anywhere else — so this is the only place his account
+              can live, and the only place he can delete it from. Visitors have
+              no profile and get nothing. */}
+          {profile && (
+            <Link to="/account" aria-label="Account"
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-1 p-2 -mr-2 rounded-lg text-slate-300 active:bg-slate-800 text-sm">
+              <span className="hidden sm:inline">Account</span> <UserRound size={18} />
+            </Link>
+          )}
           <h1 className="text-2xl font-bold text-emerald-400">CARZ INC</h1>
           <p className="text-slate-400 text-sm">Wholesale Inventory</p>
           {isAdmin && hidden.size > 0 && (

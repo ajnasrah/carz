@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Clock, LogOut, RefreshCw } from 'lucide-react'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
@@ -66,6 +66,13 @@ export default function PendingApproval() {
             <LogOut size={18} />
             Sign out
           </button>
+          {/* The pending screen is a dead end by design — no admin has cleared
+              this person yet, so there is nowhere else in the app for them to
+              go. Waiting is not the only thing they are allowed to do with the
+              account they just made. */}
+          <Link to="/account" className="block w-full text-sm font-semibold text-slate-500 py-2">
+            Account settings &amp; delete account
+          </Link>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { LogOut, Menu, Mic } from 'lucide-react'
+import { LogOut, Menu, Mic, UserRound } from 'lucide-react'
 import { supabase, selectAll } from '../services/supabase'
 import { cachedQuery, peek } from '../services/queryCache'
 import { fetchSoldRecent, ymdMinusDays } from '../services/soldReports'
@@ -203,6 +203,17 @@ export default function Dashboard() {
           <p className="text-[11px] uppercase tracking-wide text-slate-500">Inventory Management System</p>
           <p className="text-xs text-slate-400 mt-0.5">{profile?.name || user?.phone || 'Hi'}</p>
         </div>
+        {/* Account sits next to sign out, not inside a menu. App Review has to
+            be able to find account deletion without being told where it is, and
+            so does anyone else who wants out. */}
+        <Link
+          to="/account"
+          className="p-2 rounded-lg bg-slate-800 text-slate-400 mr-2"
+          title="Account"
+          aria-label="Account"
+        >
+          <UserRound size={20} />
+        </Link>
         <button onClick={signOut} className="p-2 rounded-lg bg-slate-800 text-slate-400" title="Sign out">
           <LogOut size={20} />
         </button>

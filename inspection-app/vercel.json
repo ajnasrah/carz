@@ -16,6 +16,10 @@
       "destination": "/support.html"
     },
     {
+      "source": "/delete-account",
+      "destination": "/delete-account.html"
+    },
+    {
       "source": "/((?!training/|api/).*)",
       "destination": "/index.html"
     }

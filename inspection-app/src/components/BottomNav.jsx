@@ -11,6 +11,14 @@ import { PRIMARY_LINKS, MORE_LINKS, BODY_SHOP_LINKS, PHONE_TABS } from '../navLi
 // marketplace, login) would open with a 14rem gutter of nothing down its side.
 export function useNavShown() {
   const { pathname } = useLocation()
+  const { profile } = useAuth()
+
+  // A buyer has nowhere to navigate. Every tab in the bar is an internal page
+  // that ProtectedRoute bounces him straight back off, so the bar is four ways
+  // of leaving the only screen he's allowed on. It never showed before because
+  // the marketplace hides the nav anyway — /account is the first page a buyer
+  // can open that isn't the marketplace, which is what surfaced this.
+  if (profile?.account_type === 'buyer') return false
 
   // Hide on the in-flight inspection wizard so you can't accidentally lose work.
   if (pathname.startsWith('/inspect/')) return false

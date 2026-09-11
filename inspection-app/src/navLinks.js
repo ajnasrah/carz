@@ -51,6 +51,10 @@ export const MORE_LINKS = [
   { to: '/inspections', emoji: '📝', label: 'Inspect' },
   { to: '/lookup', emoji: '📊', label: 'MMR/BB' },
   { href: '/training/', emoji: '🎓', label: 'Training' },
+  // Last, because it is the one destination nobody opens twice a day — and
+  // present, because account deletion has to be findable from the menu and not
+  // only from the icon on the dashboard.
+  { to: '/account', emoji: '👤', label: 'Account' },
 ]
 
 // The body shop crew only has the shop, so the full list would be fifteen links
@@ -59,6 +63,10 @@ export const MORE_LINKS = [
 export const BODY_SHOP_LINKS = [
   { to: '/body-shop', emoji: '🎨', label: 'Body Shop' },
   { to: '/body-shop/payout', emoji: '💵', label: 'Payout' },
+  // /account is outside the body shop scope on purpose: ProtectedRoute lets it
+  // through (requireSetup={false}) precisely so the crew isn't the one group in
+  // the app that can't reach its own account.
+  { to: '/account', emoji: '👤', label: 'Account' },
 ]
 
 // The phone's bottom bar stays four, because four is what fits across a phone

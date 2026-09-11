@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { addBillingLocation } from '../services/billingLocations'
@@ -348,6 +348,15 @@ export default function Setup() {
         >
           {saving ? 'Saving…' : 'Continue'}
         </button>
+
+        {/* Signing up is where an account starts, so it is also where someone
+            decides they don't want one. Setup is a forced stop — ProtectedRoute
+            sends every unfinished profile here — and without this the only way
+            back out of a half-made account would be to never open the app
+            again, which is not the same thing as deleting it. */}
+        <Link to="/account" className="block text-center text-xs font-semibold text-slate-500 py-2">
+          Changed your mind? Delete this account
+        </Link>
       </form>
     </div>
   )

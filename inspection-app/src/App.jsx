@@ -26,6 +26,7 @@ import Dashboard from './pages/Dashboard'
 // render the first screen. Adding a page? Add it as lazy() unless it is the
 // first thing a user can possibly see.
 const Setup = lazy(() => import('./pages/Setup'))
+const Account = lazy(() => import('./pages/Account'))
 const PendingApproval = lazy(() => import('./pages/PendingApproval'))
 const StartInspection = lazy(() => import('./pages/StartInspection'))
 const StartupCheck = lazy(() => import('./pages/StartupCheck'))
@@ -38,6 +39,8 @@ const Lookup = lazy(() => import('./pages/Lookup'))
 const Inventory = lazy(() => import('./pages/Inventory'))
 const Sold = lazy(() => import('./pages/Sold'))
 const Admin = lazy(() => import('./pages/Admin'))
+const Checklists = lazy(() => import('./pages/Checklists'))
+const Messages = lazy(() => import('./pages/Messages'))
 const LotWalk = lazy(() => import('./pages/LotWalk'))
 const SoldReports = lazy(() => import('./pages/SoldReports'))
 const Inspections = lazy(() => import('./pages/Inspections'))
@@ -177,6 +180,13 @@ function AppRoutes() {
       <Route path="/login" element={user ? <AfterLogin /> : <Login />} />
       <Route path="/setup" element={<ProtectedRoute requireSetup={false}><Setup /></ProtectedRoute>} />
       <Route path="/pending" element={<ProtectedRoute requireSetup={false}><PendingApproval /></ProtectedRoute>} />
+      {/* requireSetup={false} on purpose. An account can be deleted from any
+          state it can get into — half-signed-up on /setup, parked on /pending
+          waiting for an admin, or a buyer who is otherwise pinned to the
+          marketplace. Gating this like an internal page would leave exactly the
+          people most likely to want out unable to reach it, which is the
+          rejection all over again. */}
+      <Route path="/account" element={<ProtectedRoute requireSetup={false}><Account /></ProtectedRoute>} />
       <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/inspections" element={<ProtectedRoute><Inspections /></ProtectedRoute>} />
       <Route path="/new" element={<ProtectedRoute><StartInspection /></ProtectedRoute>} />
@@ -265,6 +275,8 @@ function AppRoutes() {
 
       {/* Admin */}
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+      <Route path="/checklists" element={<ProtectedRoute><Checklists /></ProtectedRoute>} />
+      <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
 
       {/* Public marketplace — no auth required, shareable links */}
       <Route path="/listings" element={<Listings />} />
