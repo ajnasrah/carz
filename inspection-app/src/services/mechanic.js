@@ -15,6 +15,7 @@
 // as they do for the body shop.
 
 import { supabase, selectAll } from './supabase'
+import { notesKey, partsEtaPatch } from './partsEta'
 
 // The four display helpers below are shared with the body shop rather than
 // copied. They're pure functions over the columns both boards expose
@@ -38,8 +39,16 @@ export const JOB_STATUSES = [
     hint: 'Just arrived — nobody has looked yet' },
   { key: 'diagnosing',    label: 'Diagnosing',  emoji: '🔍', color: 'cyan',
     hint: 'Finding out what is actually wrong' },
-  { key: 'waiting_parts', label: 'Waiting Parts', emoji: '📦', color: 'orange',
-    hint: 'Blocked until parts land' },
+  // Split out of the single old 'waiting_parts' lane. These are the two states
+  // that actually differ: somebody has to go and buy these, versus they are
+  // bought and nobody can do anything but wait. Conflating them is what made a
+  // "what do I order today" list impossible to draw.
+  { key: 'need_parts',    label: 'Need Parts',  emoji: '🛒', color: 'rose',
+    hint: 'Nothing ordered yet — somebody has to buy these' },
+  { key: 'waiting_parts', label: 'Parts Ordered', emoji: '📦', color: 'orange',
+    hint: 'Bought — waiting on the vendor' },
+  { key: 'parts_in',      label: 'Parts In',    emoji: '📬', color: 'yellow',
+    hint: 'Delivered — waiting for a lift' },
   { key: 'in_progress',   label: 'In Progress', emoji: '🔧', color: 'emerald',
     hint: 'On the lift' },
   { key: 'done',          label: 'Done',        emoji: '✅', color: 'sky',
@@ -56,7 +65,9 @@ export const HOLD_STATUS = { key: 'on_hold', label: 'On Hold', emoji: '⛔',
 export const JOB_STATUS_STYLES = {
   intake:        'bg-slate-700 text-slate-200',
   diagnosing:    'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40',
+  need_parts:    'bg-rose-500/20 text-rose-300 border border-rose-500/40',
   waiting_parts: 'bg-orange-500/20 text-orange-300 border border-orange-500/40',
+  parts_in:      'bg-yellow-500/20 text-yellow-300 border border-yellow-500/40',
   in_progress:   'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40',
   done:          'bg-sky-500/20 text-sky-300 border border-sky-500/40',
   on_hold:       'bg-red-500/20 text-red-300 border border-red-500/40',
@@ -155,7 +166,7 @@ export const PART_STATUS_STYLES = {
 // boundary. `selectAll` because this table has no natural ceiling and PostgREST
 // silently caps an unbounded select at 1000.
 export async function fetchBoard({ includeDone = false } = {}) {
-  return selectAll(() => {
+  const rows = await selectAll(() => {
     let q = supabase.from('mechanic_board').select('*')
     if (!includeDone) q = q.neq('status', 'done')
     return q
@@ -163,6 +174,57 @@ export async function fetchBoard({ includeDone = false } = {}) {
       .order('entered_at', { ascending: true })
       .order('id', { ascending: true })
   })
+  return syncPartsEta(rows)
+}
+
+// A handful, not the whole board: a first load with a hundred noted cars is a
+// hundred writes for something nobody is waiting on. The rest catch up next time.
+const ETA_WRITES_PER_LOAD = 25
+
+// Read the delivery date out of a car's note, same contract as the body shop's.
+//
+// The parser is shared (services/partsEta.js) because "eta monday" means the
+// same thing whichever shop typed it; only the table being written differs.
+// `updated_at` anchors a relative date to when the note was written, which is
+// the best guess available for a note that predates the feature.
+function readPartsEta(job) {
+  if (!job) return false
+  if (!job.notes && !job.parts_eta && !job.parts_eta_key) return false
+  if (notesKey(job.notes) === job.parts_eta_key) return false
+  const anchor = job.updated_at ? new Date(job.updated_at) : new Date()
+  Object.assign(job, partsEtaPatch(job.notes, anchor))
+  return true
+}
+
+// The backfill, and it is not a script: a job is stale when the fingerprint of
+// its note no longer matches the answer stored beside it, so every note already
+// in the database gets read on the next load — and read again for free whenever
+// the parser learns a new phrasing.
+//
+// The read happens for EVERY stale row so the board on screen is right
+// immediately; only the write is capped, and a failed write costs nothing
+// because the same note is simply read again next time.
+async function syncPartsEta(rows) {
+  const stale = []
+  for (const job of rows) {
+    if (!readPartsEta(job)) continue
+    stale.push({
+      id: job.id,
+      patch: {
+        parts_eta: job.parts_eta,
+        parts_eta_last: job.parts_eta_last,
+        parts_eta_text: job.parts_eta_text,
+        parts_eta_key: job.parts_eta_key,
+      },
+    })
+  }
+  if (stale.length) {
+    await Promise.all(stale.slice(0, ETA_WRITES_PER_LOAD).map(({ id, patch }) =>
+      supabase.from('mechanic_jobs').update(patch).eq('id', id)
+        .then(({ error }) => { if (error) console.error('parts eta:', error.message) })
+        .catch(() => {})))
+  }
+  return rows
 }
 
 // Recently finished cars, newest completion first — a separate, capped read so
@@ -181,6 +243,9 @@ export async function fetchJob(id) {
   const { data, error } = await supabase
     .from('mechanic_board').select('*').eq('id', id).maybeSingle()
   if (error) throw error
+  // Read its note too, so a car opened straight from a link shows the same
+  // delivery date the board would have shown it.
+  if (data) await syncPartsEta([data])
   return data
 }
 

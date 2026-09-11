@@ -61,6 +61,7 @@ const BodyShop = lazy(() => import('./pages/BodyShop'))
 const BodyShopJob = lazy(() => import('./pages/BodyShopJob'))
 const BodyShopPayout = lazy(() => import('./pages/BodyShopPayout'))
 const PartsToOrder = lazy(() => import('./pages/PartsToOrder'))
+const WashLine = lazy(() => import('./pages/WashLine'))
 const MechanicBoard = lazy(() => import('./pages/MechanicBoard'))
 const MechanicJob = lazy(() => import('./pages/MechanicJob'))
 const CarWorkOrder = lazy(() => import('./pages/CarWorkOrder'))
@@ -242,6 +243,7 @@ function AppRoutes() {
       <Route path="/body-shop" element={<ProtectedRoute><BodyShop /></ProtectedRoute>} />
       <Route path="/body-shop/payout" element={<ProtectedRoute><BodyShopPayout /></ProtectedRoute>} />
       <Route path="/body-shop/parts" element={<ProtectedRoute><PartsToOrder /></ProtectedRoute>} />
+      <Route path="/wash-line" element={<ProtectedRoute><WashLine /></ProtectedRoute>} />
       <Route path="/body-shop/:id" element={<ProtectedRoute><BodyShopJob /></ProtectedRoute>} />
 
       {/* The mechanic's twin of the body shop board. Same shape, but a job here

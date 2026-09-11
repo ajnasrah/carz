@@ -19,6 +19,9 @@ import {
   sendTelegramMessage, nearestVin, albumVin, settleParked,
   sweepParkedPhotos, rebindGuessedPhotos,
 } from './_lib/intake.js';
+import {
+  FINISH_STATIONS, finishCar, updateLocation,
+} from './_lib/finish.js';
 import { readKeyTag, resolveTagCar } from './_lib/keytag.js';
 
 // NOT the edge runtime. This imports _lib/keytag.js, which uses the Anthropic
@@ -40,13 +43,6 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 // second of each other; this is the in-request wait, so it buys correctness at
 // the cost of a slower 200 back.
 const PARK_SETTLE_MS = 3000;
-// Groups that mark work FINISHED rather than started: the car's body shop job
-// closes and it moves on to the next place. body_shop_out is typed VINs; the
-// wash line photographs the key tag instead — same meaning, different medium.
-const FINISH_STATIONS = {
-  body_shop_out: 'wash_line',   // out of Jorge's, on to be washed
-  wash_line: 'front',           // washed — it's a front line car now
-};
 function admin() {
   return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY, {
     auth: { persistSession: false },
@@ -269,11 +265,20 @@ async function processUpdate(update) {
         // 114843" is two real diagnoses and a VIN; taking only the VIN opened a
         // job card with nothing on it and threw the rest away.
         await recordChatProblems(db, vins, text, msg.message_id, eventIso);
+        // The fault usually arrives BEFORE the car. "Needs torque converter"
+        // at 14:11, "L14640" at 14:12 — so a VIN landing now has to go back and
+        // pick up what was said about it while it was still nameless.
+        await sweepUnboundMechanicChat(db, vins[0], eventIso);
       }
       // Claim photos this sender parked before sending the VIN. The intake
       // branch has always done this; the shop groups never did, so a photo that
       // landed ahead of its VIN text could be orphaned here.
       await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
+    } else if (chat.station === 'mechanic') {
+      // No VIN in this message. Almost every real diagnosis in that group looks
+      // like this — the car was named in a different message — so it gets bound
+      // to whichever car the group was talking about at the time.
+      await recordChatProblemsNearest(db, text, msg.message_id, eventIso);
     }
   } else {
     parsed = parseVehicleEntry(text);
@@ -489,7 +494,7 @@ async function ensureMechanicJob(db, vin6, eventIso) {
 //
 // source_ref makes it idempotent — Telegram retries deliveries, and a redelivery
 // must not double a car's work list.
-async function recordChatProblems(db, vins, text, messageId, eventIso) {
+async function recordChatProblems(db, vins, text, messageId, eventIso, { bindKey = 'tg' } = {}) {
   if (!vins.length || !process.env.ANTHROPIC_API_KEY) return;
   if (!looksLikeReport(text)) return;
 
@@ -500,6 +505,10 @@ async function recordChatProblems(db, vins, text, messageId, eventIso) {
     console.error('mechanic chat extract failed', e.message || e);
     return;
   }
+
+  // A read that found nothing is still a read, and must be recorded so the
+  // sweep never pays to look at this message again.
+  if (bindKey === 'tgx') await markChatRead(db, messageId, vins[0], problems.length);
   if (!problems.length) return;
 
   // One car in the message is the normal case. When somebody lists several VINs
@@ -517,7 +526,10 @@ async function recordChatProblems(db, vins, text, messageId, eventIso) {
       description: p.description,
       severity: p.severity,
       status: 'open',
-      source_ref: `tg:${messageId}:${vin6}:${i}`,
+      // 'tg' refs carry the vin because one message may legitimately name
+      // several cars. A 'tgx' ref — bound by time, not by what was typed —
+      // deliberately does not, so the first car it lands on is the only one.
+      source_ref: bindKey === 'tgx' ? `tgx:${messageId}:${i}` : `tg:${messageId}:${vin6}:${i}`,
     }));
 
     const { error } = await db.from('mechanic_lines')
@@ -525,6 +537,54 @@ async function recordChatProblems(db, vins, text, messageId, eventIso) {
     if (error) console.error('mechanic chat lines failed for', vin6, error.message || error);
     else console.log(`recorded ${rows.length} problem(s) for ${vin6} from chat`);
   }
+}
+
+// A fault with no VIN on it: find the car the group was talking about.
+//
+// Looks BACKWARD only (p_fwd_min = 0), because at this instant the future has
+// not happened — if the VIN comes a minute later it is sweepUnboundMechanicChat
+// below that picks this message up. Nothing is marked read when no car is near,
+// deliberately: leaving it unread is what lets the VIN that arrives next claim
+// it, and costs nothing because the model is never called.
+async function recordChatProblemsNearest(db, text, messageId, eventIso) {
+  if (!process.env.ANTHROPIC_API_KEY || !looksLikeReport(text)) return;
+
+  const { data: vin6, error } = await db.rpc('mechanic_nearest_vin',
+    { p_at: eventIso, p_back_min: 120, p_fwd_min: 0 });
+  if (error) { console.error('mechanic_nearest_vin failed', error.message || error); return; }
+  if (!vin6) return;
+
+  await recordChatProblems(db, [vin6], text, messageId, eventIso, { bindKey: 'tgx' });
+}
+
+// A VIN just landed. Read anything said in this group in the last two hours
+// that had no car to attach to, and attach it to this one.
+//
+// Bounded to a handful of messages: this runs inside the webhook, each one is a
+// model call, and Telegram will retry the delivery if the response is slow.
+async function sweepUnboundMechanicChat(db, vin6, eventIso) {
+  if (!vin6 || !process.env.ANTHROPIC_API_KEY) return;
+
+  const { data: rows, error } = await db.rpc('mechanic_chat_unread', { p_limit: 8 });
+  if (error) { console.error('mechanic_chat_unread failed', error.message || error); return; }
+
+  const cutoff = new Date(eventIso).getTime() - 120 * 60 * 1000;
+  for (const r of rows || []) {
+    if (new Date(r.received_at).getTime() < cutoff) continue;
+    if (!looksLikeReport(r.body)) { await markChatRead(db, r.message_id, null, 0); continue; }
+    await recordChatProblems(db, [vin6], r.body, r.message_id, r.received_at, { bindKey: 'tgx' });
+  }
+}
+
+// Remember that a message was read, whatever it yielded.
+//
+// source_ref makes the WRITE idempotent but cannot make the READ idempotent: a
+// message with no fault in it leaves no line behind, so without this the sweep
+// would pay to re-read every "ok" and "thanks" in the group forever.
+async function markChatRead(db, messageId, vin6, found) {
+  const { error } = await db.from('mechanic_chat_reads')
+    .upsert({ message_id: String(messageId), vin6, found }, { onConflict: 'message_id' });
+  if (error) console.error('mechanic_chat_reads failed', error.message || error);
 }
 
 // Bind a reply to the single photo the bot asked about, and file it. Returns
@@ -547,40 +607,6 @@ async function bindAnsweredPhoto(db, askedMsgId, vin6) {
   return true;
 }
 
-// A car finished at a shop: close whatever shop jobs are open on it and move it
-// to wherever finishing there sends it next.
-//
-// All three halves are independent on purpose. Most wash line cars never saw
-// either shop, so a null from a close RPC is the normal case, not a failure —
-// and a car that was never in inventory (a fresh buy) still gets its location,
-// which is how anyone finds it on the lot.
-//
-// The mechanic job closes here for the same reason the body shop's does: a car
-// at the wash line is finished with every shop, and a card left open on it would
-// keep reporting a repaired car as waiting on brakes. Held jobs are skipped by
-// the RPC itself, so parking a car still means parked.
-async function finishCar(db, vin6, locationCode, eventIso) {
-  await closeBodyShopJob(db, vin6, eventIso);
-  await closeMechanicJob(db, vin6, eventIso);
-  await updateLocation(db, vin6, locationCode, eventIso);
-}
-
-// Close this car's open body shop job, stamped with the message time so the age
-// clock measures the real stay. Never throws into the webhook.
-async function closeBodyShopJob(db, vin6, eventIso) {
-  const { data, error } = await db.rpc('close_body_shop_job', { p_vin6: vin6, p_event: eventIso });
-  if (error) console.error('close_body_shop_job failed for', vin6, error.message || error);
-  else if (data) console.log('closed body shop job for', vin6);
-}
-
-// Close this car's open mechanic job and everything still open on it. Same
-// contract as the body shop's: stamped with the message time, held jobs skipped,
-// never throws into the webhook.
-async function closeMechanicJob(db, vin6, eventIso) {
-  const { data, error } = await db.rpc('close_mechanic_job', { p_vin6: vin6, p_event: eventIso });
-  if (error) console.error('close_mechanic_job failed for', vin6, error.message || error);
-  else if (data) console.log('closed mechanic job for', vin6);
-}
 
 // Flatten a message the way keywords are stored: lowercase, letters+digits only,
 // separators dropped. That's what lets one keyword span typed words — "j k chevy"
@@ -758,22 +784,3 @@ async function getDestSession(db, from) {
   return data.last_destination;
 }
 
-// Newest-event-time wins; never moves a car backward; doesn't bump unchanged status.
-async function updateLocation(db, vin6, locationCode, eventIso) {
-  const { data: rows } = await db.rpc('lookup_vin_by_last6', { last6: vin6 });
-  const v = Array.isArray(rows) ? rows[0] : rows;
-  if (!v?.stock_number) { console.warn('no inventory match for', vin6); return; }
-
-  const { data: existing } = await db.from('vehicle_locations')
-    .select('physical_location, location_updated_at').eq('stock_number', v.stock_number).maybeSingle();
-  if (existing?.location_updated_at && new Date(existing.location_updated_at) >= new Date(eventIso)) return;
-  if (existing?.physical_location === locationCode) return;
-
-  await db.from('vehicle_locations').upsert({
-    stock_number: v.stock_number,
-    vin: v.vehicle_vin || null,
-    physical_location: locationCode,
-    physical_source: 'telegram',
-    location_updated_at: eventIso,
-  }, { onConflict: 'stock_number' });
-}

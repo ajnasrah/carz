@@ -20,6 +20,7 @@
 import { useState } from 'react'
 import { ExternalLink, Copy, Check } from 'lucide-react'
 import { normalizeVehicle, buildQuery, carLabel, VENDORS } from '../services/partsSearch'
+import { openWeb } from '../native/links'
 
 export default function PartsSearch({ vehicle, defaultTerm = '', onSearched }) {
   const [term, setTerm] = useState(defaultTerm)
@@ -43,12 +44,31 @@ export default function PartsSearch({ vehicle, defaultTerm = '', onSearched }) {
     }
   }
 
+  // openWeb, never a bare window.open — and on the login-only vendors that is
+  // the difference between staying signed in and signing in every single time.
+  //
+  // Inside the native shell window.open is not a tab. Capacitor cancels any
+  // navigation that isn't the app's own and hands the URL to the OS
+  // (WebViewDelegationHandler.decidePolicyFor → UIApplication.shared.open), so
+  // RepairLink opened in whatever browser iOS picks as default, as a separate
+  // app, and the session belonged to THAT browser — a different cookie jar from
+  // the one this phone actually browses in, and nothing Carz IMS could keep.
+  // On Android it was worse: the stock WebView has multiple windows disabled,
+  // so window.open returned null and the button did nothing at all.
+  //
+  // openWeb goes through @capacitor/browser: SFSafariViewController on iOS,
+  // which shares Safari's cookies and website data, so a login sticks and one
+  // already made in Safari arrives signed in — and Chrome Custom Tabs on
+  // Android, which does the same with Chrome. Both stay inside the app.
   function open(vendor) {
     // The login-only vendors get the VIN put on the clipboard first, because the
     // very next thing anyone does on their site is paste it into a vehicle
     // picker. Fire and forget — a blocked clipboard must not stop the tab.
     if (vendor.needsLogin) copyVin()
-    window.open(vendor.url({ q }), '_blank', 'noopener,noreferrer')
+    // Not awaited: on the web openWeb calls window.open synchronously, before
+    // its first await, so the click still counts as the gesture that authorises
+    // the tab. A rejection here must not take the panel down with it.
+    Promise.resolve(openWeb(vendor.url({ q }))).catch(() => {})
     onSearched?.({ vendor: vendor.key, query: q })
   }
 
@@ -98,7 +118,8 @@ export default function PartsSearch({ vehicle, defaultTerm = '', onSearched }) {
       {label ? (
         <p className="text-[10px] text-slate-500 leading-snug">
           eBay and Amazon open on results for this car. PartsTech and RepairLink need
-          their own login — they open with the VIN copied, ready to paste.
+          their own login — they open with the VIN copied, ready to paste, and stay
+          signed in between visits.
         </p>
       ) : (
         <p className="text-[10px] text-amber-400 leading-snug">

@@ -22,6 +22,7 @@ import {
 import {
   etaState, etaMatters, byEta, formatEta, etaRelative, ETA_STYLES,
 } from '../services/partsEta'
+import { fetchWashLineQueue } from '../services/washLine'
 
 const money = (n) => (n == null ? null : `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`)
 
@@ -80,6 +81,20 @@ export default function BodyShop() {
   const shopOnly = isBodyShopOnly(profile)
 
   const [doneJobs, setDoneJobs] = useState([])
+
+  // Cars washed but never identified — the key tag couldn't be read and nobody
+  // answered the bot. They are still sitting on this board as unfinished work,
+  // which is exactly why the count belongs here rather than on a screen nobody
+  // thinks to open. Best effort: a failure must never take the board down.
+  const [washStuck, setWashStuck] = useState(0)
+  useEffect(() => {
+    if (!manager) return
+    let cancelled = false
+    fetchWashLineQueue()
+      .then((rows) => { if (!cancelled) setWashStuck(rows.length) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [manager])
 
   // The open board is always loaded, even while the Done tab is showing, because
   // the filter chips count against it. Loading only the done rows made every
@@ -233,6 +248,16 @@ export default function BodyShop() {
                   {stats.toOrder}
                 </span>
               )}
+            </button>
+          )}
+          {manager && washStuck > 0 && (
+            <button onClick={() => navigate('/wash-line')}
+              className="relative p-2 rounded-lg bg-slate-800 border border-slate-700 active:bg-slate-700"
+              title={`${washStuck} washed ${washStuck === 1 ? 'car' : 'cars'} nobody could identify — they're still open on this board`}>
+              🧽
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-slate-900 text-[10px] font-bold leading-4">
+                {washStuck}
+              </span>
             </button>
           )}
           {manager && (

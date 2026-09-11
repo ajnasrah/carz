@@ -33,8 +33,30 @@ const MONTHS = {
 }
 const DOW = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
 
+// Weekdays as they are actually typed — one thumb, on a phone, in a body shop.
+//
+// The abbreviations are the normal half of this. The misspellings are the half
+// that matters: "eta tueday" read as no date at all, and a note that silently
+// fails to produce a date is worse than one that gets it wrong, because the car
+// simply drops into "No date" and nobody is told the board didn't understand.
+// These are the slips people actually make — a dropped letter, two swapped —
+// and every one of them is unambiguous about which day is meant.
+//
+// Spelled out rather than matched loosely (`sun[a-z]*` would swallow SUNROOF,
+// which is a part, not a day), and mapped word-by-word because a misspelling
+// has no reliable three-letter stem: "thersday" starts "the", "firday" "fir".
+const DOW_WORDS = {
+  sunday: 0, sun: 0,
+  monday: 1, munday: 1, mon: 1,
+  tuesday: 2, tuseday: 2, tuesdy: 2, tueday: 2, tuesd: 2, tues: 2, tue: 2,
+  wednesday: 3, wednsday: 3, wendsday: 3, wensday: 3, wedesday: 3, weds: 3, wed: 3,
+  thursday: 4, thrusday: 4, thersday: 4, thursdy: 4, thurday: 4, thurs: 4, thur: 4, thu: 4,
+  friday: 5, firday: 5, fridy: 5, fri: 5,
+  saturday: 6, saterday: 6, satruday: 6, sat: 6,
+}
+
 const MON_RE = String.raw`(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?`
-const DOW_RE = String.raw`(?:sun(?:day)?|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?|r)?|fri(?:day)?|sat(?:urday)?)`
+const DOW_RE = `(?:${Object.keys(DOW_WORDS).sort((a, b) => b.length - a.length).join('|')})`
 
 // The words that mark what follows as a delivery date. Anything not introduced
 // by one of these is not an ETA — see the note above about bare numbers.
@@ -197,7 +219,7 @@ function resolve(g, anchor) {
   }
 
   if (g.dow) {
-    const d = DOW[g.dow.slice(0, 3).toLowerCase()]
+    const d = DOW_WORDS[g.dow.toLowerCase()]
     if (d == null) return null
     return nextDow(base, d)
   }
