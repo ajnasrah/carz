@@ -34,10 +34,17 @@ export async function fetchTraining(db) {
 }
 
 // 10 digits, US. An 11-digit number starting with 1 is the same number.
+//
+// Placeholders are not numbers: CarMax's SmartAuction record carries
+// 999-999-9999, and it was being offered as a buyer to text. A real US number
+// never starts its area code or exchange with 0 or 1, and is never one digit
+// repeated.
 export function tenDigits(phone) {
-  const d = String(phone ?? '').replace(/\D/g, '')
-  if (d.length === 11 && d.startsWith('1')) return d.slice(1)
-  return d.length === 10 ? d : null
+  let d = String(phone ?? '').replace(/\D/g, '')
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1)
+  if (d.length !== 10) return null
+  if (/^[01]/.test(d) || /^\d{3}[01]/.test(d) || /^(\d)\1{9}$/.test(d)) return null
+  return d
 }
 
 const textable = (cand) => !cand.is_channel && !!tenDigits(cand.buyer_phone)

@@ -7,6 +7,8 @@ test('tenDigits accepts 10 digits or a leading 1, nothing else', () => {
   assert.equal(tenDigits('1-316-655-1656'), '3166551656')
   assert.equal(tenDigits('655-1656'), null)
   assert.equal(tenDigits(null), null)
+  assert.equal(tenDigits('(999) 999-9999'), null)
+  assert.equal(tenDigits('123-456-7890'), null)
 })
 
 test('only buyers with a phone are picked, never a lane', () => {
