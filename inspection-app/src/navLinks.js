@@ -36,6 +36,10 @@ export const PRIMARY_LINKS = [
   { to: '/marketplace', emoji: '🏪', label: 'Marketplace' },
   { to: '/front-lot-aging', emoji: '⏰', label: 'Lot Aging' },
   { to: '/buyer-match', emoji: '🎯', label: 'Buyers' },
+  // Beside it, because they answer opposite questions: Buyers is "who do I call
+  // about this car", the Buyer Book is "who is this dealer, and what have we
+  // said to him". The phone's four tabs are untouched.
+  { to: '/buyers', emoji: '📇', label: 'Buyer Book' },
   // The car list itself — every car that left, searchable, with its history.
   // It lives down here with the other look-it-up screens rather than under Cars,
   // and it is called a list because that is what distinguishes it from the

@@ -41,6 +41,7 @@ const Sold = lazy(() => import('./pages/Sold'))
 const Admin = lazy(() => import('./pages/Admin'))
 const Checklists = lazy(() => import('./pages/Checklists'))
 const Messages = lazy(() => import('./pages/Messages'))
+const Buyers = lazy(() => import('./pages/Buyers'))
 const Outreach = lazy(() => import('./pages/Outreach'))
 const LotWalk = lazy(() => import('./pages/LotWalk'))
 const SoldReports = lazy(() => import('./pages/SoldReports'))
@@ -280,6 +281,9 @@ function AppRoutes() {
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/checklists" element={<ProtectedRoute><Checklists /></ProtectedRoute>} />
       <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
+      {/* The buyer book. Staff only in the functions it reads, which return
+          nothing to a signed-in buyer. */}
+      <Route path="/buyers" element={<ProtectedRoute><Buyers /></ProtectedRoute>} />
       <Route path="/outreach" element={<ProtectedRoute><Outreach /></ProtectedRoute>} />
 
       {/* Public marketplace — no auth required, shareable links */}
