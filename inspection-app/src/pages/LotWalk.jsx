@@ -2,8 +2,10 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Mic, Square, Search, CheckCircle2, X, AlertCircle, Camera, CameraOff } from 'lucide-react'
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode'
-import { supabase } from '../services/supabase'
+import { supabase, selectAll } from '../services/supabase'
 import HistoryButton from '../components/HistoryButton'
+import AuctionListUpload from '../components/AuctionListUpload'
+import { WALK_VENDORS, AUCTION_LOCATIONS } from '../services/locationLabels'
 import {
   fetchSections, recordScan, recordUnmatchedVehicle, filterInventory, parseSpokenDigits,
   extractVIN, matchVehicleByVIN,
@@ -13,6 +15,11 @@ import { store } from '../native/storage'
 import * as haptics from '../native/haptics'
 
 const RECENT_LIMIT = 6
+
+// Vendors and auctions sit in the picker beside the lot sections so a walker
+// can walk a shop's yard too. They carry their own location slug; lot sections
+// don't, and get their name slugified in recordScan.
+const OUTSIDE_PLACES = [...WALK_VENDORS, ...AUCTION_LOCATIONS]
 
 export default function LotWalk() {
   const navigate = useNavigate()
@@ -55,16 +62,19 @@ export default function LotWalk() {
   useEffect(() => {
     let cancelled = false
     async function load() {
-      // Inventory query (independent of sections)
-      const invRes = await supabase
-        .from('inventory')
-        .select('stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model')
-      if (cancelled) return
-      if (invRes.error) {
-        console.error('LotWalk inventory load failed', invRes.error)
-        showToast('error', 'Inventory load failed', invRes.error.message)
-      } else {
-        setInventory(invRes.data || [])
+      // Inventory query (independent of sections). selectAll, because PostgREST
+      // stops a bare select at 1000 rows and a car past the cap would read as
+      // "not in inventory" to every scan and every uploaded list.
+      try {
+        const rows = await selectAll(() => supabase
+          .from('inventory')
+          .select('stock_number, vehicle_vin, last_6_vin, vehicle_year, vehicle_make, vehicle_model'))
+        if (cancelled) return
+        setInventory(rows)
+      } catch (err) {
+        if (cancelled) return
+        console.error('LotWalk inventory load failed', err)
+        showToast('error', 'Inventory load failed', err.message)
       }
 
       // Sections query (independent of inventory)
@@ -80,7 +90,7 @@ export default function LotWalk() {
           // the walker would otherwise lose their section every few days.
           const saved = await store.get('lotwalk:section')
           if (cancelled) return
-          if (saved && secs.some((s) => s.name === saved)) setSection(saved)
+          if (saved && (secs.some((s) => s.name === saved) || OUTSIDE_PLACES.some((p) => p.name === saved))) setSection(saved)
           else setSection(secs[0].name)
         }
       } catch (err) {
@@ -124,6 +134,8 @@ export default function LotWalk() {
   }, [toast])
 
   const matches = useMemo(() => filterInventory(inventory, query).slice(0, 8), [inventory, query])
+  const sectionLocation = OUTSIDE_PLACES.find((p) => p.name === section)?.location
+  const isKnownPlace = sections.some((s) => s.name === section) || !!sectionLocation
 
   const submitScan = useCallback(async (vehicle, inputMethod) => {
     if (!section) {
@@ -150,6 +162,7 @@ export default function LotWalk() {
         stock_number: vehicle.stock_number,
         vin: vehicle.vehicle_vin,
         section,
+        location: sectionLocation,
         input_method: inputMethod,
       })
       const label = [vehicle.vehicle_year, vehicle.vehicle_make, vehicle.vehicle_model]
@@ -171,7 +184,7 @@ export default function LotWalk() {
       haptics.fail()
       showToast('error', 'Scan failed', err.message)
     }
-  }, [section, showToast])
+  }, [section, sectionLocation, showToast])
 
   // Keep refs in sync so voice + camera effects can read latest without re-running
   useEffect(() => { inventoryRef.current = inventory }, [inventory])
@@ -482,7 +495,7 @@ export default function LotWalk() {
           Current Section
         </label>
         <select
-          value={sections.some((s) => s.name === section) ? section : (section ? '__other__' : '')}
+          value={isKnownPlace ? section : (section ? '__other__' : '')}
           onChange={(e) => setSection(e.target.value === '__other__' ? '' : e.target.value)}
           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-3 text-base font-bold text-emerald-400 focus:outline-none focus:border-emerald-500"
           disabled={loading}
@@ -490,15 +503,29 @@ export default function LotWalk() {
           {sections.length === 0 && (
             <option value="">{loading ? 'Loading sections...' : 'No sections — add in admin'}</option>
           )}
-          {sections.map((s) => (
-            <option key={s.id} value={s.name}>{s.name}</option>
-          ))}
+          {sections.length > 0 && (
+            <optgroup label="Lot">
+              {sections.map((s) => (
+                <option key={s.id} value={s.name}>{s.name}</option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Vendors">
+            {WALK_VENDORS.map((p) => (
+              <option key={p.location} value={p.name}>{p.name}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Auctions">
+            {AUCTION_LOCATIONS.map((p) => (
+              <option key={p.location} value={p.name}>{p.name}</option>
+            ))}
+          </optgroup>
           <option value="__other__">✏️ Other (type custom)…</option>
         </select>
-        {(!sections.some((s) => s.name === section) || !section) && (
+        {(!isKnownPlace || !section) && (
           <input
             type="text"
-            value={sections.some((s) => s.name === section) ? '' : section}
+            value={isKnownPlace ? '' : section}
             onChange={(e) => setSection(e.target.value)}
             placeholder="Type a custom location (e.g. Pro Auto, Summit, mechanic section)"
             className="mt-2 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-emerald-400 focus:outline-none focus:border-emerald-500"
@@ -619,6 +646,15 @@ export default function LotWalk() {
             Heard: <span className="text-white font-mono font-bold">{voiceText}</span>
           </p>
         )}
+      </div>
+
+      {/* Pictures of an auction's inventory → locations */}
+      <div className="mt-4">
+        <AuctionListUpload
+          inventory={inventory}
+          defaultAuction={sectionLocation}
+          onToast={showToast}
+        />
       </div>
 
       {/* Recent scans */}

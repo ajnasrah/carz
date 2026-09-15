@@ -37,7 +37,7 @@ export const LOCATION_LABELS = {
   andys_auto: "Andy's Auto",
   summit_tire: "Summit Tire",
   tri_state: "Tri State",
-  tri_state_glass: "Tri State Glass",
+  tri_state_glass: "Tri State Auto Glass",
   city_auto: "City Auto",
   upholstery: "Upholstery",
   jim_keras_nissan: "Jim Keras Nissan",
@@ -76,6 +76,36 @@ export const LOCATION_LABELS = {
   ready_detail: "Detail",
   arb_section: "Arbitration",
 };
+// Outside places a lot walker goes and walks, in the Walk Lot section picker
+// beside the lot sections. `location` is the slug the Telegram bot already
+// writes for that shop, NOT the label slugified: "Tri State Auto Glass" would
+// slugify to tri_state_auto_glass, a place nothing else knows about.
+export const WALK_VENDORS = [
+  { name: "Pro Auto", location: "pro_auto" },
+  { name: "Summit Tire", location: "summit_tire" },
+  { name: "Santa Maria Tire & Alignment", location: "santa_maria" },
+  { name: "Andy's Auto", location: "andys_auto" },
+  // tri_state_glass, not tri_state: it's what the bot's keyword writes and what
+  // the history trigger files under the 'glass' service type.
+  { name: "Tri State Auto Glass", location: "tri_state_glass" },
+  { name: "Upholstery", location: "upholstery" },
+];
+
+// Auctions a car can physically sit at — the Walk Lot picker, and the choices
+// for "Upload inventory list". Slugs match the extension's run-list uploads.
+export const AUCTION_LOCATIONS = [
+  { name: "Manheim Denver", location: "manheim_denver" },
+  { name: "Manheim San Francisco", location: "manheim_sf" },
+  { name: "Manheim Riverside", location: "manheim_riverside" },
+  { name: "Manheim Little Rock", location: "manheim_little_rock" },
+  { name: "DAA Rockies", location: "daa_rockies" },
+  { name: "DAA", location: "daa" },
+  { name: "UAX", location: "uax" },
+  { name: "ADESA", location: "adesa" },
+  { name: "Loveland Auto Auction", location: "loveland" },
+  { name: "Copart", location: "copart" },
+];
+
 // Format any location value for display: use the label if we have one,
 // otherwise prettify the raw slug (snake_case → Title Case) so chat entries
 // like "901_sound" render as "901 Sound" instead of "901_SOUND".

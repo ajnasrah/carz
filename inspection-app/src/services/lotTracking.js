@@ -11,7 +11,10 @@ export async function fetchSections() {
   return data || []
 }
 
-export async function recordScan({ stock_number, vin, section, input_method, notes }) {
+// `location` is the physical_location slug when the section is a known place
+// with its own slug (a vendor or auction); lot sections leave it out and get
+// their name slugified.
+export async function recordScan({ stock_number, vin, section, location, input_method, notes }) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated — sign in first')
   const nowIso = new Date().toISOString()
@@ -32,7 +35,7 @@ export async function recordScan({ stock_number, vin, section, input_method, not
   // Mirror into vehicle_locations so the Inventory page's unified location
   // pipeline (filters, stuck-21d signal, export CSV) reflects scans too.
   // physical_location is slugified from the raw section name.
-  const slug = String(section || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  const slug = location || String(section || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
   if (slug) {
     // Scanning a car in the section it is already in is not a move, and must
     // not restamp location_updated_at. That column answers "how long has it
