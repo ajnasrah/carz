@@ -38,6 +38,12 @@ const median = (a) => {
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 };
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+// Makes are compared, so they must be spelled one way. SmartAuction's export
+// writes "Ford" and "Chevrolet"; Frazer, the auctions and the car list write
+// "FORD". Compared raw, 1,171 of 1,271 SmartAuction sales matched no car's make:
+// every SmartAuction buyer's make affinity was silently zero, and the reason
+// text told staff a dealer with eleven Ford Edges bought "no FORD".
+const normMake = (m) => String(m ?? '').trim().toUpperCase();
 
 export function segment(make, model) {
   const s = `${make ?? ''} ${model ?? ''}`.toLowerCase();
@@ -212,6 +218,7 @@ export function buildModel(sold, config = {}) {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const rows = sold.map((r) => ({
     ...r,
+    make: normMake(r.make),
     _p: num(r.sale_price), _o: num(r.odometer), _y: num(r.year),
     _seg: r.segment || segment(r.make, r.model),
     _fam: modelFamily(r.make, r.model),
@@ -372,6 +379,7 @@ export function buildModel(sold, config = {}) {
 function cmv(car, model) {
   const { rows } = model;
   const seg = car.segment || segment(car.make, car.model);
+  const make = normMake(car.make);
   const y = num(car.year), o = num(car.odometer);
   const bn = num(car.buy_now) ?? num(car.opening_price) ?? num(car.price);
   const inBand = (r) => !bn || (r._p >= bn * 0.5 && r._p <= bn * 2);
@@ -380,9 +388,9 @@ function cmv(car, model) {
     return c.length >= minN ? median(c) : null;
   };
   const strong =
-    comp((r) => r.make === car.make && r._seg === seg && r._y && Math.abs(r._y - y) <= 2 && r._o && Math.abs(r._o - o) <= 25000, 3) ||
+    comp((r) => r.make === make && r._seg === seg && r._y && Math.abs(r._y - y) <= 2 && r._o && Math.abs(r._o - o) <= 25000, 3) ||
     comp((r) => r._seg === seg && r._y && Math.abs(r._y - y) <= 2 && r._o && Math.abs(r._o - o) <= 30000, 4) ||
-    comp((r) => r.make === car.make && r._seg === seg, 3);
+    comp((r) => r.make === make && r._seg === seg, 3);
   if (bn && strong) return 0.6 * bn + 0.4 * strong;
   if (strong) return strong;
   // A segment-only median is unreliable for an off-profile car (a $6.5k micro-EV
@@ -397,6 +405,7 @@ export function scoreCar(car, model, demand) {
   const { profiles, segMed, segBase, makeBase, famBase, cfg } = model;
   const seg = car.segment || segment(car.make, car.model);
   const fam = modelFamily(car.make, car.model);
+  const make = normMake(car.make);
   const value = cmv(car, model);
   const codo = num(car.odometer);
   const tier = priceTier(value, segMed[seg]);
@@ -418,8 +427,8 @@ export function scoreCar(car, model, demand) {
     const segRate = Math.max(segBase[seg] || 0.01, 0.01);
     const segShare = ((p.segW[seg] || 0) + K * segRate) / (p.w + K);
     const segLift = segShare / segRate;
-    const msRate = Math.max((makeBase[car.make] || 0) * segRate, 0.002);
-    const msShare = ((p.makeSegW[`${car.make}|${seg}`] || 0) + K * msRate) / (p.w + K);
+    const msRate = Math.max((makeBase[make] || 0) * segRate, 0.002);
+    const msShare = ((p.makeSegW[`${make}|${seg}`] || 0) + K * msRate) / (p.w + K);
     const msLift = msShare / msRate;
     // --- and does he buy THIS nameplate ---
     // Same lift-and-shrink shape one level finer. A dealer with four Cherokees
@@ -468,16 +477,28 @@ export function scoreCar(car, model, demand) {
     const score = likelihood * Math.pow(prem, cfg.dollarWeight);
 
     const segN = p.cars.filter((c) => c._seg === seg).length;
-    const makeInSeg = p.cars.filter((c) => c._seg === seg && c.make === car.make).length;
+    const makeInSeg = p.cars.filter((c) => c._seg === seg && c.make === make).length;
     const nameplateN = fam ? (p.famN[fam] || 0) : 0;
     // "High" used to mean three of the same make in the same body style, which is
     // how four Cherokees certified a Wrangler Rubicon as a high-confidence match.
     // The badge does not move the ranking, so it can afford to be strict: high
     // means we have actually watched this buyer take this nameplate.
-    const confidence = p.is_channel
+    const byHistory = p.is_channel
       ? (segN >= 20 ? 'high' : segN >= 5 ? 'medium' : 'low')
       : (nameplateN >= 2 || (nameplateN >= 1 && segN >= 5)) ? 'high'
         : (nameplateN >= 1 || makeInSeg >= 2 || (segN >= 3 && priceFit > 0.5)) ? 'medium' : 'low';
+    // ...and has he bought anything like THIS one. Nameplate alone labelled a
+    // 131k-mile Corolla "high" for a dealer whose one Corolla, like everything
+    // else he buys, was a newer, lower-mile car. Same body style, within three
+    // model years and 40k miles, is what "like this" means here.
+    const cy = num(car.year);
+    const nearN = p.cars.filter((c) => c._seg === seg
+      && (!cy || !c._y || Math.abs(c._y - cy) <= 3)
+      && (!codo || !c._o || Math.abs(c._o - codo) <= 40000)).length;
+    const confidence = p.is_channel ? byHistory
+      : nearN === 0 ? 'low'
+        : nearN === 1 && byHistory === 'high' ? 'medium'
+          : byHistory;
 
     const geoStr = miles == null ? (p.state || '—') : `${p.state}, ~${miles}mi`;
     const fresh = p.daysSince == null ? 'no dated buys' : p.daysSince <= 45 ? 'buying now' : `last bought ${p.daysSince}d ago`;

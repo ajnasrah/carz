@@ -61,6 +61,11 @@ export default async function handler(req, res) {
     }
 
     const rows = textablePicks(cars, training, demand)
+    // Same reasoning: zero picks for a hundred cars is a broken read (no phones
+    // came back), not an answer. Replacing with nothing would blank every button.
+    if (!rows.length) {
+      return res.status(200).json({ saved: 0, skipped: 'no textable picks', cars: cars.length, training: training.length })
+    }
     if (req.query?.dry === '1') {
       return res.status(200).json({ dry: true, cars: cars.length, training: training.length, picks: rows.length, rows })
     }

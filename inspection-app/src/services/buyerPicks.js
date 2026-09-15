@@ -57,7 +57,9 @@ export function buyerShortName(name) {
     n = n.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase())
       // Keep dealer-group initials in capitals: CDJR, GMC, BMW.
       .replace(/\b(Cdjr|Gmc|Bmw|Kia|Rv|Usa|Ii|Iii)\b/g, (m) => m.toUpperCase())
-      .replace(/(?<=\s)(Of|The|And)\b/g, (m) => m.toLowerCase())
+      // No lookbehind here: the iOS app supports iOS 15, whose Safari cannot
+      // parse one — and a regex it cannot parse fails the whole bundle.
+      .replace(/ (Of|The|And)\b/g, (m) => m.toLowerCase())
   }
   return n || 'there'
 }

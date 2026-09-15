@@ -4,15 +4,15 @@ import { buildPitchMessage, buyerShortName, logBuyerPitch, agoLabel } from '../s
 import { openExternal, smsUrl } from '../native/links'
 import { dealerPhonePretty } from '../config/dealer'
 
-// Log first, then open Messages — but never let a slow network hold the text
-// up. On the phone, opening Messages backgrounds the app, and a request still in
-// flight at that moment may never land; 800 ms is enough for it to go out.
-async function pitch(car, pick, onPitched) {
-  const logged = logBuyerPitch(car, pick)
+// Start the log, then open Messages straight away. The request is already on
+// the wire by the time Messages takes over, and waiting on it first risks a
+// phone browser refusing to open Messages from something that no longer looks
+// like the tap.
+function pitch(car, pick, onPitched) {
+  logBuyerPitch(car, pick)
     .then(() => onPitched?.(car, pick))
     .catch((err) => console.warn('pitch log failed', err))
-  await Promise.race([logged, new Promise((r) => setTimeout(r, 800))])
-  await openExternal(smsUrl(pick.buyer_phone, buildPitchMessage(car, pick)))
+  return openExternal(smsUrl(pick.buyer_phone, buildPitchMessage(car, pick)))
 }
 
 const CONFIDENCE = {
