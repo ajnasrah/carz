@@ -19,6 +19,8 @@
 //
 // Env: ANTHROPIC_API_KEY
 
+import { appCors } from './_lib/cors.js'
+
 const API = 'https://api.anthropic.com/v1/messages'
 
 // The conversation model.
@@ -296,6 +298,7 @@ async function employeeFromToken(token) {
 }
 
 export default async function handler(req, res) {
+  if (appCors(req, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'POST only' })
     return

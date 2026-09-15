@@ -14,6 +14,7 @@
 // Env: ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 import { employeeFromToken, bearer } from './_lib/employee.js'
+import { appCors } from './_lib/cors.js'
 
 const API = 'https://api.anthropic.com/v1/messages'
 
@@ -82,6 +83,7 @@ async function callClaude(body, apiKey) {
 }
 
 export default async function handler(req, res) {
+  if (appCors(req, res)) return
   if (req.method !== 'POST') { res.status(405).json({ error: 'POST only' }); return }
 
   const apiKey = process.env.ANTHROPIC_API_KEY

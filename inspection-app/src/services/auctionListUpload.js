@@ -19,6 +19,7 @@
 
 import { supabase } from './supabase'
 import { isSamePlace } from './locationLabels'
+import { API_BASE_URL } from '../native/platform'
 
 // ---------------------------------------------------------------- images
 
@@ -58,7 +59,7 @@ export async function readInventoryImage(file, auctionName) {
   if (!token) throw new Error('Sign in again')
 
   const { media_type, data } = await prepareImage(file)
-  const res = await fetch('/api/auction-list-read', {
+  const res = await fetch(`${API_BASE_URL}/api/auction-list-read`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ image: data, media_type, auction: auctionName }),

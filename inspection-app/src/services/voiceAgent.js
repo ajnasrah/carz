@@ -8,6 +8,7 @@
 // cannot tell them apart.
 
 import { supabase } from './supabase'
+import { API_BASE_URL } from '../native/platform'
 
 // One turn. `messages` is the running thread in Anthropic shape; the endpoint
 // returns the assistant/tool blocks it added so the next turn can carry them.
@@ -16,7 +17,7 @@ export async function askAgent(messages) {
   const token = session?.access_token
   if (!token) throw new Error('Sign in again')
 
-  const res = await fetch('/api/voice-agent', {
+  const res = await fetch(`${API_BASE_URL}/api/voice-agent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ messages }),

@@ -20,6 +20,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Mic, Square, Loader2, Check } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { createSpeechSession, speechAvailable } from '../native/speech'
+import { API_BASE_URL } from '../native/platform'
 import { MECHANICAL_CHECKS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
 import {
   addFinding, setCheckStatus, isAnswered, readFindings, readOtherFindings,
@@ -134,7 +135,7 @@ export default function InspectAgent() {
       // background. Not spoken at the inspector — it earns its place only when
       // the agent decides it is worth his time.
       try {
-        const res = await fetch('/api/inspect-agent', {
+        const res = await fetch(`${API_BASE_URL}/api/inspect-agent`, {
           method: 'POST',
           headers: await authHeaders(),
           body: JSON.stringify({
@@ -187,7 +188,7 @@ export default function InspectAgent() {
     const remaining = MECHANICAL_CHECKS
       .filter((c) => !isAnswered(checklistRef.current, c.section, c.id))
       .map((c) => c.label)
-    const res = await fetch('/api/inspect-agent', {
+    const res = await fetch(`${API_BASE_URL}/api/inspect-agent`, {
       method: 'POST',
       headers: await authHeaders(),
       body: JSON.stringify({

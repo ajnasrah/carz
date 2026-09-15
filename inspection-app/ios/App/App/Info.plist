@@ -32,7 +32,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Carz IMS converts spoken stock numbers into text so a vehicle can be logged to a lot section without stopping to type.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Carz IMS lets you attach an existing photo from your library to a vehicle inspection.</string>
+	<string>Carz IMS lets you attach an existing photo from your library to a vehicle inspection, and upload screenshots of an auction's inventory list so the cars on it can be marked at that auction.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Carz IMS saves inspection photos and exported reports to your photo library when you choose to.</string>
 	<!-- Exports (inventory CSV, target buy list XLSX) are written here and handed

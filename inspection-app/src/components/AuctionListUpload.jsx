@@ -65,9 +65,13 @@ export default function AuctionListUpload({ inventory, defaultAuction, onToast }
   }, [auction, reads.length, applied])
 
   const byStock = useMemo(() => new Map(inventory.map((c) => [c.stock_number, c])), [inventory])
+  // Only cars still in inventory: a sold car's location row keeps the last
+  // place it stood, and "missing from the pictures" means nothing for it.
   const missing = useMemo(() => {
     const seen = new Set(matchedStocks)
-    return atAuction.filter((s) => !seen.has(s)).map((s) => ({ stock_number: s, car: byStock.get(s) }))
+    return atAuction
+      .filter((s) => !seen.has(s) && byStock.has(s))
+      .map((s) => ({ stock_number: s, car: byStock.get(s) }))
   }, [atAuction, matchedStocks, byStock])
 
   const isTicked = (e) => ticked[e.car.stock_number] ?? (e.kind === 'found')
@@ -273,10 +277,10 @@ export default function AuctionListUpload({ inventory, defaultAuction, onToast }
               {missing.map((m) => (
                 <div key={m.stock_number} className="px-2 py-1.5 text-xs">
                   <p className="text-slate-300 truncate">
-                    {m.car ? [m.car.vehicle_year, m.car.vehicle_make, m.car.vehicle_model].filter(Boolean).join(' ') : 'Not in current inventory'}
+                    {[m.car.vehicle_year, m.car.vehicle_make, m.car.vehicle_model].filter(Boolean).join(' ') || `Stock ${m.stock_number}`}
                   </p>
                   <p className="text-slate-500 font-mono text-[10px]">
-                    {m.stock_number}{m.car?.vehicle_vin ? ` · ${m.car.vehicle_vin.slice(-6)}` : ''}
+                    {m.stock_number}{m.car.vehicle_vin ? ` · ${m.car.vehicle_vin.slice(-6)}` : ''}
                   </p>
                 </div>
               ))}
