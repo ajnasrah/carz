@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Upload, Copy, Mail, Phone, Check, ChevronDown, ChevronUp, RefreshCw, Sparkles, ExternalLink, Send } from 'lucide-react'
 import { recommendAll, recommendForBuyers } from '../services/buyerMatch'
 import {
   parseCSV, mapActiveRow, mapSoldRow,
@@ -14,6 +14,8 @@ import { peekBuyerMatchBootstrap } from '../services/buyerMatchData'
 import * as engine from '../services/buyerMatch'
 import HistoryButton from '../components/HistoryButton'
 import { copyText } from '../native/clipboard'
+import { useAuth } from '../context/useAuth'
+import { isPrimaryAdmin } from '../services/adminSetup'
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 // See BuyerCarsView: Buy Now is empty on our SmartAuction listings, the ask
@@ -27,6 +29,8 @@ const CONF = {
 
 export default function BuyerMatch() {
   const navigate = useNavigate()
+  const { profile } = useAuth()
+  const isAdminProfile = profile?.role === 'admin' || isPrimaryAdmin(profile?.phone)
   const boot = peekBuyerMatchBootstrap()
   const [active, setActive] = useState(() => boot?.cars || [])      // every car we are trying to sell
   const [sold, setSold] = useState(() => boot?.training || [])      // training rows, all channels
@@ -295,6 +299,11 @@ export default function BuyerMatch() {
               </button>
             ))}
           </div>
+          {isAdminProfile && (
+            <button onClick={() => navigate('/outreach')} className="p-2 text-slate-400 hover:text-sky-400" title="Buyer Outreach">
+              <Send size={18} />
+            </button>
+          )}
           <a href="/listings" target="_blank" rel="noreferrer" className="p-2 text-slate-400 hover:text-emerald-400" title="Public listings">
             <ExternalLink size={18} />
           </a>

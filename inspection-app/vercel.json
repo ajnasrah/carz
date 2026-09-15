@@ -79,6 +79,10 @@
     {
       "path": "/api/buyer-picks",
       "schedule": "23 * * * *"
+    },
+    {
+      "path": "/api/outreach",
+      "schedule": "* * * * *"
     }
   ]
 }

@@ -17,6 +17,28 @@
 
 import { sendSms, logSms } from './_lib/sms.js'
 
+// Buyer Outreach: a reply from a buyer who was texted a car pauses that car, a
+// STOP opts them out. Returns what matched (car, buyer) or null for everyone
+// else — the crew, the owner, a stranger. Never throws.
+async function outreachReply(phone, text) {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return null
+  try {
+    const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/rpc/outreach_record_reply`, {
+      method: 'POST',
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_phone: phone, p_body: text }),
+    })
+    if (!r.ok) return null
+    return await r.json().catch(() => null)
+  } catch {
+    return null
+  }
+}
+
 const FORWARD_TO = process.env.SMS_FORWARD_TO || '+19018319661'
 
 function pretty(e164) {
@@ -62,6 +84,10 @@ export default async function handler(req, res) {
     // Logged first, and logged even when it came from the owner himself. If the
     // forward below fails — Twilio down, a bad number — the crew member's answer
     // still exists somewhere a person can read it.
+    // Outreach first: it's one quick call, and pausing the car is the part a
+    // buyer is waiting on. Its failure is swallowed, so the log below still runs.
+    const outreach = await outreachReply(from, text)
+
     await logSms({
       direction: 'in',
       phone: from,
@@ -80,7 +106,17 @@ export default async function handler(req, res) {
 
     // log:false — this is a copy for the owner's phone, not a message to a crew
     // member. Logging it would put the owner in the middle of every thread.
-    await sendSms(FORWARD_TO, `Reply from ${pretty(from)}:\n${text}`, { log: false })
+    // A buyer answering an outreach text gets the car named in the copy, and
+    // whether the queue paused on it, so the owner knows what he's replying about.
+    let head = `Reply from ${pretty(from)}:`
+    if (outreach?.opted_out) {
+      head = `Buyer opted out - ${outreach.buyer_name || pretty(from)} (${pretty(from)}):`
+    } else if (outreach?.car_id) {
+      const state = outreach.paused ? 'PAUSED, waiting on you' : `car is ${outreach.car_status}`
+      head = `Buyer reply - ${outreach.buyer_name || pretty(from)} (${pretty(from)})\n` +
+        `Re: ${outreach.car} VIN ${outreach.vin}\n${state} - carzinc.ai/outreach`
+    }
+    await sendSms(FORWARD_TO, `${head}\n${text}`, { log: false })
   } catch {
     /* never fail the webhook — Twilio would retry and the crew would see it */
   }

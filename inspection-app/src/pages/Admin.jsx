@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { openReservations, decideReservation } from '../services/reservations'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X, FileSpreadsheet, MessageSquare } from 'lucide-react'
+import { ArrowLeft, UserPlus, Trash2, Shield, User, AlertTriangle, Clock, Check, X, FileSpreadsheet, MessageSquare, Send } from 'lucide-react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
@@ -258,6 +258,17 @@ export default function Admin() {
           <MessageSquare size={18} className="text-emerald-400" /> Daily Checklists
         </span>
         <span className="text-sm text-slate-400">Texts that go out on their own</span>
+      </button>
+
+      {/* Cars texted to their AI-matched buyers, one at a time. */}
+      <button
+        onClick={() => navigate('/outreach')}
+        className="card w-full flex items-center justify-between mb-6 text-left"
+      >
+        <span className="flex items-center gap-2 font-semibold text-white">
+          <Send size={18} className="text-sky-400" /> Buyer Outreach
+        </span>
+        <span className="text-sm text-slate-400">Text each car to its best buyers</span>
       </button>
 
       {/* Every text that went out and every reply that came back. */}
