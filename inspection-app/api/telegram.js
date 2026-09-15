@@ -137,6 +137,14 @@ async function processUpdate(update) {
     : null;
   const mediaGroupId = msg.media_group_id || null; // album id (photos sent together)
 
+  // An edit arrives with the SAME message_id as the original, so the claim
+  // below saw a duplicate and dropped it — the database kept the words as first
+  // sent. D13241: the tech added "Rear bumper has dents..." to his caption and
+  // the damage autofill never saw it, because it reads `body`.
+  if (update.edited_message && !update.message) {
+    if (await applyEdit(db, chat, msgKey, text)) return;
+  }
+
   // Idempotency claim — duplicate delivery returns no row.
   const { data: claimed } = await db.from('wa_inbound_messages')
     .upsert(
@@ -439,6 +447,28 @@ async function processUpdate(update) {
   await sweepParkedPhotos(db);
   // And correct any guess a later message has since contradicted.
   await rebindGuessedPhotos(db);
+}
+
+// Take an edited message's new words. Returns false when the original was never
+// stored, so the edit is processed as the message it now is.
+//
+// Only the text changes. The car the original was filed under stays — moving a
+// message (and its photos) to another car off an edit is a different job, and
+// the side effects that already ran for the original (location, mileage check,
+// queue reopen) must not fire twice. The damage autofill caches on a hash of
+// `body`, so the new text is re-read the next time the car is listed.
+async function applyEdit(db, chat, msgKey, text) {
+  const { data: row } = await db.from('wa_inbound_messages')
+    .select('vin6').eq('message_id', msgKey).maybeSingle();
+  if (!row) return false;
+  const patch = { body: text };
+  if (row.vin6 && (chat.station === 'ready' || chat.station === 'seller')) {
+    const parsed = parseVehicleEntry(text);
+    if (parsed) patch.parsed = { ...parsed, vin6: row.vin6 };
+  }
+  const { error } = await db.from('wa_inbound_messages').update(patch).eq('message_id', msgKey);
+  if (error) console.error('edit not saved for', msgKey, error.message || error);
+  return true;
 }
 
 // Put a car back in the extension's ready-to-list view when the team re-shoots
