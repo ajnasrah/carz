@@ -11,6 +11,11 @@
 
   let cfg = { supabaseUrl: '', supabaseKey: '' };
 
+  // sa_sold_sales holds buyer phones and emails, so it is closed to the anon key
+  // (2026-09-15). Sold rows go in through ingest_sa_sold_sales(), which checks the
+  // same shared key the extension already uses for costs — see popup.js.
+  const EXTENSION_KEY = 'czx_s2CXF2vUcS189WtVszHHu2i4qXLh';
+
   // ── CSV parsing (handles quoted fields, embedded commas/JSON, CRLF) ──
   function parseCSV(text) {
     const rows = [];
@@ -169,6 +174,25 @@
     return ok;
   }
 
+  // Sold rows → sa_sold_sales, by VIN, newest row winning. `conn` lets
+  // list-uploader.js pass its own url/key rather than depend on bindUI order.
+  async function ingestSold(rows, conn) {
+    const url = (conn && conn.supabaseUrl) || cfg.supabaseUrl;
+    const key = (conn && conn.supabaseKey) || cfg.supabaseKey;
+    const list = dedupeByKey(rows.filter((r) => r.vin && r.buyer_name), 'vin');
+    let ok = 0;
+    for (let i = 0; i < list.length; i += 500) {
+      const res = await fetch(`${url}/rest/v1/rpc/ingest_sa_sold_sales`, {
+        method: 'POST',
+        headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_key: EXTENSION_KEY, p_rows: list.slice(i, i + 500) }),
+      });
+      if (!res.ok) throw new Error(`sa_sold_sales: ${res.status} ${await res.text()}`);
+      ok += Number(await res.json()) || 0;
+    }
+    return ok;
+  }
+
   // Fire the ghl-lead-sync edge function — pushes never-contacted buyers to GHL.
   // Best-effort: never throws, returns a short summary string for the log.
   async function triggerGhlSync() {
@@ -237,7 +261,7 @@
             .sort((a, b) => String(a.sale_date || '').localeCompare(String(b.sale_date || '')));  // oldest→newest, so dedupe keeps newest
           if (!rows.length) throw new Error('No sold rows with VIN + buyer found');
           setStatus(statusId, `Uploading ${rows.length}…`);
-          const n = await upsert('sa_sold_sales', rows, 'vin');
+          const n = await ingestSold(rows);
           setStatus(statusId, `✓ ${n} sold (deduped from ${rows.length})`, 'loaded');
           log(`Sold: upserted ${n} unique VINs from ${rows.length} rows`, 'ok');
           // New sold rows carry buyer contacts → push never-contacted buyers to GHL.
@@ -297,7 +321,7 @@
 
         // Sold rows carry buyer contacts → accumulate into sa_sold_sales (buyer-match training).
         setStatus(id, `Adding ${soldRows.length} sold…`);
-        const soldSaved = soldRows.length ? await upsert('sa_sold_sales', soldRows, 'vin') : 0;
+        const soldSaved = soldRows.length ? await ingestSold(soldRows) : 0;
 
         // One snapshot per VIN per day per status: re-uploading the same report
         // twice in an afternoon must not look like twice the evidence.
@@ -340,5 +364,5 @@
     if (rp) rp.addEventListener('change', (e) => handleReport(e.target.files && e.target.files[0]));
   }
 
-  window.BuyerMatchUploader = { bindUI, parseCSV, mapActive, mapSold, mapOutcome, segment, classify };
+  window.BuyerMatchUploader = { bindUI, parseCSV, mapActive, mapSold, mapOutcome, segment, classify, ingestSold };
 })();

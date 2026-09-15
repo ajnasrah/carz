@@ -1802,7 +1802,8 @@ async function mapLimit(items, limit, fn) {
     // Match "Sold List" button, so daily SMART_AUCTION uploads never fed GHL.
     try {
       const mapS = window.BuyerMatchUploader && window.BuyerMatchUploader.mapSold;
-      if (mapS) {
+      const ingest = window.BuyerMatchUploader && window.BuyerMatchUploader.ingestSold;
+      if (mapS && ingest) {
         const soldRows = rows.map(mapS)
           .filter((r) => r.vin && r.buyer_name)
           .sort((a, b) => String(a.sale_date || '').localeCompare(String(b.sale_date || ''))); // oldest→newest, dedupe keeps newest
@@ -1813,15 +1814,13 @@ async function mapLimit(items, limit, fn) {
           apikey: config.supabaseKey, Authorization: `Bearer ${config.supabaseKey}`,
           'Content-Type': 'application/json',
         }, extra || {});
+        // Not a table write any more: sa_sold_sales is closed to the anon key
+        // because it holds buyer contacts. ingestSold goes through a keyed RPC.
         let soldSaved = 0;
-        for (let i = 0; i < soldList.length; i += 500) {
-          const batch = soldList.slice(i, i + 500);
-          const res = await fetch(`${config.supabaseUrl}/rest/v1/sa_sold_sales?on_conflict=vin`, {
-            method: 'POST', headers: hdr({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
-            body: JSON.stringify(batch),
-          });
-          if (res.ok) soldSaved += batch.length;
-          else config.log(`sa_sold_sales batch failed: ${(await res.text()).slice(0, 160)}`, 'warn');
+        try {
+          soldSaved = await ingest(soldList, config);
+        } catch (se) {
+          config.log(`sa_sold_sales failed: ${se.message.slice(0, 160)}`, 'warn');
         }
         config.log(`sa_sold_sales: saved ${soldSaved} sold buyer row(s)`, 'ok');
         // New sold rows carry buyer contacts → fire GHL sync (idempotent; only
