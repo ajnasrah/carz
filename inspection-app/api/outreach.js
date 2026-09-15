@@ -29,15 +29,32 @@ export const config = { maxDuration: 120 }
 
 const OWNER_PHONE = process.env.OUTREACH_ALERT_PHONE || '+19018319661'
 
+// Who is calling. Three different failures, three different answers: a stale
+// login (sign in again), an auth check that didn't come back (try again), and a
+// real non-admin. They all used to say "Admins only", which sent the owner
+// looking for a permissions problem that wasn't there.
 async function adminFromToken(db, token) {
-  if (!token) return null
-  const { data } = await db.auth.getUser(token)
-  const user = data?.user
-  if (!user?.id) return null
+  if (!token) return { status: 401, error: 'Sign in again' }
+  let user = null, authError = null
+  for (let attempt = 0; attempt < 2 && !user; attempt++) {
+    const { data, error } = await db.auth.getUser(token)
+    user = data?.user || null
+    authError = error
+    // A rejected token won't get better on a retry; a network blip might.
+    if (error?.status === 401 || error?.status === 403) break
+  }
+  if (!user?.id) {
+    console.warn('outreach auth failed:', authError?.status, authError?.message)
+    return authError && ![401, 403].includes(authError.status)
+      ? { status: 503, error: 'Could not check your login just now. Try again.' }
+      : { status: 401, error: 'Your login expired. Sign in again.' }
+  }
   const owner = ['9018319661', '19018319661'].includes(String(user.phone || '').replace(/\D/g, ''))
-  if (owner) return user
+  if (owner) return { user }
   const { data: profile } = await db.from('profiles').select('role').eq('id', user.id).maybeSingle()
-  return profile?.role === 'admin' ? user : null
+  if (profile?.role === 'admin') return { user }
+  console.warn('outreach refused non-admin:', user.id)
+  return { status: 403, error: 'Admins only' }
 }
 
 const pretty = (p) => {
@@ -82,8 +99,9 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') return res.status(405).json({ error: 'GET or POST' })
-  const user = await adminFromToken(db, bearer)
-  if (!user) return res.status(401).json({ error: 'Admins only' })
+  const auth = await adminFromToken(db, bearer)
+  if (!auth.user) return res.status(auth.status).json({ error: auth.error })
+  const user = auth.user
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {})
   const action = body.action

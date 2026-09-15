@@ -5,15 +5,28 @@
 import { supabase } from './supabase'
 import { API_BASE_URL } from '../native/platform'
 
-export async function outreachCall(action, payload = {}) {
-  const { data } = await supabase.auth.getSession()
-  const token = data?.session?.access_token
-  if (!token) throw new Error('Sign in again')
-  const res = await fetch(`${API_BASE_URL}/api/outreach`, {
+async function post(token, action, payload) {
+  return fetch(`${API_BASE_URL}/api/outreach`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ action, ...payload }),
   })
+}
+
+export async function outreachCall(action, payload = {}) {
+  const { data } = await supabase.auth.getSession()
+  let token = data?.session?.access_token
+  if (!token) throw new Error('Sign in again')
+  let res = await post(token, action, payload)
+  // A tab left open past the token's hour can hand over a stale token. Refresh
+  // once and retry before telling anyone to sign in.
+  if (res.status === 401) {
+    const { data: fresh } = await supabase.auth.refreshSession()
+    if (fresh?.session?.access_token && fresh.session.access_token !== token) {
+      token = fresh.session.access_token
+      res = await post(token, action, payload)
+    }
+  }
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error || `Outreach failed (${res.status})`)
   return body

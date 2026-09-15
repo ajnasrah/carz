@@ -1,7 +1,9 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { X } from 'lucide-react'
-import { PRIMARY_LINKS, MORE_LINKS } from '../navLinks'
+import { primaryLinksFor, MORE_LINKS } from '../navLinks'
+import { useAuth } from '../context/useAuth'
+import { isPrimaryAdmin } from '../services/adminSetup'
 
 // "What do you want to do?" as a left drawer instead of a wall of tiles. The
 // dashboard's job is the numbers; the nav is something you reach for, not
@@ -14,10 +16,12 @@ import { PRIMARY_LINKS, MORE_LINKS } from '../navLinks'
 // The day's work on top, in the order it gets reached for; the occasional
 // screens under More. A drawer has room for all of it, so nothing hides behind
 // a toggle — the heading is the only thing separating them.
-const PRIMARY = PRIMARY_LINKS.filter((l) => l.to !== '/')
 const MORE = MORE_LINKS
 
 export default function ActionDrawer({ open, onClose, footer }) {
+  const { profile } = useAuth()
+  const isAdmin = profile?.role === 'admin' || isPrimaryAdmin(profile?.phone)
+  const PRIMARY = primaryLinksFor(isAdmin).filter((l) => l.to !== '/')
   // Escape closes it, and the page behind it doesn't scroll while it's open —
   // otherwise a swipe on the backdrop drags the dashboard around underneath.
   useEffect(() => {

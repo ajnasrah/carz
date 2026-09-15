@@ -44,6 +44,24 @@ export const PRIMARY_LINKS = [
   { to: '/reports', emoji: '📈', label: 'Reports' },
 ]
 
+// Admin-only destinations, each slotted in right after the screen it belongs
+// beside. Outreach texts customers from the company number, so nobody else
+// should see the door: the page and /api/outreach both refuse non-admins, and
+// a link that bounces you is worse than no link.
+export const ADMIN_LINKS = [
+  { to: '/outreach', emoji: '📨', label: 'Outreach', after: '/buyer-match' },
+]
+
+export function primaryLinksFor(isAdmin) {
+  if (!isAdmin) return PRIMARY_LINKS
+  const out = [...PRIMARY_LINKS]
+  for (const link of ADMIN_LINKS) {
+    const i = out.findIndex((l) => l.to === link.after)
+    out.splice(i < 0 ? out.length : i + 1, 0, link)
+  }
+  return out
+}
+
 // The occasional screens. Under a heading rather than behind a toggle — a
 // drawer and a rail both have the room.
 export const MORE_LINKS = [

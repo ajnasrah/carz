@@ -1,7 +1,8 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { isBodyShopOnly } from '../services/bodyShop'
-import { PRIMARY_LINKS, MORE_LINKS, BODY_SHOP_LINKS, PHONE_TABS } from '../navLinks'
+import { primaryLinksFor, MORE_LINKS, BODY_SHOP_LINKS, PHONE_TABS } from '../navLinks'
+import { isPrimaryAdmin } from '../services/adminSetup'
 
 // Whether this route shows navigation at all.
 //
@@ -39,7 +40,8 @@ export default function BottomNav() {
 
   const shopOnly = isBodyShopOnly(profile)
   const tabs = shopOnly ? BODY_SHOP_LINKS : PHONE_TABS
-  const railPrimary = shopOnly ? BODY_SHOP_LINKS : PRIMARY_LINKS
+  const isAdmin = profile?.role === 'admin' || isPrimaryAdmin(profile?.phone)
+  const railPrimary = shopOnly ? BODY_SHOP_LINKS : primaryLinksFor(isAdmin)
   const railMore = shopOnly ? [] : MORE_LINKS
 
   // A job page (/body-shop/:id) belongs to the board, but the payout screen is
