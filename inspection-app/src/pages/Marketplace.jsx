@@ -11,6 +11,8 @@ import MarketplacePrice from '../components/MarketplacePrice'
 import MultiSelect from '../components/MultiSelect'
 import { fetchPhotoEdits } from '../services/listingPhotos'
 import ShareToBuyer, { ShareCarButton } from '../components/ShareToBuyer'
+import { BestBuyerBar } from '../components/BestBuyer'
+import { fetchBuyerPicks, picksFor } from '../services/buyerPicks'
 import { saveCsv } from '../native/files'
 import { copyText } from '../native/clipboard'
 import { isNative } from '../native/platform'
@@ -174,6 +176,28 @@ export default function Marketplace() {
   // which auction. It is not part of what we sell, and the marketplace is
   // public, so it is staff-only wherever it appears.
   const isStaff = isAdmin || profile?.account_type === 'employee'
+
+  // Who to text about each car. Staff-only on both ends — the function returns
+  // nothing to anyone else — and loaded apart from the listings, so a failure
+  // here costs the button, never the page.
+  const [buyerPicks, setBuyerPicks] = useState(null)
+  useEffect(() => {
+    if (!isStaff) return
+    fetchBuyerPicks().then(setBuyerPicks, (err) => console.warn('buyer picks', err))
+  }, [isStaff])
+
+  // Show "texted today" the moment Text is tapped, without refetching.
+  function markPitched(car, pick) {
+    setBuyerPicks((m) => {
+      if (!m) return m
+      const key = String(car.full_vin || car.vin || '').toUpperCase()
+      const next = new Map(m)
+      next.set(key, (m.get(key) || []).map((p) => (p.buyer_key === pick.buyer_key
+        ? { ...p, last_pitched_at: new Date().toISOString(), last_pitched_by: profile?.name || p.last_pitched_by, pitch_count: (p.pitch_count || 0) + 1 }
+        : p)))
+      return next
+    })
+  }
 
   // Price edits land on one car; re-running the whole listings RPC to see them
   // would throw away scroll position and filters for a number we already know.
@@ -610,6 +634,9 @@ export default function Marketplace() {
                         )
                       )}
                     </div>
+                    {isStaff && !showRemoved && (
+                      <BestBuyerBar car={car} picks={picksFor(buyerPicks, car)} onPitched={markPitched} className="mt-2" />
+                    )}
                   </div>
                 </div>
               )

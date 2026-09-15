@@ -26,34 +26,9 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { recommendForBuyers } from '../src/services/buyerMatch.js'
-
-// PostgREST caps an unbounded result at 1,000 rows. Every read here goes through
-// a function now, but the cap applies to those too — see fetchTraining below.
-const PAGE = 1000
-
-// buyer_training_rows() must be paged for exactly the reason the table reads
-// above are: PostgREST stops at 1,000 rows, RPCs included, and the union returns
-// SmartAuction first — so an unpaged call silently trained this endpoint on one
-// channel out of fourteen. p_limit/p_offset are the function's own arguments
-// because the Range header is ignored on an RPC POST.
-async function fetchTraining(db) {
-  const out = []
-  for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await db.rpc('buyer_training_rows', {
-      p_include_arbitration: false, p_limit: PAGE, p_offset: offset,
-    })
-    if (error) throw new Error(`buyer_training_rows: ${error.message}`)
-    const rows = data || []
-    out.push(...rows)
-    if (rows.length < PAGE) break
-    if (offset > 200000) break
-  }
-  const { data: expected } = await db.rpc('buyer_training_count', { p_include_arbitration: false })
-  if (Number(expected) > 0 && out.length < Number(expected)) {
-    throw new Error(`training data truncated: ${out.length} of ${expected} sales`)
-  }
-  return out
-}
+// Paged: PostgREST stops at 1,000 rows, RPCs included, and the union returns
+// SmartAuction first — unpaged, this endpoint trained on one channel of fourteen.
+import { fetchTraining } from './_lib/buyerPicks.js'
 
 async function sha256Hex(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))

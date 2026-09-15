@@ -75,6 +75,10 @@
     {
       "path": "/api/mechanic-backfill",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/buyer-picks",
+      "schedule": "23 * * * *"
     }
   ]
 }

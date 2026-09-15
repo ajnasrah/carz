@@ -12,6 +12,8 @@ import PhotoEditor from '../components/PhotoEditor'
 import DamageEditor from '../components/DamageEditor'
 import { fetchPhotoEdit, applyPhotoEdits } from '../services/listingPhotos'
 import { ShareCarButton } from '../components/ShareToBuyer'
+import { BestBuyerBar } from '../components/BestBuyer'
+import { fetchBuyerPicks, picksFor } from '../services/buyerPicks'
 import { listingUrl } from '../services/marketplaceShare'
 import { toInt } from '../services/utils'
 import { STARTUP_ITEMS, TEST_DRIVE_ITEMS, EXTERIOR_PANELS, INTERIOR_ZONES } from '../services/inspectionFlow'
@@ -182,6 +184,12 @@ export default function MarketplaceListing() {
   const [confirming, setConfirming] = useState(() => !!routerLocation.state?.reserve)
   const [rooftops, setRooftops] = useState([])
   const [rooftop, setRooftop] = useState(null)
+  // Staff-only: the buyers to text about this car. See Marketplace.jsx.
+  const [buyerPicks, setBuyerPicks] = useState(null)
+  useEffect(() => {
+    if (!isStaff) return
+    fetchBuyerPicks().then(setBuyerPicks, (err) => console.warn('buyer picks', err))
+  }, [isStaff])
 
   useEffect(() => {
     let cancelled = false
@@ -403,6 +411,16 @@ export default function MarketplaceListing() {
           />
           <CopyButton text={listingUrl(car.id)} label="Copy Link" />
         </div>
+        {isStaff && (
+          <BestBuyerBar
+            car={car}
+            picks={picksFor(buyerPicks, car)}
+            // Refetch rather than patch: the sheet shows who texted, and this
+            // page has only the one car to reload.
+            onPitched={() => fetchBuyerPicks().then(setBuyerPicks, () => {})}
+            className="mb-3"
+          />
+        )}
 
         {/* Photo gallery */}
         <PhotoGallery photos={dedupedPhotos} />

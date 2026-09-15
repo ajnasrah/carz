@@ -548,6 +548,13 @@ export function scoreAll(activeCars, soldRows, config = {}, demandRows = []) {
   const model = buildModel(soldRows, cfg);
   const demand = buildDemandIndex(demandRows);
   const scored = activeCars.map((car) => scoreCar(car, model, demand));
+  // Narrow the candidates BEFORE the spread pass, so "already somebody's #1" is
+  // counted among the buyers who can actually be picked. The marketplace's
+  // textable list uses this: filtered afterwards, a Frazer dealer with no phone
+  // would still soak up the spread penalty from buyers it never competes with.
+  if (typeof cfg.eligible === 'function') {
+    for (const c of scored) c.candidates = c.candidates.filter(cfg.eligible);
+  }
 
   // SPREAD — count provisional #1 picks among nameable buyers and penalise
   // repeats, so the second-best (often also a strong-dollar buyer) can take the
