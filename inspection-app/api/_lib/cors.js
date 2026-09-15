@@ -9,9 +9,9 @@
 // api/delete-account.js and api/reserve-car.js.
 //
 // Returns true when it answered a preflight, so the handler can stop there.
-export function appCors(req, res) {
+export function appCors(req, res, methods = 'POST, OPTIONS') {
   res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', methods)
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
   res.setHeader('Access-Control-Max-Age', '86400')
   if (req.method === 'OPTIONS') {

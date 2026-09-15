@@ -25,6 +25,8 @@ PODS:
     - Capacitor
   - CapacitorStatusBar (8.0.3):
     - Capacitor
+  - CapgoInappbrowser (8.6.14):
+    - Capacitor
   - IONFilesystemLib (1.1.2)
 
 DEPENDENCIES:
@@ -41,6 +43,7 @@ DEPENDENCIES:
   - "CapacitorShare (from `../../node_modules/@capacitor/share`)"
   - "CapacitorSplashScreen (from `../../node_modules/@capacitor/splash-screen`)"
   - "CapacitorStatusBar (from `../../node_modules/@capacitor/status-bar`)"
+  - "CapgoInappbrowser (from `../../node_modules/@capgo/inappbrowser`)"
 
 SPEC REPOS:
   trunk:
@@ -73,6 +76,8 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@capacitor/splash-screen"
   CapacitorStatusBar:
     :path: "../../node_modules/@capacitor/status-bar"
+  CapgoInappbrowser:
+    :path: "../../node_modules/@capgo/inappbrowser"
 
 SPEC CHECKSUMS:
   Capacitor: 00b87168591cc006ea6f5c0de681ec5c39a2c8eb
@@ -88,8 +93,9 @@ SPEC CHECKSUMS:
   CapacitorShare: 0c58305114538568059bfc07111f22dcb9cb2a82
   CapacitorSplashScreen: 7bf61c2001557ff9e195e601c6b87344480d3c65
   CapacitorStatusBar: eca7bc2b58d9f886f1ef9edb66e57a9b29c121af
+  CapgoInappbrowser: b955d40481388f52abafacf146bb15b4f449ed9e
   IONFilesystemLib: 21a63377696b2d8fab5632ecfb7d2ac67bddb68a
 
-PODFILE CHECKSUM: add7cd047afbcc008e87ef375849a617004aad1c
+PODFILE CHECKSUM: 55028198a69d6554dc5c7c60319f651fd48b3b1c
 
 COCOAPODS: 1.17.0

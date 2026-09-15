@@ -24,7 +24,7 @@ export async function employeeFromToken(token) {
   // the account type has to be checked explicitly — the same trap the shop
   // views are gated against.
   const p = await fetch(
-    `${base}/rest/v1/profiles?id=eq.${user.id}&select=name,role,account_type,approval_status`,
+    `${base}/rest/v1/profiles?id=eq.${user.id}&select=name,role,roles,account_type,approval_status`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } })
   if (!p.ok) return null
   const [profile] = await p.json().catch(() => [])
