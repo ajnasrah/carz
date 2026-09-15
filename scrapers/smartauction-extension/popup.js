@@ -1021,7 +1021,12 @@
       msgLookupResult.appendChild(dmgNote);
 
       const chat = await fetchChatDamages(vin6);
-      chatTireGrades = chat.tires || null;
+      // A condition report imported for this same car beats the chat — and the
+      // CR import itself kicks off this lookup, so overwriting here threw away
+      // every CR's tires the moment they were read.
+      const crForThisCar = chatTireGrades?.source === 'condition report'
+        && chatTireGrades.vin6 === vin6.slice(-6).toUpperCase();
+      if (!crForThisCar) chatTireGrades = chat.tires || null;
       const addedFromChat = mergeChatDamages(chat.damages || []);
       if (chat.reason) {
         dmgNote.textContent = `Damage notes unavailable (${chat.reason}) — enter them by hand`;
@@ -1987,33 +1992,79 @@
     }
   }
 
+  // One damage as SA will read it: the type only as a prefix when the words
+  // don't already name the damage — the same rule content.js applies at fill.
+  function damagePhrase(type, description) {
+    const desc = (description || '').trim();
+    const t = type && type !== 'Other' ? type : '';
+    if (!desc || !t) return desc || t;
+    const named = desc.toLowerCase().includes(t.toLowerCase()) || DamageMapper.descriptionNamesType(desc);
+    return named ? desc : `${t} - ${desc}`;
+  }
+
   // Merge them in beside the standards, normalising to SA values at import the
   // way the Manheim CR path does — so the list shows the same value SA gets
-  // instead of the words the model chose. Panel+type is the identity: two
-  // scratches on the same bumper are one row, and a standard already covering
-  // that pair wins (it carries the wording the team wants on every car).
+  // instead of the words the model chose.
+  //
+  // The PANEL is the identity: SA gets each panel once. Everything said about
+  // a panel folds into its one row — "Scuff" and "Scratch" read off the same
+  // "scuff scratches on front bumper" collapse, and a standard on that panel
+  // (the chips on the bumper and hood) joins the tech's row rather than
+  // sitting beside it. The tech's words go first and the standard's last,
+  // because SA cuts the description at 50 characters and the generic
+  // disclosure is the part to lose.
   function mergeChatDamages(rows) {
     if (typeof DamageMapper === 'undefined') return 0;
-    const seen = new Set(damages.map((d) => `${d.panel}|${d.type}`));
-    let added = 0;
+    let changed = 0;
     for (const r of rows) {
       const m = DamageMapper.mapForSA({ panel: r.panel, type: r.type, description: r.description || '' });
       const panel = m?.panel || r.panel;
       const type = m?.type || r.type;
-      const key = `${panel}|${type}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      damages.push({
-        panel, type,
-        description: m?.description || r.description || '',
-        severity: 'Minor', chargeable: 'No', estimatedCost: 0, photos: [],
-        category: INTERIOR_SA_PANELS.has(panel) ? 'Interior' : 'Exterior',
-        fromChat: true,
-      });
-      added++;
+      const description = m?.description || r.description || '';
+
+      const row = damages.find((d) => d.panel === panel);
+      if (!row) {
+        damages.push({
+          panel, type, description,
+          severity: 'Minor', chargeable: 'No', estimatedCost: 0, photos: [],
+          category: INTERIOR_SA_PANELS.has(panel) ? 'Interior' : 'Exterior',
+          fromChat: true,
+        });
+        changed++;
+      } else if (foldIntoRow(row, type, description, false)) {
+        row.fromChat = true;
+        changed++;
+      }
     }
-    if (added > 0) { renderDamages(); saveSession(); }
-    return added;
+    if (changed > 0) { renderDamages(); saveSession(); }
+    return changed;
+  }
+
+  // Fold one more damage into a panel's existing row. Returns false when the
+  // row already says it. `parts` remembers each damage separately so a second
+  // merge can dedupe and keep standards at the tail.
+  function foldIntoRow(row, type, description, standard) {
+    if (!row.parts) {
+      row.parts = [{ text: damagePhrase(row.type, row.description), standard: !!row.standard }];
+    }
+    const text = damagePhrase(type, description);
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    const said = row.parts.map((p) => p.text.toLowerCase());
+    if (said.includes(lower)) return false;
+    // A bare "Paint Chip" adds nothing to a row that already names chips.
+    if (lower === (type || '').toLowerCase() && said.some((s) => s.includes(lower))) return false;
+
+    // The row's type is the first thing the tech saw on the panel. It only
+    // reaches SA as a prefix, and each phrase already names its damage.
+    if (!standard && row.parts.every((p) => p.standard)) row.type = type;
+    row.parts.push({ text, standard });
+    row.standard = row.parts.every((p) => p.standard);
+    row.description = [
+      ...row.parts.filter((p) => !p.standard),
+      ...row.parts.filter((p) => p.standard),
+    ].map((p) => p.text).filter(Boolean).join('; ');
+    return true;
   }
 
   window._queueAction = async function(action, vin6) {
@@ -2218,6 +2269,7 @@
     // Plus standalone: "Light scratches", "Multi dents"
     const seen = new Set();
     const damages = [];
+    const failedTires = {};
 
     for (const d of rawDamages) {
       let panel = '', dtype = '';
@@ -2235,6 +2287,17 @@
         rest = rest.replace(/\s*[—–].*$/, '').trim();      // drop "— Repair" suffix (em/en dash)
         rest = rest.replace(/\s*\([^)]*\)\s*$/, '').trim(); // drop trailing "(Severity)"
         dtype = rest;
+      } else if (/\S\s+[-–—]\s+\S/.test(d) && /\([^)]*\)\s*$/.test(d)) {
+        // ADESA: "Panel - Type (Severity)", e.g. "Door - LR - Dent/No Paint Dmg
+        // (1/2" to 1")". Must run before the parentheses branch, which reads
+        // that as panel "Door - LR - Dent/No Paint Dmg" damaged `1/2" to 1"`.
+        // Drop the severity, then split on the LAST dash like Format 3.
+        const bare = d.replace(/\s*\([^)]*\)\s*$/, '');
+        const m = bare.match(/^(.+\S)\s*[-–—]\s+(.+)$/);
+        if (m) { panel = m[1].trim(); dtype = m[2].trim(); } else { panel = bare; }
+        if (/^(?:left|right|front|rear|driver|passenger|lf|rf|lr|rr)(?:\s+(?:front|rear))?$/i.test(dtype)) {
+          panel = bare; dtype = '';
+        }
       } else if (d.includes('(') && d.includes(')')) {
         // Format 1: "R Qtr Panel (Mult Dents/Paint Dmg)"
         const m = d.match(/^(.+?)\s*\((.+?)\)\s*$/);
@@ -2278,6 +2341,7 @@
       // a curb-type condition (or with no placeable corner) fall through to skip.
       if (/\b(tire|tyre|wheel|rim)s?\b/i.test(panel)) {
         const isWheel = /\b(wheel|rim)s?\b/i.test(panel) && !/\b(tire|tyre)s?\b/i.test(panel);
+        if (!isWheel) noteFailedTire(failedTires, panel, d);
         const curbish = /\b(curb|curbed|rash|scuff|scrape|scraped|gouge|scratch)\w*\b/i.test(dtype);
         if (isWheel && curbish) {
           const combined = (panel + ' ' + dtype).trim();
@@ -2303,7 +2367,37 @@
         damages.push({ panel, type: dtype });
       }
     }
-    return { info, damages, tires: parseSummaryTires(text) };
+    return { info, damages, tires: parseSummaryTires(text) || tiresFromDamageLines(failedTires) };
+  }
+
+  // ADESA has no tread table. A tire only shows up on its CR as a damage line —
+  // "Tire - RF - Worn (Replacement Required)" — and one that passed isn't
+  // listed at all. Manheim writes the same thing as "RR Tire: Worn" when it
+  // has no measurements. Those lines used to be skipped with the other tire
+  // rows, so a CR calling a tire bad reached SA saying nothing about it.
+  const TIRE_CORNER = {
+    lf: 'lf', rf: 'rf', lr: 'lr', rr: 'rr',
+    'left front': 'lf', 'right front': 'rf', 'left rear': 'lr', 'right rear': 'rr',
+    'front left': 'lf', 'front right': 'rf', 'rear left': 'lr', 'rear right': 'rr',
+  };
+
+  function noteFailedTire(failed, panel, line) {
+    if (!/\b(worn|replac\w*|bald|damage\w*|cut|bubble|sidewall|punctur\w*|flat|dry rot|cord\w*|plug\w*)\b/i.test(line)) return;
+    const lower = panel.toLowerCase();
+    if (/\ball\b/.test(lower)) { for (const k of ['lf', 'rf', 'lr', 'rr']) failed[k] = 'bad'; return; }
+    const m = lower.match(/\b(left front|right front|left rear|right rear|front left|front right|rear left|rear right|lf|rf|lr|rr)\b/);
+    if (m) failed[TIRE_CORNER[m[1]]] = 'bad';
+  }
+
+  // The tires the CR called bad are bad; the rest get 'ok', not 'good'. The
+  // inspector didn't flag them, which is not a measurement — the same honest
+  // floor the group-chat read uses for corners nobody mentioned. No tire line
+  // at all stays null: nothing was said, so a human sets it.
+  function tiresFromDamageLines(failed) {
+    if (!Object.keys(failed).length) return null;
+    const corners = {};
+    for (const k of ['lf', 'rf', 'lr', 'rr']) corners[k] = failed[k] || 'ok';
+    return { corners };
   }
 
   // The scraper writes a "TIRES AND WHEELS" block into _summary.txt, one line
@@ -2363,8 +2457,17 @@
         const text = await summaryFile.text();
         const { info, damages: parsedDamages, tires: crTires } = parseManheimSummary(text);
         // Measured beats inferred: a CR's gauge readings replace whatever the
-        // group chat said about this car's tires.
-        if (crTires) chatTireGrades = { ...crTires, source: 'condition report' };
+        // group chat said about this car's tires. A CR with no tire word keeps
+        // the chat's read only if it's the same car — otherwise the last car's
+        // tires would be filled onto this one.
+        const sameCar = info.vin && vin6Input.value.trim()
+          && info.vin.slice(-6).toUpperCase() === vin6Input.value.trim().slice(-6).toUpperCase();
+        if (crTires) {
+          chatTireGrades = {
+            ...crTires, source: 'condition report',
+            vin6: (info.vin || vin6Input.value.trim()).slice(-6).toUpperCase(),
+          };
+        } else if (!sameCar) chatTireGrades = null;
 
         if (info.vin) {
           vin6Input.value = info.vin;
@@ -3342,11 +3445,16 @@
   ];
 
   function addStandardDamages() {
-    // Don't duplicate if standards are already present (match by panel+type).
-    const existing = new Set(damages.map((d) => `${d.panel}|${d.type}`));
+    // SA gets each panel once: a standard on a panel that already has a row
+    // folds into it (and is skipped if that row already carries it).
     let added = 0;
     for (const s of STANDARD_DAMAGES) {
-      if (existing.has(`${s.panel}|${s.type}`)) continue;
+      const row = damages.find((d) => d.panel === s.panel);
+      if (row) {
+        if (row.type === s.type && !row.parts) continue;
+        if (foldIntoRow(row, s.type, s.description, true)) added++;
+        continue;
+      }
       damages.push({
         panel: s.panel,
         type: s.type,
@@ -3355,6 +3463,7 @@
         estimatedCost: 0,
         photos: [],
         category: INTERIOR_SA_PANELS.has(s.panel) ? 'Interior' : 'Exterior',
+        standard: true,
       });
       added++;
     }
