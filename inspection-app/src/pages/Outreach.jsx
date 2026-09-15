@@ -310,7 +310,7 @@ function AddSheet({ available, onClose, onAdded }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col safe-inset">
+    <div className="fixed inset-0 z-[80] bg-slate-950/95 flex flex-col safe-inset">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800">
         <div className="flex-1 min-w-0">
           <h2 className="font-bold text-white">Add cars to outreach</h2>
