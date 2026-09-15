@@ -4,6 +4,7 @@ import { buildShareMessage } from '../services/marketplaceShare'
 import { shareText } from '../native/share'
 import { copyText } from '../native/clipboard'
 import { openExternal, smsUrl } from '../native/links'
+import { fetchDoNotText, isDoNotText } from '../services/doNotText'
 
 // Send a set of cars to ONE buyer, in one message. Three ways out, because how
 // you reach a buyer depends on the buyer: text them directly, hand it to the
@@ -28,6 +29,10 @@ export default function ShareToBuyer({ cars, onClose }) {
     // half-typed number is a different thing and still worth catching.
     if (digits.length > 0 && digits.length < 10) {
       flash('Need a 10-digit number, or leave it blank')
+      return
+    }
+    if (digits && isDoNotText(await fetchDoNotText(), digits)) {
+      flash('That number asked us to stop texting')
       return
     }
     await openExternal(smsUrl(digits, message))

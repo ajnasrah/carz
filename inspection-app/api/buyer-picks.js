@@ -41,12 +41,17 @@ export default async function handler(req, res) {
 
   try {
     const started = Date.now()
-    const [carsRes, training, demandRes] = await Promise.all([
+    const [carsRes, training, demandRes, optRes] = await Promise.all([
       db.rpc('buyer_match_cars'),
       fetchTraining(db),
       db.rpc('buyer_demand_signals', { p_days: 60 }),
+      db.rpc('opted_out_phones'),
     ])
     if (carsRes.error) throw new Error(`buyer_match_cars: ${carsRes.error.message}`)
+    // Unlike demand, this one must not be skipped: picks built without the
+    // do-not-text list would offer buyers who told us to stop.
+    if (optRes.error) throw new Error(`opted_out_phones: ${optRes.error.message}`)
+    const blocked = new Set((optRes.data || []).map((p) => (typeof p === 'string' ? p : Object.values(p)[0])))
     // Demand is a boost, not a requirement — score without it rather than fail.
     const demand = demandRes.error ? [] : (demandRes.data || [])
 
@@ -60,7 +65,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ saved: 0, skipped: 'no cars or no training data', cars: cars.length, training: training.length })
     }
 
-    const rows = textablePicks(cars, training, demand)
+    const rows = textablePicks(cars, training, demand, blocked)
     // Same reasoning: zero picks for a hundred cars is a broken read (no phones
     // came back), not an answer. Replacing with nothing would blank every button.
     if (!rows.length) {

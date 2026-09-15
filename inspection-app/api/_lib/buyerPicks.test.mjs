@@ -32,4 +32,8 @@ test('only buyers with a phone are picked, never a lane', () => {
   assert.equal(rows[0].vin, 'ABC123')
   assert.equal(rows[0].stock_number, 'S1')
   assert.ok(rows.every((r) => r.buyer_phone && !r.buyer_key.startsWith('c:')))
+
+  // On the do-not-text list: never picked.
+  const blocked = textablePicks(cars, training, [], new Set(['3166551656']))
+  assert.ok(blocked.every((r) => r.buyer_phone !== '3166551656'))
 })

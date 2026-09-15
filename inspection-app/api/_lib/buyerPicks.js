@@ -47,9 +47,14 @@ export function tenDigits(phone) {
   return d
 }
 
-const textable = (cand) => !cand.is_channel && !!tenDigits(cand.buyer_phone)
-
-export function textablePicks(cars, training, demand = []) {
+// `blocked`: numbers on the do-not-text list (outreach_opt_outs). Skipped here so
+// the next buyer moves up, not just hidden at read time.
+export function textablePicks(cars, training, demand = [], blocked = new Set()) {
+  const textable = (cand) => {
+    if (cand.is_channel) return false
+    const phone = tenDigits(cand.buyer_phone)
+    return !!phone && !blocked.has(phone)
+  }
   const { cars: scored } = scoreAll(cars, training, { eligible: textable }, demand)
   const stock = new Map(cars.map((c) => [c.vin, c.stock_number ?? null]))
   const rows = []

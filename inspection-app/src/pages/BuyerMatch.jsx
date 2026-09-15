@@ -14,6 +14,7 @@ import { peekBuyerMatchBootstrap } from '../services/buyerMatchData'
 import * as engine from '../services/buyerMatch'
 import HistoryButton from '../components/HistoryButton'
 import { copyText } from '../native/clipboard'
+import { fetchDoNotText, isDoNotText } from '../services/doNotText'
 import { useAuth } from '../context/useAuth'
 import { isPrimaryAdmin } from '../services/adminSetup'
 
@@ -49,6 +50,8 @@ export default function BuyerMatch() {
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState(null)
   const [copied, setCopied] = useState('')
+  const [doNotText, setDoNotText] = useState(null)
+  useEffect(() => { fetchDoNotText().then(setDoNotText) }, [])
   const [ghl, setGhl] = useState('')
   // 'cars'   = per car, who'd buy it        (the original view)
   // 'match'  = per buyer, what he'd buy     (the direction you make calls in)
@@ -489,7 +492,8 @@ export default function BuyerMatch() {
                         const { subject, body } = outreach(car, rec)
                         const mailto = rec.buyer_email
                           ? `mailto:${rec.buyer_email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}` : null
-                        const sms = rec.buyer_phone ? `sms:${rec.buyer_phone}?&body=${encodeURIComponent(body)}` : null
+                        const blocked = isDoNotText(doNotText, rec.buyer_phone)
+                        const sms = rec.buyer_phone && !blocked ? `sms:${rec.buyer_phone}?&body=${encodeURIComponent(body)}` : null
                         return (
                           <div key={rec.rank} className="p-3">
                             <div className="flex items-center justify-between gap-2">
@@ -517,6 +521,9 @@ export default function BuyerMatch() {
                               )}
                               {mailto && <Action href={mailto} icon={Mail} label="Draft email" primary />}
                               {sms && <Action href={sms} icon={Phone} label="Text" />}
+                              {blocked && (
+                                <span className="text-[10px] px-1.5 py-1 rounded border border-red-500/40 text-red-300">Do not text</span>
+                              )}
                             </div>
                           </div>
                         )

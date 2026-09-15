@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Search, Check, Copy, Link2, MessageSquare, Mail, Loader2, ChevronLeft, Hash } from 'lucide-react'
 import { createBuyerShareList } from '../services/buyerLists'
 // One definition of buyer identity for the whole app. This file used to carry a
@@ -9,6 +9,7 @@ import { buildBuyerListMessage, buyerListUrl } from '../services/marketplaceShar
 import { dealerLine, DEALER } from '../config/dealer'
 import { copyText } from '../native/clipboard'
 import { openExternal, smsUrl } from '../native/links'
+import { fetchDoNotText, isDoNotText } from '../services/doNotText'
 
 const money = (n) => (n == null ? '—' : `$${Math.round(n).toLocaleString()}`)
 // SmartAuction's export fills Opening Price and leaves Buy Now empty on our
@@ -34,6 +35,8 @@ const CONF = {
 export default function BuyerCarsView({ buyers: ranked, results, byVin }) {
   const [query, setQuery] = useState('')
   const [openBuyer, setOpenBuyer] = useState(null)
+  const [doNotText, setDoNotText] = useState(null)
+  useEffect(() => { fetchDoNotText().then(setDoNotText) }, [])
   const [picked, setPicked] = useState(() => new Set())
   const [topOnly, setTopOnly] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -276,10 +279,16 @@ export default function BuyerCarsView({ buyers: ranked, results, byVin }) {
             Frazer records a name and no phone. Without a number this opens
             Messages on a new draft with the link already written; you pick the
             contact there. */}
-        <Btn disabled={!chosen.length || busy} icon={MessageSquare} primary
-          label={buyer.phone ? 'Text' : 'Text…'}
-          title={buyer.phone ? `Text ${buyer.phone}` : 'No number on file — opens Messages so you can pick the contact'}
-          onClick={() => withMessage((msg) => openExternal(smsUrl(buyer.phone, msg)))} />
+        {/* A buyer who told us to stop does not get a Text button, here or
+            anywhere — see services/doNotText.js. */}
+        {isDoNotText(doNotText, buyer.phone) ? (
+          <Btn disabled icon={MessageSquare} label="Do not text" title="This buyer asked us to stop texting" />
+        ) : (
+          <Btn disabled={!chosen.length || busy} icon={MessageSquare} primary
+            label={buyer.phone ? 'Text' : 'Text…'}
+            title={buyer.phone ? `Text ${buyer.phone}` : 'No number on file — opens Messages so you can pick the contact'}
+            onClick={() => withMessage((msg) => openExternal(smsUrl(buyer.phone, msg)))} />
+        )}
         {buyer.email && (
           <Btn disabled={!chosen.length || busy} icon={Mail} label="Email"
             onClick={() => withMessage((msg) => openExternal(
