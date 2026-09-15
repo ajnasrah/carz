@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { X, MessageSquare, Users } from 'lucide-react'
-import { buildPitchMessage, buyerShortName, logBuyerPitch, agoLabel } from '../services/buyerPicks'
+import { buildPitchMessage, buyerShortName, logBuyerPitch, agoLabel, pickTarget, DAILY_CARS_PER_BUYER } from '../services/buyerPicks'
 import { openExternal, smsUrl } from '../native/links'
 import { dealerPhonePretty } from '../config/dealer'
 
@@ -26,7 +26,7 @@ const CONFIDENCE = {
 // and why, for when the first buyer already passed.
 export function BestBuyerBar({ car, picks, onPitched, className = '' }) {
   const [open, setOpen] = useState(false)
-  const best = picks?.[0]
+  const best = pickTarget(picks)
   if (!best) return null
   const texted = agoLabel(best.last_pitched_at)
   return (
@@ -38,6 +38,7 @@ export function BestBuyerBar({ car, picks, onPitched, className = '' }) {
         >
           <MessageSquare size={14} className="shrink-0" />
           <span className="truncate">Text {buyerShortName(best.buyer_name)}</span>
+          {best.rank > 1 && <span className="shrink-0 font-normal text-sky-300/70">#{best.rank}</span>}
           {texted && <span className="shrink-0 font-normal text-sky-300/70">· texted {texted}</span>}
         </button>
         <button
@@ -96,6 +97,11 @@ export function BestBuyerSheet({ car, picks, onPitched, onClose }) {
                     <span className="text-amber-300/80">
                       {p.predicted_price ? ' · ' : ''}texted {texted}{p.last_pitched_by ? ` by ${p.last_pitched_by}` : ''}
                       {p.pitch_count > 1 ? ` (${p.pitch_count}×)` : ''}
+                    </span>
+                  )}
+                  {(p.texted_today || 0) > 0 && (
+                    <span className={(p.texted_today || 0) >= DAILY_CARS_PER_BUYER ? 'text-red-300/80' : 'text-slate-500'}>
+                      {' · '}{p.texted_today} car{p.texted_today === 1 ? '' : 's'} texted today
                     </span>
                   )}
                 </p>

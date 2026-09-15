@@ -191,13 +191,30 @@ export default function Marketplace() {
     setBuyerPicks((m) => {
       if (!m) return m
       const key = String(car.full_vin || car.vin || '').toUpperCase()
-      const next = new Map(m)
-      next.set(key, (m.get(key) || []).map((p) => (p.buyer_key === pick.buyer_key
-        ? { ...p, last_pitched_at: new Date().toISOString(), last_pitched_by: profile?.name || p.last_pitched_by, pitch_count: (p.pitch_count || 0) + 1 }
-        : p)))
+      const now = new Date().toISOString()
+      // texted_today counts distinct cars, so a second text about the same car
+      // today does not move it.
+      const sameCarToday = pick.last_pitched_at
+        && new Date(pick.last_pitched_at).toDateString() === new Date().toDateString()
+      const next = new Map()
+      for (const [vin, list] of m) {
+        next.set(vin, list.map((p) => {
+          let q = p
+          if (vin === key && p.buyer_key === pick.buyer_key) {
+            q = { ...q, last_pitched_at: now, last_pitched_by: profile?.name || p.last_pitched_by, pitch_count: (p.pitch_count || 0) + 1 }
+          }
+          // The same buyer on every other card, so the daily limit moves those
+          // buttons too.
+          if (!sameCarToday && p.buyer_phone === pick.buyer_phone) {
+            q = { ...q, texted_today: (p.texted_today || 0) + 1 }
+          }
+          return q
+        }))
+      }
       return next
     })
   }
+
 
   // Price edits land on one car; re-running the whole listings RPC to see them
   // would throw away scroll position and filters for a number we already know.

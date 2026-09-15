@@ -28,6 +28,16 @@ export async function fetchBuyerPicks() {
 export const picksFor = (byVin, car) =>
   byVin?.get(String(car?.full_vin || car?.vin || '').toUpperCase()) || []
 
+// Past this many cars texted today, a buyer stops being the one-tap target —
+// the outreach queue's own daily limit. He is still in Top 3.
+export const DAILY_CARS_PER_BUYER = 5
+
+// Who the one-tap button texts: the best buyer not already texted about THIS
+// car and not already at today's limit. Falls back to #1 when everyone is.
+export function pickTarget(picks) {
+  return picks?.find((p) => !p.last_pitched_at && (p.texted_today || 0) < DAILY_CARS_PER_BUYER) || picks?.[0] || null
+}
+
 // A record that this buyer was pitched this car. The text goes from the
 // salesman's own phone, so nothing else knows it happened.
 export async function logBuyerPitch(car, pick) {
