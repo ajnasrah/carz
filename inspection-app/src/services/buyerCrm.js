@@ -6,7 +6,9 @@
 // outreach_opt_outs. This is the one place they are read together.
 import { supabase } from './supabase'
 
-export async function fetchBuyers(q = '', limit = 200) {
+// All of them by default: 652 buyers is one small page, and a book you have to
+// search before it shows anything is a search box, not a book.
+export async function fetchBuyers(q = '', limit = 1000) {
   const { data, error } = await supabase.rpc('buyer_crm_list', { p_q: q || null, p_limit: limit })
   if (error) throw new Error(error.message)
   return (data || []).map((b) => ({
