@@ -450,6 +450,42 @@ export function isBodyShopOnly(profile) {
   return roles.every((r) => BODY_SHOP_ROLES.includes(r))
 }
 
+// ---------------------------------------------------------------- group chat
+
+// What the body shop Telegram group said about this car and what the webhook did
+// with it (api/_lib/bodyShopChat.js): parts it listed, "ordered arrive 9/11", "as
+// is no parts", "still missing the fender liner". Newest first. Each row carries
+// the message verbatim so the automation can always be checked against the words.
+export async function fetchChatEvents(jobId) {
+  const { data, error } = await supabase
+    .from('body_shop_job_events')
+    .select('id, kind, note, tags, detail, event_at')
+    .eq('job_id', jobId)
+    .order('event_at', { ascending: false })
+    .limit(50)
+  if (error) throw error
+  return data || []
+}
+
+export const CHAT_EVENT_LABELS = {
+  parts: 'Parts listed',
+  part_ordered: 'Part ordered',
+  part_received: 'Part received',
+  parts_ordered: 'Parts ordered',
+  parts_received: 'Parts in',
+  eta: 'Delivery date',
+  hold: 'Put on hold',
+  moved: 'Moved',
+  progress: 'Progress',
+  waiting: 'Waiting',
+  instruction: 'Instruction',
+  fault: 'Problem',
+  note: 'Note',
+  finish_blocked: 'Not finished',
+  finished: 'Finished (body_shop_out)',
+  hold_released: 'Hold lifted — posted good to go',
+}
+
 // ---------------------------------------------------------------- parts
 
 export async function fetchParts(jobId) {

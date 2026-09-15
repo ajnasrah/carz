@@ -23,6 +23,7 @@ import {
   FINISH_STATIONS, finishCar, updateLocation,
 } from './_lib/finish.js';
 import { readKeyTag, resolveTagCar } from './_lib/keytag.js';
+import { handleBodyShopGroupMessage, handleBodyShopOutMessage } from './_lib/bodyShopChat.js';
 
 // NOT the edge runtime. This imports _lib/keytag.js, which uses the Anthropic
 // SDK to read a key tag out of a photo, and that SDK pulls in node:fs and
@@ -193,7 +194,8 @@ async function processUpdate(update) {
       // car is standing there waiting to be marked done. An unreadable key tag
       // must not cost the car its move just because a human had to answer.
       if (FINISH_STATIONS[chat.station]) {
-        await finishCar(db, answer, FINISH_STATIONS[chat.station], eventIso);
+        await finishCar(db, answer, FINISH_STATIONS[chat.station], eventIso,
+          chat.station === 'body_shop_out' ? { releaseHold: true, sourceRef: `bso:${msgKey}:${answer}` } : {});
       }
       // Record it as a car this sender NAMED, not just a row that happens to
       // carry a VIN — that is what makes it a candidate for the nearest-in-time
@@ -242,11 +244,60 @@ async function processUpdate(update) {
   } else if (FINISH_STATIONS[chat.station]) {
     // A car (or a list of them) coming out of a shop. Photos in these groups are
     // handled below — in the wash line the photo IS the message.
-    const vins = extractAllVin6(text);
-    for (const v of vins) await finishCar(db, v, FINISH_STATIONS[chat.station], eventIso);
+    let vins = extractAllVin6(text);
+    if (chat.station === 'body_shop_out' && vins.length) {
+      // "78419 / Still missing the fender liner" is a car NOT coming out: it is
+      // written on the job and left open. Everything else finishes — including
+      // a car on hold, because a person typing its VIN and "good to go" is a
+      // statement about that car (see finish_body_shop_job).
+      try {
+        const out = await handleBodyShopOutMessage(db, { text, messageId: msgKey, fromId, at: eventIso, vins });
+        vins = out.vins;
+        for (const v of out.finish) {
+          await finishCar(db, v, FINISH_STATIONS[chat.station], eventIso, { releaseHold: true, sourceRef: `bso:${msgKey}:${v}` });
+        }
+      } catch (e) {
+        console.error('body_shop_out read failed, finishing as typed', e?.message || e);
+        for (const v of vins) await finishCar(db, v, FINISH_STATIONS[chat.station], eventIso);
+      }
+      // The photo fallback (intake_nearest_vin) only sees a car that was named
+      // in `parsed`; without it every picture after this text was an orphan.
+      parsed = { vin6: vins[0], vins };
+    } else {
+      for (const v of vins) await finishCar(db, v, FINISH_STATIONS[chat.station], eventIso);
+    }
     if (vins.length) {
       vin6 = vins[0];
       vinSource = 'caption';
+      await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
+    }
+  } else if (chat.station === 'body_shop') {
+    // Moves, jobs and everything the words say — parts, ETAs, holds, which shop
+    // — live in bodyShopChat.js. The shared shop branch below moved every VIN it
+    // saw into the body shop, so the parts coordinator's "690310 / 2023 HYANDAI
+    // KONA / [PARTS DELIVERED INSIDE CAR]" pulled cars off Jorge's. That branch
+    // is now reached by the mechanic group only.
+    let vins = extractAllVin6(text);
+    const ensureJob = (v) => ensureBodyShopJob(db, v, eventIso);
+    try {
+      const out = await handleBodyShopGroupMessage(db, {
+        text, messageId: msgKey, fromId, at: eventIso, vins,
+        replyVin: await repliedVin(db, chatId, msg.reply_to_message),
+        locationCode: chat.location_code, matchDestination, ensureJob,
+      });
+      vins = out.vins;
+    } catch (e) {
+      // Never cost the car its job card or the photos over a read that failed.
+      console.error('body shop chat read failed', e?.message || e);
+      for (const v of vins) await ensureJob(v);
+    }
+    if (vins.length) {
+      vin6 = vins[0];
+      vinSource = 'caption';
+      // Named in `parsed`, which is what the photo fallback (intake_nearest_vin)
+      // reads — 1 of 1,732 body_shop VIN rows had it, so pictures sent after a
+      // VIN text could never find their car.
+      parsed = { vin6, vins };
       await resolvePendingForSender(db, fromId, vin6, chat.station, mediaGroupId);
     }
   } else if (chat.station === 'body_shop' || chat.station === 'mechanic') {
@@ -496,6 +547,15 @@ async function adoptUnidentified(db, fromId, station, vin6) {
   }
 }
 
+// The VIN of the message this one replies to. "dont fix this" sent as a reply to
+// a car's photo is about that car, which is better evidence than any guess.
+async function repliedVin(db, chatId, reply) {
+  if (!reply?.message_id || reply.from?.is_bot) return null;
+  const { data } = await db.from('wa_inbound_messages')
+    .select('vin6').eq('message_id', `tg_${chatId}_${reply.message_id}`).maybeSingle();
+  return data?.vin6 || null;
+}
+
 // Open (or find) this car's body shop job. The RPC is SECURITY DEFINER and
 // idempotent; a car that isn't in inventory returns null and is skipped. Never
 // throws into the webhook — a body shop job failing must not cost us the
@@ -678,7 +738,7 @@ function occursOnWordBoundary({ norm, starts, ends }, keyword) {
 // `summit` is longer than `back`, so the car got stamped at the shop it had just
 // left. Marking `back` (and `onlot`) high-priority makes any return-to-lot word
 // beat the shop named alongside it.
-async function matchDestination(db, text) {
+export async function matchDestination(db, text) {
   const flat = flatten(text);
   if (!flat.norm) return null;
   const { data } = await db.from('location_keywords').select('keyword, location_code, priority');

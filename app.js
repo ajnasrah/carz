@@ -347,8 +347,12 @@ class TrainingApp {
             </div>
         `;
 
-        // Scroll to top
-        contentArea.scrollTop = 0;
+        // Scroll to top (wait for DOM repaint)
+        requestAnimationFrame(() => {
+            window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+        });
     }
 
     completeLesson(lessonId) {
@@ -437,6 +441,12 @@ class TrainingApp {
                 </form>
             </div>
         `;
+
+        requestAnimationFrame(() => {
+            window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+        });
     }
 
     submitQuiz(event) {
@@ -480,6 +490,12 @@ class TrainingApp {
         const contentArea = document.getElementById('content-area');
         const moduleIndex = courseData.modules.indexOf(this.currentModule);
         const nextModule = courseData.modules[moduleIndex + 1];
+
+        requestAnimationFrame(() => {
+            window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+        });
 
         contentArea.innerHTML = `
             <div class="quiz-results">

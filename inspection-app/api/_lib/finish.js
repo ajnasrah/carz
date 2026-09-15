@@ -32,11 +32,37 @@ export const FINISH_STATIONS = {
 // at the wash line is finished with every shop, and a card left open on it would
 // keep reporting a repaired car as waiting on brakes. Held jobs are skipped by
 // the RPC itself, so parking a car still means parked.
-export async function finishCar(db, vin6, locationCode, eventIso) {
-  const body = await closeBodyShopJob(db, vin6, eventIso);
+//
+// `releaseHold` is for body_shop_out alone, where a person typed the VIN and
+// "good to go". That is a statement about THIS car, not a move that happened to
+// sweep a parked one along — 152102 was posted good to go on 08-26 while its
+// job sat on hold from the day before, and it is still on hold now, at the
+// auction. So there the hold is lifted and the job closed, with a note saying
+// so (finish_body_shop_job). A car finished with no job at all (250768) is
+// normal and is recorded, not an error. `sourceRef` is the message key that
+// makes the note idempotent.
+export async function finishCar(db, vin6, locationCode, eventIso, { releaseHold = false, sourceRef = null } = {}) {
+  const body = releaseHold
+    ? await finishBodyShopJob(db, vin6, eventIso, sourceRef)
+    : await closeBodyShopJob(db, vin6, eventIso);
   const mech = await closeMechanicJob(db, vin6, eventIso);
   const moved = await updateLocation(db, vin6, locationCode, eventIso);
   return { bodyShopClosed: !!body, mechanicClosed: !!mech, moved };
+}
+
+// Close the job even if it is on hold, and leave a note either way. Falls back
+// to the ordinary close if the RPC isn't there yet (code deployed ahead of its
+// migration), so a deploy order mistake costs the hold release, not the finish.
+export async function finishBodyShopJob(db, vin6, eventIso, sourceRef) {
+  const { data, error } = await db.rpc('finish_body_shop_job', {
+    p_vin6: vin6, p_event: eventIso, p_source_ref: sourceRef || `finish:${vin6}:${eventIso}`,
+  });
+  if (error) {
+    console.error('finish_body_shop_job failed for', vin6, error.message || error);
+    return closeBodyShopJob(db, vin6, eventIso);
+  }
+  if (data) console.log('finished body shop job for', vin6);
+  return data;
 }
 
 // Close this car's open body shop job, stamped with the message time so the age

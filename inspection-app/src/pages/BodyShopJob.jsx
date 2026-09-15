@@ -24,6 +24,7 @@ import {
   CHARGE_STATUS_LABELS, CHARGE_STATUS_STYLES,
   isChargeApprover, isShopManager,
   proposeCharge, approveCharge, counterCharge, acceptCounter,
+  fetchChatEvents, CHAT_EVENT_LABELS,
 } from '../services/bodyShop'
 import {
   fetchVehiclePhotos, uploadVehiclePhoto, deleteVehiclePhoto, photoSourceLabel,
@@ -51,6 +52,7 @@ export default function BodyShopJob() {
   const [job, setJob] = useState(null)
   const [parts, setParts] = useState([])
   const [photos, setPhotos] = useState([])
+  const [chat, setChat] = useState([])
   const [techs, setTechs] = useState([])
   const [invites, setInvites] = useState([])
   const [loading, setLoading] = useState(true)
@@ -123,6 +125,8 @@ export default function BodyShopJob() {
       // blank out the price and the parts list.
       try { setPhotos(await fetchVehiclePhotos({ vin6: j.vin6, stockNumber: j.stock_number })) }
       catch (e) { setPhotoError(e.message || 'Could not load photos') }
+      // Same for the chat log: it explains the card, it is not the card.
+      try { setChat(await fetchChatEvents(id)) } catch { setChat([]) }
     } catch (e) {
       setError(e.message || 'Could not load this job')
     } finally {
@@ -339,6 +343,12 @@ export default function BodyShopJob() {
           onSave={(notes) => patch({ notes })} />
       </Section>
 
+      {chat.length > 0 && (
+        <Section title={`From the group chat (${chat.length})`}>
+          <ChatLog events={chat} />
+        </Section>
+      )}
+
       {manager && (
         <button
           onClick={async () => {
@@ -383,6 +393,37 @@ function BackBar({ onBack, right, at = -1, total = 0, onGo }) {
         {right}
       </div>
     </div>
+  )
+}
+
+// What the Telegram group said about this car, and what the bot did about it.
+// Several events can come from one message (a part listed AND a date); the
+// message is shown once, under the first.
+function ChatLog({ events }) {
+  const seen = new Set()
+  return (
+    <ul className="space-y-2">
+      {events.map((e) => {
+        const text = e.note && !seen.has(e.note) ? e.note : null
+        if (e.note) seen.add(e.note)
+        return (
+          <li key={e.id} className="text-sm">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-slate-300 font-medium">
+                {CHAT_EVENT_LABELS[e.kind] || e.kind}
+                {e.kind === 'moved' && e.detail?.to ? ` → ${e.detail.to}` : ''}
+              </span>
+              <span className="text-[11px] text-slate-500 shrink-0">
+                {new Date(e.event_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+              </span>
+            </div>
+            {text && (
+              <p className="text-slate-400 whitespace-pre-line text-[13px] mt-0.5 break-words">{text}</p>
+            )}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
