@@ -53,9 +53,19 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 // 1,604ms versus 450ms. The multiset check matters because these queries have no
 // unique ORDER BY, so offsets are only as stable as Postgres's plan; the length
 // check below is the guard if that ever stops holding.
+//
+// The FIRST page goes alone. Batching from the start sent eight requests for a
+// 350-row inventory — seven of them empty — and the Dashboard opens several of
+// these at once, so one visit put ~50 queries on the database simultaneously
+// and each took 3-6s queueing behind the rest (measured 2026-09-15). A table
+// under a page costs one request now; a big one costs one extra round trip.
 export async function selectAll(buildQuery, pageSize = 1000, batch = 8) {
-  const all = []
-  for (let base = 0; ; base += pageSize * batch) {
+  const first = await buildQuery().range(0, pageSize - 1)
+  if (first.error) throw first.error
+  const all = [...(first.data || [])]
+  if (all.length < pageSize) return all
+
+  for (let base = pageSize; ; base += pageSize * batch) {
     const offsets = Array.from({ length: batch }, (_, i) => base + i * pageSize)
     const pages = await Promise.all(offsets.map(async (from) => {
       const { data, error } = await buildQuery().range(from, from + pageSize - 1)

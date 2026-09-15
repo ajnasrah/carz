@@ -192,12 +192,18 @@ export async function fetchSoldRecent(days) {
   const added = new Map()
   // Chunked: a few hundred stock numbers in one ?in=(…) makes a URL long enough
   // to get rejected before it reaches Postgres.
+  //
+  // One chunk at a time, not Promise.all. sold_rows() is SECURITY DEFINER, so
+  // Postgres can't push the ?in= filter into it: every chunk re-computes all
+  // ~6,600 sold cars and keeps its 150. Seven of those at once — while the
+  // Dashboard's other loads run — took 5-6s EACH (measured 2026-09-15); in a
+  // row they're ~100ms apiece. Same trap as fetchSoldWithBuyers above.
   const CHUNK = 150
-  const chunks = []
-  for (let i = 0; i < stocks.length; i += CHUNK) chunks.push(stocks.slice(i, i + CHUNK))
-  const results = await Promise.all(
-    chunks.map((c) => supabase.rpc('sold_rows').select('stock_number, added_costs').in('stock_number', c)),
-  )
+  const results = []
+  for (let i = 0; i < stocks.length; i += CHUNK) {
+    results.push(await supabase.rpc('sold_rows').select('stock_number, added_costs')
+      .in('stock_number', stocks.slice(i, i + CHUNK)))
+  }
   for (const { data, error } of results) {
     if (error) continue // recon money is a nice-to-have; never fail the whole box over it
     for (const r of data || []) added.set(r.stock_number, toNumOrNull(r.added_costs))
